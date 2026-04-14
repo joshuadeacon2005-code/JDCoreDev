@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "jdcoredev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["start-dev.js"],
+      "port": 5000
+    }
+  ]
+}

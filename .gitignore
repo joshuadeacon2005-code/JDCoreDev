@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/
+
+# Build output
+dist/
+build/
+*.tar.gz
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# PDFs and archives (large binaries)
+*.pdf
+*.zip
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temp
+*.tmp
+*.swp

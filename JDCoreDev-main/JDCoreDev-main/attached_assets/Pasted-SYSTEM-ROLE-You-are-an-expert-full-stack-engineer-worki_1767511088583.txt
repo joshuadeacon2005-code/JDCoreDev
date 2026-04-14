@@ -1,0 +1,274 @@
+SYSTEM / ROLE
+You are an expert full-stack engineer working inside the existing JD Core Replit project. Extend the inquiry + meeting + office-day system with:
+1) A meeting request approval workflow (admin can approve/deny and propose alternate times).
+2) Reminder notifications for upcoming meetings and office days for BOTH admin and the client, via email (required) and WhatsApp (optional, behind configuration).
+Preserve existing features, permissions, and styling. Implement end-to-end: DB migrations, backend routes, templates, seed updates, and minimal tests. Keep scope strictly to this request.
+
+CONTEXT
+JD Core already includes:
+- Public inquiry form that can request a meeting/call slot
+- Admin inquiry inbox
+- Call availability rules and meeting slots
+- Office day requests (date-based)
+- Role-based auth (admin/client)
+- Activity events
+
+PRIMARY OBJECTIVE
+A) Replace “auto-confirmed meeting bookings” for NEW inquiries with a request/approval flow:
+- A new client can request a meeting slot, but it is NOT confirmed until admin approves.
+- Admin can deny and suggest alternate time(s) on the same day or the day after.
+- Client can accept an alternate suggestion (or pick another available slot).
+- Only confirmed meetings block the calendar as “busy”.
+
+B) Add reminders:
+- Email reminders for upcoming meetings and office days to both admin and client (REQUIRED).
+- WhatsApp reminders (OPTIONAL) using Twilio WhatsApp or equivalent, only if credentials are configured.
+- Support reminders for:
+  - Confirmed meetings/calls
+  - Approved office days
+- Reminders should go out at configurable offsets (e.g., 24h and 1h before).
+
+IMPORTANT MVP CONSTRAINT
+Implement a simple, reliable scheduler:
+- Use APScheduler inside the FastAPI process OR a lightweight periodic “tick” job that runs every minute.
+- Must be safe to run in Replit.
+- Reminders must be idempotent (never spam duplicates).
+
+---
+
+DATA MODEL CHANGES (ALEMBIC MIGRATIONS REQUIRED)
+
+1) inquiries table additions
+- meeting_status (enum: none|requested|proposed|confirmed|denied|cancelled) default none
+- preferred_contact_method (enum: email|whatsapp|both) default email
+- client_timezone (string nullable; default "Asia/Tokyo" if missing)
+- last_contacted_at (datetime nullable)
+
+2) meeting_slots changes (important)
+Current meeting_slots represent booked calls. Change semantics to support request/approval:
+- Add fields:
+  - status (enum: requested|proposed|confirmed|denied|cancelled|completed) default requested
+  - proposed_parent_id (nullable FK meeting_slots) // to chain proposal history
+  - requested_by (enum: public|admin) default public
+  - admin_notes (text nullable)
+  - client_notes (text nullable)
+- IMPORTANT behavior:
+  - Only status=confirmed blocks availability.
+  - requested/proposed do NOT block availability (but should be treated as “tentative” in UI).
+
+3) meeting_proposals table (optional but cleaner; recommended)
+If you prefer clearer structure:
+meeting_proposals:
+- id
+- inquiry_id (FK)
+- original_meeting_slot_id (FK meeting_slots)
+- proposed_start_at (datetime)
+- proposed_end_at (datetime)
+- status (enum: proposed|accepted|rejected|expired) default proposed
+- created_by_user_id (nullable FK users; admin proposes)
+- created_at
+- responded_at (nullable datetime)
+
+Choose ONE approach:
+- EITHER implement proposals as new meeting_slots with proposed_parent_id,
+- OR implement meeting_proposals table. Do not implement both.
+
+4) reminders table (new)
+reminders:
+- id
+- reminder_type (enum: meeting|office_day)
+- entity_id (int) // meeting_slot.id or office_day_request.id
+- recipient_type (enum: admin|client)
+- channel (enum: email|whatsapp)
+- send_at (datetime)
+- sent_at (datetime nullable)
+- status (enum: pending|sent|failed|cancelled) default pending
+- last_error (text nullable)
+- idempotency_key (string unique) // prevents duplicates
+- created_at
+
+5) office_day_requests additions (if missing)
+- start_time (nullable, time) // optional future use, can remain null for now
+- end_time (nullable, time)
+(If you don’t want times for office days, keep as date-only; reminders still apply.)
+
+---
+
+WORKFLOWS (MUST IMPLEMENT)
+
+A) New Inquiry Meeting Request (Public)
+- Public inquiry form allows selecting a date + time slot.
+- On submit:
+  - Create inquiry row
+  - Create a meeting request record with status=requested (NOT confirmed)
+  - Do NOT block availability yet
+  - Log activity_event: meeting_requested
+
+Public messaging:
+- Show: “Your meeting request is pending confirmation. You’ll receive a confirmation or alternate suggestion.”
+
+B) Admin Review: Approve / Deny / Propose Alternate
+Admin inquiry detail page must allow:
+1) Confirm requested meeting
+- Validate slot is still available (no confirmed overlap, no blocks, lead time, office day rule).
+- Set meeting status=confirmed.
+- Now it blocks availability.
+- Create reminders for admin + client.
+- Log activity_event: meeting_confirmed
+
+2) Deny request (no meeting)
+- Set meeting status=denied.
+- Optionally write admin_notes.
+- Log activity_event: meeting_denied
+- Notify client via email (required) that it was denied and optionally ask them to pick another time.
+
+3) Propose alternate time(s)
+Requirement: suggest another time on the same day OR the day after.
+- Admin selects:
+  - same day alternate time slot OR next day alternate time slot
+  - allow proposing up to 3 options (MVP: 2 is fine)
+- Create proposal(s) and mark inquiry.meeting_status=proposed
+- Notify client with proposal list and a link to accept one
+- Log activity_event: meeting_proposed
+
+C) Client Accepts Alternate
+Provide public route with a secure token:
+- GET /inquiry/meeting/{token} shows proposed options
+- POST /inquiry/meeting/{token}/accept (choose option)
+When client accepts:
+- Validate chosen slot is still available
+- Mark meeting confirmed and cancel other proposals
+- Create reminders (admin + client)
+- Log activity_event: meeting_confirmed_from_proposal
+
+Security:
+- Use a signed token stored on inquiry (meeting_access_token) or a separate table.
+- Token must not expose internal IDs plainly.
+
+D) Reminders for Meetings and Office Days
+When a meeting becomes confirmed OR an office day becomes approved:
+- Schedule reminders according to configured offsets.
+
+Default offsets (MVP):
+- 24 hours before
+- 1 hour before
+
+Recipients:
+- Admin (your email; optionally your WhatsApp)
+- Client (their email; optionally their WhatsApp if provided and allowed)
+
+Reminder content (MVP plain text is fine):
+- Title: “Upcoming meeting with JD Core” / “Upcoming office day”
+- Include date/time (in client timezone), meeting type, and any notes.
+
+Idempotency:
+- Use deterministic idempotency_key format, e.g.:
+  - meeting:{meeting_id}:admin:email:{offset}
+  - meeting:{meeting_id}:client:email:{offset}
+  - office:{office_day_id}:admin:email:{offset}
+- Do not create duplicates if already exists.
+
+Scheduler behavior:
+- Every minute (or appropriate interval):
+  - Find reminders where status=pending and send_at <= now and sent_at is null.
+  - Send via email (required). Attempt WhatsApp only if configured.
+  - Update sent_at/status.
+  - On failure: status=failed and record last_error; do not retry infinitely (MVP: allow 3 retries with backoff or manual retry button).
+
+CANCELLATION RULES
+- If meeting is cancelled/denied: cancel pending reminders for that meeting.
+- If office day is cancelled: cancel pending reminders.
+
+---
+
+INTEGRATION REQUIREMENTS (EMAIL + WHATSAPP)
+
+EMAIL (REQUIRED)
+Implement SMTP sending with env vars:
+- SMTP_HOST
+- SMTP_PORT
+- SMTP_USER
+- SMTP_PASS
+- SMTP_FROM
+
+Fallback:
+- If SMTP not configured, log warnings and mark reminders as failed with clear error.
+
+WHATSAPP (OPTIONAL)
+Implement Twilio WhatsApp if configured:
+- TWILIO_ACCOUNT_SID
+- TWILIO_AUTH_TOKEN
+- TWILIO_WHATSAPP_FROM
+Client WhatsApp number collection:
+- Add optional whatsapp_number field to inquiries (nullable).
+- Only send WhatsApp if:
+  - preferred_contact_method includes whatsapp
+  - whatsapp_number present
+  - Twilio env vars configured
+
+IMPORTANT:
+- Do not block the app if WhatsApp is not configured.
+
+---
+
+UI / ROUTES TO IMPLEMENT
+
+Public:
+- Update inquiry form to clarify “pending confirmation”
+- GET /inquiry
+- POST /inquiry
+- GET /inquiry/meeting/{token} (view proposals)
+- POST /inquiry/meeting/{token}/accept
+- POST /inquiry/meeting/{token}/reject (optional; nice-to-have)
+
+Admin:
+- GET /admin/inquiries (add filters: meeting_status)
+- GET /admin/inquiries/{id} (add meeting request + proposal controls)
+- POST /admin/inquiries/{id}/meeting/confirm
+- POST /admin/inquiries/{id}/meeting/deny
+- POST /admin/inquiries/{id}/meeting/propose
+- GET /admin/reminders (optional page listing pending/failed)
+- POST /admin/reminders/{id}/retry (optional)
+
+Office Days:
+- When office_day_request transitions to approved, schedule reminders.
+
+Dashboard tweak:
+- Do NOT add new useless KPI boxes.
+- It’s OK to add a small “Pending meeting requests” link in nav or within an existing list.
+
+---
+
+TESTS (MINIMUM)
+1) Meeting confirmation blocks the slot and prevents a second confirmation overlapping.
+2) Proposed meetings do NOT block availability until confirmed.
+3) Reminder creation is idempotent (no duplicates).
+4) Reminders cancelled when meeting denied/cancelled.
+5) Permission: public proposal link only works with valid token.
+
+---
+
+SEED DATA UPDATE (REQUIRED)
+- Create one inquiry with meeting requested (status=requested).
+- Create one inquiry with meeting proposed (include 2 proposed options).
+- Create one confirmed meeting with scheduled reminders.
+- Create one approved office day with scheduled reminders.
+
+---
+
+IMPLEMENTATION ORDER
+1) Schema migrations
+2) Availability service updates (confirmed-only blocking)
+3) Inquiry + meeting approval/proposal endpoints
+4) Public proposal acceptance page
+5) Reminder scheduling + scheduler runner
+6) SMTP email integration
+7) Optional WhatsApp integration behind env vars
+8) Seed + tests + README updates
+
+OUTPUT RULES
+- Keep dependencies minimal.
+- Ensure timezone correctness (store UTC internally, convert for display).
+- Enforce permissions server-side.
+- No unrelated refactors.
+- App must run on Replit with one command.

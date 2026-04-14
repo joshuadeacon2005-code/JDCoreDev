@@ -1,0 +1,192 @@
+SYSTEM / ROLE
+You are an expert full-stack engineer working inside the existing JD Core Replit project. Your task is to AUDIT and FIX:
+(A) all money/revenue display + calculations so amounts render correctly everywhere, AND
+(B) all date parsing/validation issues causing errors like “expected date received string” when creating or editing records.
+
+Do not add new features. Focus on correctness, consistency, and eliminating these recurring bugs. Implement fixes end-to-end (models/schemas/forms/helpers/tests). Keep changes minimal and well-scoped.
+
+PRIMARY OBJECTIVE
+A) Money: ensure every place that displays money shows correct values (not 0 unless truly 0), with consistent currency formatting and consistent cents storage.
+B) Dates: ensure all create/edit flows accept date inputs reliably and convert strings from HTML forms into proper Python date/datetime objects before validation/DB writes.
+
+===========================================================
+PART A — MONEY / REVENUE AUDIT + FIX
+===========================================================
+
+AUDIT SCOPE (MUST SEARCH + CHECK ALL)
+Search the repo for money fields and rendering:
+- “revenue”, “total”, “amount”, “cents”, “fee”, “monthly”, “price”
+- “milestone”, “invoice”, “paid”, “outstanding”
+- “hosting”, “monthly_cost”, “monthly_fee”
+- Template filters/formatters (Jinja)
+- Dashboard queries/aggregations
+
+Places to verify and fix:
+- Admin dashboard revenue box
+- Project list cards/previews totals
+- Project detail totals
+- Milestones list (amount + totals)
+- Hosting box monthly fee (if present)
+- Client portal equivalents
+
+COMMON ROOT CAUSES TO CHECK (DO NOT SKIP)
+- Cents stored but displayed without dividing by 100
+- Integer division / casting issues
+- Null amounts treated as 0 incorrectly (or query returns None)
+- Wrong join/filter causes sums to be empty
+- Aggregations returning Decimal/None not converted for templates
+- Inconsistent status strings (Paid vs paid)
+- Wrong column names (amount vs amount_cents)
+- Seed data not populating cents fields
+- Defaulting to 0 in schemas/mappers unintentionally
+
+REQUIRED OUTPUT (MONEY)
+1) Create a canonical money utility module (e.g., app/utils/money.py):
+- to_cents(decimal_or_str, currency) -> int
+- from_cents(int) -> Decimal
+- format_money(cents:int|None, currency:str) -> str (e.g. “USD 300.00”; if None show “—”)
+
+2) Register a Jinja filter:
+- {{ cents_value|money(currency) }}
+- Safe handling of None
+
+3) Standardize calculations:
+- Ensure all monetary values stored in integer cents
+- Totals computed from *_cents columns
+- Define “Revenue” precisely for dashboard:
+  MVP: sum(milestones.amount_cents) where status == 'paid'
+  Implement consistently and comment this decision in code.
+
+4) Fix route contexts + templates:
+- Ensure routes pass correct values:
+  total_value_cents, paid_cents, outstanding_cents
+- Ensure previews and detail pages use the SAME service functions (no duplicate logic).
+
+5) Fix seed/demo data:
+- Create milestones with non-zero amount_cents
+- At least one milestone paid
+- Verify dashboard revenue becomes non-zero with seed data.
+
+6) Tests (minimum):
+- Money formatting
+- Milestone totals
+- Dashboard revenue query
+
+ACCEPTANCE CRITERIA (MONEY)
+- Revenue box shows correct non-zero for paid milestones
+- Project previews and detail totals match
+- No “0 everywhere” when data exists
+- All money displays use shared filter/formatter
+
+===========================================================
+PART B — DATE “EXPECTED DATE RECEIVED STRING” AUDIT + FIX
+===========================================================
+
+PROBLEM STATEMENT
+When creating/editing records with dates, app errors with messages like:
+- “expected date received string”
+This typically occurs when:
+- HTML form inputs return strings (e.g., "2026-01-06")
+- Pydantic/SQLAlchemy expects date/datetime objects
+- Conversion/parsing is missing or inconsistent
+
+AUDIT SCOPE (DATES)
+Search repo for:
+- Pydantic schemas with date/datetime fields
+- Form handlers reading request.form or request data
+- Fields: start_date, end_date, due_date, first_contact_date, expiry_date, decided_at, created_at, etc.
+- Any custom validators or parsing helpers
+- Any places calling model constructors directly using raw form strings
+
+ROOT CAUSES TO CHECK (DO NOT SKIP)
+- Using request.form strings directly to populate SQLAlchemy date columns
+- Pydantic model expecting `date` but receiving `str` due to form submissions
+- Mixed usage: some endpoints accept JSON (Pydantic parsing works) while others use form posts (needs manual parsing)
+- Incorrect input formats (MM/DD/YYYY vs YYYY-MM-DD)
+- Empty strings ("") passed for optional dates should become None (not parsed)
+- Timezone-naive datetime strings handled incorrectly
+- Using Jinja to render dates that aren’t serialized properly back into <input type="date"> values
+
+REQUIRED FIX STRATEGY (DATES)
+Implement a single shared parsing layer for date + datetime from form inputs, and use it in ALL form POST handlers.
+
+1) Create utility module: app/utils/dates.py
+- parse_date(value: str|None) -> date|None
+  - Accepts:
+    - None
+    - "" => None
+    - "YYYY-MM-DD" => date
+  - Raises a clear ValueError for invalid formats.
+- parse_datetime(value: str|None, assume_tz: str|None) -> datetime|None
+  - For MVP accept:
+    - ISO format strings from <input type="datetime-local"> like "YYYY-MM-DDTHH:MM"
+  - Convert to UTC consistently OR store naive consistently (choose one and document).
+- format_date_for_input(date|None) -> str
+  - Returns "YYYY-MM-DD" or "" for <input type="date">
+
+2) Normalize all POST handlers that create/update date fields:
+For every form submission endpoint, BEFORE validation or DB write:
+- Convert all date fields using parse_date
+- Convert all datetime fields using parse_datetime
+- Convert optional empty strings to None
+Do not pass raw strings into Pydantic/SQLAlchemy expecting date objects.
+
+3) Pydantic schema adjustments (if used for forms)
+If you use Pydantic for form handling:
+- Either:
+  a) Switch date fields to `date` but ensure you pass parsed date objects
+  OR
+  b) Allow strings with validators:
+     - @field_validator(..., mode="before") to parse date strings
+Pick one approach consistently.
+
+4) Improve error reporting (developer-friendly)
+When parsing fails:
+- Return a form error message that identifies which field is invalid and what format is expected:
+  e.g. “Due date must be YYYY-MM-DD”
+- Log the original value and route for debugging (server logs).
+
+5) Fix templates for date inputs
+Ensure date inputs use format_date_for_input so editing existing records works:
+- <input type="date" value="{{ some_date|date_input }}">
+Register a Jinja filter `date_input` that uses format_date_for_input.
+
+6) Fix seed data
+Ensure seed uses actual date objects (datetime.date) or valid ISO strings parsed through the same helper.
+
+7) Tests (minimum for dates)
+- parse_date handles None, "", valid "YYYY-MM-DD"
+- parse_date rejects invalid formats
+- Create/update milestone with due_date via form post succeeds (no “expected date received string”)
+- Create/update client with first_contact_date succeeds
+
+DIAGNOSTIC REQUIREMENT (MANDATORY)
+Add a short “debug audit” step in code comments or README:
+- List all routes that accept date fields
+- Confirm each uses parse_date/parse_datetime or schema validators
+- Confirm that no SQLAlchemy Date columns are assigned raw strings
+
+ACCEPTANCE CRITERIA (DATES)
+- Creating/editing any entity with a date no longer throws “expected date received string”
+- All date fields accept "YYYY-MM-DD" from HTML forms reliably
+- Editing forms correctly pre-fill date inputs
+- Invalid dates produce a friendly field-specific error, not a stack trace
+
+===========================================================
+IMPLEMENTATION ORDER (FOLLOW STRICTLY)
+===========================================================
+1) Repo-wide search: identify all money display points + all date form handlers
+2) Implement app/utils/money.py + Jinja money filter; replace ad-hoc formatting
+3) Fix revenue and totals queries; fix seed data; verify UI shows correct values
+4) Implement app/utils/dates.py + Jinja date_input filter
+5) Update all form POST handlers to parse/convert dates before validation/DB write
+6) Add tests for money + dates
+7) Run through key UI flows manually (create milestone, create client, edit project dates) and confirm fixed
+
+OUTPUT RULES
+- Do not add new features or redesign UI.
+- Keep dependencies minimal.
+- Avoid large refactors unless needed for correctness.
+- Document key decisions:
+  - What “Revenue” means
+  - Date parsing formats and timezone approach

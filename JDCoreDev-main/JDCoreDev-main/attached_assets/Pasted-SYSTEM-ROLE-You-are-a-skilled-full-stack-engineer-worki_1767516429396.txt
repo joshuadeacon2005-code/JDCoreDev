@@ -1,0 +1,77 @@
+SYSTEM / ROLE
+You are a skilled full-stack engineer working inside the existing JD Core Replit project. Your task is to:
+1) Add an “Advertising for Hosting Services” section to the admin portal.
+2) Research and embed Replit’s hosting terms, pricing, quotas, limits, and relevant conditions into a **private administrative page or documentation section** in JD Core (for internal reference only).
+3) Ensure the public app **does NOT mention Replit or its brand**, and that none of Replit’s specific terms are exposed to end users.
+
+Your output must include:
+- A backend implementation that retrieves researched Replit hosting terms and pricing.
+- A secure admin-only page that displays these terms internally.
+- Clear labels indicating this section is for “Internal Hosting Terms & Pricing Reference”.
+- Migrations if necessary, backend routes, UI templates, and minimal styling consistent with JD Core.
+
+CONTEXT
+Replit’s Terms of Service outline acceptable use, user responsibilities, prohibited actions, and general obligations when hosting and deploying apps on the platform.  [oai_citation:1‡replit](https://replit.com/terms-of-service?utm_source=chatgpt.com)
+Replit’s pricing tiers include:
+- A free Starter tier with limited published apps and quotas.
+- A Core plan at around ~$20-$25/month (billed annually) with deployment and private app hosting capabilities and monthly usage credits.  [oai_citation:2‡replit](https://replit.com/pricing?utm_source=chatgpt.com)
+
+COMPONENTS TO IMPLEMENT
+
+1) **Database Schema**  
+Add a new admin-only table to store hosting reference content:
+hosting_terms:
+- id
+- title (string, e.g. “Hosting Terms Overview”)
+- content_markdown (text, admin content with pricing/limits)
+- updated_by_user_id (FK users)
+- updated_at (datetime)
+
+2) **Backend Routes (Admin Only)**
+
+- GET /admin/hosting-terms  
+  - Renders a page listing all stored hosting_terms entries.
+
+- GET /admin/hosting-terms/edit/{id}  
+  - Form to edit/update hosting terms content.
+
+- POST /admin/hosting-terms/update/{id}  
+  - Save updated hosting terms content.
+
+3) **Admin UI Templates**
+
+- An “Internal Hosting Terms & Pricing Reference” item in the admin sidebar.
+- A page showing each entry’s title + rendered Markdown content.
+- An edit interface for administrators to update content.
+
+4) **Populate Initial Content (Seed Update)**
+
+Add one initial entry with researched and admin-edited content, including:
+- Hosting pricing tiers (Starter, Core, etc.) and key features for each tier.  [oai_citation:3‡replit](https://replit.com/pricing?utm_source=chatgpt.com)
+- Quota and limit basics (e.g. CPU, storage, network, concurrent connections).  [oai_citation:4‡Replit Docs](https://docs.replit.com/legal-and-security-info/usage?utm_source=chatgpt.com)
+- Terms of Service key points including acceptable use and prohibited conduct summaries.  [oai_citation:5‡replit](https://replit.com/terms-of-service?utm_source=chatgpt.com)
+- Deployment cost explanations (usage credits, pay-as-you-go after credits, deployment types).  [oai_citation:6‡Replit Docs](https://docs.replit.com/billing/deployment-pricing?utm_source=chatgpt.com)
+- License basics for private/public deployments (MIT license for public apps vs licensing options for private).  [oai_citation:7‡Replit Docs](https://docs.replit.com/legal-and-security-info/licensing-info?utm_source=chatgpt.com)
+
+This content should be **internal** (admin only) and **not displayed anywhere in the public UI**.
+
+5) **Permissions Enforcement**
+
+- Only users with the admin role can access /admin/hosting-terms and /admin/hosting-terms/edit.
+- No routing or UI should expose hosting terms or Replit’s pricing to clients or public users.
+
+6) **Admin UI Navigation Update**
+
+Add an item under the admin sidebar:
+- “Internal Hosting Reference” → /admin/hosting-terms
+
+7) **Acceptance Criteria**
+
+- Admin can view and edit hosting_terms content.
+- Internal page displays researched hosting terms and pricing clearly.
+- Public app pages never reference Replit or its hosting terms.
+- Replit branding is not used in public UI; internal content should be clearly labeled “For Internal Reference Only”.
+
+8) **Optional: Import Script**
+
+Create a simple script to initially populate hosting_terms with the current Replit terms & pricing summary you researched:

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Read(//c/Users/joshu/iCloudDrive/JDCoreDev Code/.claude/**)",
+      "Bash(unzip -l \"New Compressed \\(zipped\\) Folder.zip\")",
+      "Bash(npx --yes tsx --env-file=JDCoreDev-main/.env JDCoreDev-main/server/index.ts)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "Bash(npx tsx:*)",
+      "Bash(cmd /c start-dev.cmd)",
+      "Bash(ls node_modules/.bin/tsx*)"
+    ]
+  }
+}

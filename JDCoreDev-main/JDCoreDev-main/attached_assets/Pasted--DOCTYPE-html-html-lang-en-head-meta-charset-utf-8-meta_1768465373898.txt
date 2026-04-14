@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Software Development Redesign V1 - Editorial</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style type="text/tailwindcss">
+        :root {
+            --bg-main: #fcfbf7;
+            --accent-teal: #2d6a4f;
+            --accent-coral: #e07a5f;
+            --text-dark: #1a1a1a;
+            --text-muted: #555555;
+            --border-color: #e5e5e5;
+        }
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-dark);
+            font-family: 'Inter', sans-serif;
+        }
+        .editorial-border-top {
+            border-top: 1px solid var(--border-color);
+        }
+        .editorial-border-bottom {
+            border-bottom: 1px solid var(--border-color);
+        }
+        .editorial-border-left {
+            border-left: 1px solid var(--border-color);
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+        }
+        .btn-outline {
+            @apply border border-[var(--accent-teal)] text-[var(--accent-teal)] px-8 py-3 transition-all duration-300 hover:bg-[var(--accent-teal)] hover:text-white uppercase tracking-widest text-xs font-bold;
+        }
+        .btn-fill {
+            @apply bg-[var(--accent-coral)] bg-opacity-10 text-[var(--accent-coral)] px-8 py-3 transition-all duration-300 hover:bg-opacity-20 uppercase tracking-widest text-xs font-bold;
+        }
+        .sidebar-card {
+            @apply py-6 border-b border-[var(--border-color)] last:border-b-0;
+        }
+    </style>
+</head>
+<body class="antialiased">
+<nav class="editorial-border-bottom py-6 px-8 flex justify-between items-center sticky top-0 bg-[var(--bg-main)] z-50">
+<div class="flex items-center gap-2">
+<img alt="Logo" class="w-10 h-10 object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBFvZzpxOF0mCKo8MVhlPE0bUKcJQ4XCC309DQ6Q0q0uKo2PA9sOg8hza-zJ_A-7kmh27SZvIfQ0cO0faQ8dTXnA3hMsQ9ZfU55JbXZJF5Rq5fcT0uoOAFiM__AIX9vIi3F_sESYotoi5xPqKQhJajnFSi8-JYQK4G0EdMcmWjBMCSxbkPdPGNrA6bmJ6AhqkX4jyJcgfrXyHvJJ-AH0t-PGStg-LUmDw5yAPhCExWiRSreJojJdcGkpSd-DHLT6gYSef6tJrIDH04"/>
+<span class="text-xl font-black tracking-tighter uppercase italic">JD CoreDev</span>
+</div>
+<div class="hidden md:flex gap-12 text-xs font-bold uppercase tracking-widest">
+<a class="hover:text-[var(--accent-teal)]" href="#">Services</a>
+<a class="hover:text-[var(--accent-teal)]" href="#">Work</a>
+<a class="hover:text-[var(--accent-teal)]" href="#">Contact</a>
+</div>
+<div class="flex items-center gap-6">
+<span class="material-symbols-outlined text-[var(--text-muted)] cursor-pointer">light_mode</span>
+<button class="text-xs font-bold uppercase tracking-widest hover:text-[var(--accent-teal)]">Sign in</button>
+</div>
+</nav>
+<main class="max-w-[1400px] mx-auto min-h-[80vh] flex flex-col md:flex-row editorial-border-bottom">
+<div class="flex-grow flex flex-col justify-center items-center text-center p-8 md:p-20 border-r border-[var(--border-color)]">
+<div class="inline-block px-4 py-1 border border-[var(--accent-teal)] text-[var(--accent-teal)] text-[10px] uppercase tracking-[0.2em] mb-8 font-bold">
+                Custom Software Development
+            </div>
+<h1 class="text-5xl md:text-8xl font-black leading-tight tracking-tighter max-w-3xl mb-10">
+                Engineering <span class="text-[var(--accent-teal)] italic">Excellence</span> for Your Digital Future
+            </h1>
+<p class="text-[var(--text-muted)] text-lg max-w-xl mb-12 leading-relaxed">
+                Building custom, high-performance software solutions. We transform complex challenges into scalable, production-ready applications.
+            </p>
+<div class="flex flex-col sm:flex-row gap-4">
+<button class="btn-outline">Launch Project</button>
+<button class="btn-fill">View Work</button>
+</div>
+</div>
+<aside class="w-full md:w-[350px] bg-white p-12 flex flex-col justify-center">
+<div class="mb-8">
+<p class="text-[10px] uppercase tracking-[0.3em] font-bold text-[var(--accent-coral)] mb-4 italic">// Core Values</p>
+</div>
+<div class="sidebar-card">
+<span class="material-symbols-outlined text-[var(--accent-teal)] mb-3">dashboard_customize</span>
+<h3 class="font-black text-xl mb-1">Tailored</h3>
+<p class="text-sm text-[var(--text-muted)]">Built for your specific enterprise needs.</p>
+</div>
+<div class="sidebar-card">
+<span class="material-symbols-outlined text-[var(--accent-teal)] mb-3">trending_up</span>
+<h3 class="font-black text-xl mb-1">Scalable</h3>
+<p class="text-sm text-[var(--text-muted)]">Grows with you as your traffic expands.</p>
+</div>
+<div class="sidebar-card">
+<span class="material-symbols-outlined text-[var(--accent-teal)] mb-3">payments</span>
+<h3 class="font-black text-xl mb-1">Affordable</h3>
+<p class="text-sm text-[var(--text-muted)]">Competitive pricing without compromise.</p>
+</div>
+<div class="sidebar-card">
+<span class="material-symbols-outlined text-[var(--accent-teal)] mb-3">verified_user</span>
+<h3 class="font-black text-xl mb-1">Secure</h3>
+<p class="text-sm text-[var(--text-muted)]">Advanced protection built-in by design.</p>
+</div>
+</aside>
+</main>
+<section class="p-8 md:p-20 max-w-[1400px] mx-auto border-b border-[var(--border-color)]">
+<div class="flex flex-col md:flex-row items-baseline gap-8 mb-20">
+<h2 class="text-4xl font-black italic uppercase tracking-tighter">How We Work</h2>
+<div class="flex-grow h-px bg-[var(--border-color)]"></div>
+<p class="max-w-md text-sm text-[var(--text-muted)] leading-relaxed">
+                Build, custom, high-performance software solutions. We transform complex challenges into scalable, modern systems.
+            </p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-4 gap-12">
+<div class="group">
+<div class="text-[var(--accent-coral)] font-black mb-4">01.</div>
+<h4 class="font-black text-lg mb-4">Discovery &amp; Strategy</h4>
+<p class="text-sm text-[var(--text-muted)]">Develop and more about a strategy - Discovery and strategy.</p>
+</div>
+<div class="group">
+<div class="text-[var(--accent-coral)] font-black mb-4">02.</div>
+<h4 class="font-black text-lg mb-4">Design &amp; Prototyping</h4>
+<p class="text-sm text-[var(--text-muted)]">Design and development prototyping solutions.</p>
+</div>
+<div class="group">
+<div class="text-[var(--accent-coral)] font-black mb-4">03.</div>
+<h4 class="font-black text-lg mb-4">Development &amp; Testing</h4>
+<p class="text-sm text-[var(--text-muted)]">Develop optimization and development &amp; Testing.</p>
+</div>
+<div class="group">
+<div class="text-[var(--accent-coral)] font-black mb-4">04.</div>
+<h4 class="font-black text-lg mb-4">Deployment &amp; Support</h4>
+<p class="text-sm text-[var(--text-muted)]">We create consolation and deployment and support service.</p>
+</div>
+</div>
+</section>
+<section class="max-w-[1400px] mx-auto grid grid-cols-1 md:grid-cols-2">
+<div class="p-8 md:p-20 editorial-border-right border-[var(--border-color)] bg-white">
+<div class="inline-flex items-center gap-2 px-3 py-1 bg-[var(--accent-teal)] bg-opacity-10 text-[var(--accent-teal)] text-[10px] uppercase font-bold mb-8">
+<span class="material-symbols-outlined text-[14px]">cloud_done</span>
+                Hosting Included
+            </div>
+<h2 class="text-5xl font-black mb-8 leading-tight">Don't Just Build It, <span class="text-[var(--accent-coral)]">Launch It</span></h2>
+<p class="text-[var(--text-muted)] mb-10 leading-relaxed">
+                Your project deserves more than just code. I provide complete deployment and hosting solutions so your application goes live without the hassle of managing servers.
+            </p>
+<ul class="space-y-4 mb-10">
+<li class="flex items-center gap-3 text-sm font-medium">
+<span class="material-symbols-outlined text-[var(--accent-teal)] text-lg">check_circle</span>
+                    Professional cloud hosting with 99.9% uptime
+                </li>
+<li class="flex items-center gap-3 text-sm font-medium">
+<span class="material-symbols-outlined text-[var(--accent-teal)] text-lg">check_circle</span>
+                    Automatic SSL certificates and security updates
+                </li>
+<li class="flex items-center gap-3 text-sm font-medium">
+<span class="material-symbols-outlined text-[var(--accent-teal)] text-lg">check_circle</span>
+                    Performance monitoring and optimization
+                </li>
+</ul>
+<button class="btn-outline">Learn More</button>
+</div>
+<div class="grid grid-cols-2 bg-[var(--bg-main)]">
+<div class="p-8 border-b border-r border-[var(--border-color)] flex flex-col justify-center items-center text-center">
+<span class="material-symbols-outlined text-[var(--accent-teal)] text-4xl mb-4">public</span>
+<h4 class="font-black uppercase tracking-widest text-xs mb-2">Global</h4>
+<p class="text-[10px] text-[var(--text-muted)]">CDN delivery</p>
+</div>
+<div class="p-8 border-b border-[var(--border-color)] flex flex-col justify-center items-center text-center">
+<span class="material-symbols-outlined text-[var(--accent-teal)] text-4xl mb-4">shield</span>
+<h4 class="font-black uppercase tracking-widest text-xs mb-2">Secure</h4>
+<p class="text-[10px] text-[var(--text-muted)]">SSL &amp; monitoring</p>
+</div>
+<div class="p-8 border-r border-[var(--border-color)] flex flex-col justify-center items-center text-center">
+<div class="text-3xl font-black text-[var(--accent-teal)] mb-2">99.9%</div>
+<h4 class="font-black uppercase tracking-widest text-xs mb-2">Uptime</h4>
+<p class="text-[10px] text-[var(--text-muted)]">Guaranteed</p>
+</div>
+<div class="p-8 flex flex-col justify-center items-center text-center">
+<span class="material-symbols-outlined text-[var(--accent-teal)] text-4xl mb-4">settings_suggest</span>
+<h4 class="font-black uppercase tracking-widest text-xs mb-2">Managed</h4>
+<p class="text-[10px] text-[var(--text-muted)]">Full support</p>
+</div>
+</div>
+</section>
+<footer class="bg-white border-t border-[var(--border-color)] pt-20">
+<div class="max-w-[1400px] mx-auto px-8 md:px-20 text-center mb-20">
+<h2 class="text-4xl md:text-6xl font-black mb-10 uppercase tracking-tighter">Ready to Start Your Project?</h2>
+<p class="text-[var(--text-muted)] max-w-2xl mx-auto mb-12">
+                Let's discuss your project requirements and find the right solution for your business.
+            </p>
+<div class="flex flex-col sm:flex-row justify-center gap-4">
+<button class="btn-outline">Get in Touch</button>
+<button class="btn-fill">Client Portal</button>
+</div>
+</div>
+<div class="border-t border-[var(--border-color)] py-12 px-8 md:px-20">
+<div class="max-w-[1400px] mx-auto flex flex-col md:flex-row justify-between items-start gap-12">
+<div class="max-w-xs">
+<div class="flex items-center gap-2 mb-6">
+<img alt="Logo" class="w-8 h-8 object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDDKZ0GEVa_z0QyBRJ0Os-nm0WFKuvLH8LrI85VQgJI5OkkT7H6vromBjwCDJWTXyyTXSmo6oE1GnqWDs2bvwtnqMkb452xIgqGI8Rm4Uop9Usi0KHh9nVYlO3o4YEc6whfkrUUMZfKLTielhhrc0LU46cVwiKZlLK6_juEst5ILiDiruRPyiHK10uSHLjdwbu6uZ349wEvRIpuokWH3FyPu4Uhi3fB5LI5YuoD-XdkDHQP6Q9ZZK9jSAULMj_89jx-lqSA-zwRSDU"/>
+<span class="text-lg font-black tracking-tighter uppercase italic">JD CoreDev</span>
+</div>
+<p class="text-sm text-[var(--text-muted)] leading-relaxed">
+                        Custom software development for modern businesses.
+                    </p>
+</div>
+<div class="grid grid-cols-2 md:grid-cols-3 gap-16">
+<div>
+<h5 class="text-[10px] uppercase font-black tracking-widest mb-6 text-[var(--accent-coral)]">Links</h5>
+<ul class="text-xs space-y-4 font-bold uppercase tracking-wider">
+<li><a class="hover:text-[var(--accent-teal)]" href="#">Services</a></li>
+<li><a class="hover:text-[var(--accent-teal)]" href="#">Work</a></li>
+<li><a class="hover:text-[var(--accent-teal)]" href="#">Contact</a></li>
+</ul>
+</div>
+<div>
+<h5 class="text-[10px] uppercase font-black tracking-widest mb-6 text-[var(--accent-coral)]">Access</h5>
+<ul class="text-xs space-y-4 font-bold uppercase tracking-wider">
+<li><a class="hover:text-[var(--accent-teal)]" href="#">Sign In</a></li>
+</ul>
+</div>
+<div>
+<h5 class="text-[10px] uppercase font-black tracking-widest mb-6 text-[var(--accent-coral)]">Social</h5>
+<div class="flex gap-4">
+<span class="material-symbols-outlined cursor-pointer hover:text-[var(--accent-teal)]">share</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-[var(--accent-teal)]">alternate_email</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-[var(--accent-teal)]">terminal</span>
+</div>
+</div>
+</div>
+</div>
+<div class="max-w-[1400px] mx-auto border-t border-[var(--border-color)] mt-20 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] uppercase font-bold tracking-[0.2em] text-[var(--text-muted)]">
+<div>© 2028 JD CoreDev. All rights reserved.</div>
+<div class="flex gap-8">
+<a href="#">Privacy</a>
+<a href="#">Terms</a>
+</div>
+</div>
+</div>
+</footer>
+
+</body></html>

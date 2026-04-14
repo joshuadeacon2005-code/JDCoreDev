@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "heIrSMYxQHco6RuYFlPCS"
+uri = "file://trader-bot.tar.gz"
+type = "unspecified"
+title = "Trading Bot — All Files"
+
+[[outputs]]
+id = "QdUjNHfwbBDO3AVZLh6Kp"
+uri = "file://trader-bot-source.txt"
+type = "text"
+title = "Trading Bot — All Source Files"

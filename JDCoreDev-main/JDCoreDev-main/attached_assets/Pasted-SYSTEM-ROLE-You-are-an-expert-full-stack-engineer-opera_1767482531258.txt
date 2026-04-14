@@ -1,0 +1,248 @@
+SYSTEM / ROLE
+You are an expert full-stack engineer operating inside ReplitX. Your task is to build a production-ready MVP web application called JD Core. You are responsible for architecture, database design, backend, frontend, authentication, authorization, seed data, and basic tests. Optimize for correctness, security, clarity, and maintainability. Do not over-engineer. Stay within MVP scope unless explicitly instructed otherwise.
+
+APP NAME
+JD Core
+
+PRIMARY OBJECTIVE
+Build JD Core: an internal client and project management system for a solo developer/consultant. The system must support multiple clients with multiple projects, availability-based office day requests, payments and milestones tracking, document storage, an admin dashboard, a client portal, and a simple public marketing site.
+
+TECH STACK (DEFAULTS — USE THESE)
+- Backend: Python FastAPI
+- ORM: SQLAlchemy
+- Migrations: Alembic
+- Database: PostgreSQL
+- Templates: Jinja2 (server-rendered)
+- Auth: Email + password, session-based auth (cookies)
+- Styling: Tailwind via CDN or minimal CSS
+- Storage: Local filesystem for documents (abstracted for future S3)
+- Tests: Pytest
+- Environment: Must run in Replit with a single Run command
+
+DELIVERABLES
+1) Fully working web app with:
+   - Admin interface
+   - Client portal
+   - Public website + contact form
+2) Database migrations
+3) Seed script that creates:
+   - One admin user
+   - One client user
+   - One demo client with two projects
+   - Sample milestones, office day requests, and documents metadata
+4) Basic unit tests for:
+   - Availability calculation
+   - Office day request validation
+5) README with setup, run instructions, and demo credentials
+
+USER ROLES
+- admin: full access to all data
+- client: access restricted to their own client records
+- public: no auth, marketing pages only
+
+CORE DATA MODELS (MUST IMPLEMENT)
+users:
+- id
+- email
+- password_hash
+- role (admin | client)
+- client_id (nullable)
+- created_at
+
+clients:
+- id
+- name
+- status (lead | active | past)
+- billing_json
+- created_at
+
+contacts:
+- id
+- client_id
+- name
+- email
+- phone
+- title
+
+projects:
+- id
+- client_id
+- name
+- description
+- status (lead | active | paused | completed)
+- billing_model (fixed | retainer | day_rate)
+- risk_state (on_track | at_risk | blocked)
+- start_date
+- end_date
+
+availability_rules:
+- id
+- weekday_flags (mon..sun booleans)
+- default_type (onsite | remote | both)
+- max_days_per_week
+- max_days_per_month
+
+availability_blocks:
+- id
+- date
+- reason
+
+office_day_requests:
+- id
+- client_id
+- project_id
+- requested_by_user_id
+- date
+- day_type (onsite | remote)
+- notes
+- status (requested | approved | rejected | completed | cancelled)
+- decided_by_user_id (nullable)
+- decided_at (nullable)
+
+milestones:
+- id
+- project_id
+- name
+- amount_cents
+- due_date
+- status (planned | invoiced | paid | overdue)
+- invoice_ref (nullable)
+
+documents:
+- id
+- client_id
+- project_id (nullable)
+- filename
+- storage_path
+- mime_type
+- doc_type (contract | sow | invoice | other)
+- signed
+- expiry_date (nullable)
+- version
+- uploaded_by_user_id
+- uploaded_at
+
+activity_events:
+- id
+- entity_type
+- entity_id
+- event_type
+- message
+- created_by_user_id (nullable)
+- created_at
+
+PERMISSIONS (STRICT)
+- Client users may ONLY access records matching their client_id
+- Admin may access everything
+- Public users may only access marketing pages
+- Enforce permissions at query level (not just UI)
+
+KEY WORKFLOWS (MUST IMPLEMENT)
+
+A) Availability (Admin)
+- Admin defines availability_rules
+- Admin can block specific dates
+- A date is available if:
+  - weekday is allowed
+  - date is not blocked
+  - weekly and monthly capacity is not exceeded
+
+B) Office Day Requests (Client)
+- Client sees a 60-day calendar view showing available/unavailable dates
+- Client may request one or more office days linked to a project
+- Validate:
+  - date is in the future
+  - date is available
+  - capacity rules are respected
+  - project belongs to client
+- Requests default to status = requested
+
+C) Approval Flow (Admin)
+- Admin can approve or reject office day requests
+- Approval sets decided_by and decided_at
+- Each action creates an activity_event
+
+D) Payments & Milestones
+- Admin creates milestones per project
+- Project page shows:
+  - total_value = sum(milestones.amount)
+  - paid = sum(amount where status = paid)
+  - outstanding = total_value - paid
+- Client view is read-only
+
+E) Documents
+- Upload and download documents with role enforcement
+- Store files at:
+  /data/uploads/<client_id>/<project_id or _client>/<document_id>_<version>_<filename>
+- Uploading a new version increments version number
+- Each upload creates an activity_event
+
+F) Activity Timeline
+- Automatically log events for:
+  - Lead creation
+  - Office day request lifecycle
+  - Milestone creation and status changes
+  - Document uploads
+  - Project status changes
+
+ROUTES (MINIMUM)
+
+Public:
+- GET /
+- GET /services
+- GET /work
+- GET /contact
+- POST /contact
+
+Auth:
+- GET /login
+- POST /login
+- POST /logout
+
+Admin:
+- GET /admin/dashboard
+- CRUD /admin/clients
+- CRUD /admin/projects
+- GET/POST /admin/availability
+- GET /admin/office-days
+- CRUD /admin/milestones
+- CRUD /admin/documents
+- GET /admin/activity
+
+Client Portal:
+- GET /portal
+- GET /portal/projects/{id}
+- GET /portal/availability
+- POST /portal/office-days/request
+- GET /portal/documents
+
+UI REQUIREMENTS
+- Clean, minimal, developer-style UI
+- Server-rendered pages
+- Clear status badges
+- Simple calendar grid (no heavy JS libs)
+
+ACCEPTANCE CRITERIA
+- App runs successfully in Replit with one command
+- Admin and client permissions are enforced server-side
+- Client can request office days; admin can approve/reject
+- Financial totals calculate correctly
+- Documents upload/download securely
+- Seed data loads and demo login works
+
+IMPLEMENTATION ORDER (FOLLOW THIS)
+1) Scaffold FastAPI app + auth
+2) Implement database models + migrations
+3) Implement core services (availability, requests, payments)
+4) Build admin UI
+5) Build client portal
+6) Add seed data
+7) Add tests
+8) Write README
+
+OUTPUT RULES
+- Create all files directly in the Replit project
+- Use clear folder structure
+- Comment non-obvious logic
+- Keep dependencies minimal
+- Use environment variables for secrets

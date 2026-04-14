@@ -1,0 +1,42 @@
+Prompt for Replit Agent:
+
+I need you to update my website JDCoreDev.com with the following changes across theming, messaging, lead discovery, a UI fix on the audits page, and an audit persistence bug. Work through the entire codebase methodically.
+1. Reframe the core messaging around AI integration into custom systems
+This is NOT about "AI-enhanced web development." The selling point is that we build custom systems, tools, and applications for businesses and integrate AI directly into them. Update all hero sections, taglines, and key headings to reflect this. The message should be: "We build custom systems for your business with AI built right in — automations, tools, dashboards, bots, whatever you need to run smoother and cheaper."
+The tone should feel accessible and practical, not techy or intimidating. Think: "Here's how a custom system with AI saves you time and money" rather than "We leverage cutting-edge machine learning pipelines."
+Sprinkle short, punchy examples throughout the site of what AI integration into custom systems actually looks like for small businesses. Things like:
+
+A custom booking system that uses AI to auto-fill gaps, chase no-shows, and suggest upsells
+An internal tool that reads incoming emails and routes enquiries to the right person automatically
+A stock/inventory system that predicts when you'll run low and reorders for you
+A CRM that drafts follow-up messages and scores your leads so you know who to call first
+A customer-facing chatbot trained on YOUR business, not generic rubbish, plugged straight into your site or app
+A quoting tool that pulls in job details, calculates costs, and generates a branded PDF — all AI-assisted
+
+These should appear as brief callouts, cards, or inline mentions — not a massive wall of text. Keep each one to 1–2 sentences max. The goal is to make the visitor think "I didn't know I could have something like that built for my business, and it's actually affordable?"
+2. Adjust target audience tone — we are NOT targeting enterprise or high-end businesses
+Go through all copy and strip out anything that sounds corporate, premium, or enterprise-focused. The target audience is local businesses, sole traders, startups, tradespeople, small e-commerce shops — people who think custom software is only for big companies with big budgets. The language should feel like talking to a mate who happens to know tech. Approachable, no jargon, direct. Use "you" and "your business" constantly. Replace any mention of "solutions" or "leverage" or "enterprise" with plain language.
+3. Fix the lead discovery / engagement timing problem
+Visitors are bouncing quickly — sometimes only glancing at the page before leaving, which means timed popups, scroll-triggered offers, and delayed CTAs never fire. Address this with:
+
+Instant-visible value hook: The very first thing visible on load (above the fold, no scroll needed) must include a compelling micro-offer or hook. Something like: "Free 60-second site check — see what a custom AI system could do for your business" with a single input field (just their URL or business name). Make it dead simple, zero friction.
+Exit-intent trigger: Add an exit-intent popup (mouse moves toward browser close/back) that fires immediately rather than relying on time-on-page. Keep the popup minimal — one short line like "Before you go — want a free no-obligation look at how AI could slot into your business?" with a single email/name field or a WhatsApp link. Nothing heavy.
+Sticky subtle CTA: Add a small sticky bar or floating button (bottom corner) that's visible from the moment the page loads. Something like "Chat with us" or "Get a free quote" — always there, never waiting for a scroll trigger.
+
+4. Fix the audit toggle button label on the audits page
+On the audits page there is a button to toggle an audit on or off. Currently when the audit is switched off, the button says "Offline" — this makes it look like the whole system is offline rather than the audit just being disabled. Flip the label logic:
+
+When the audit IS active/running, the button should display "Online" (indicating its current state is online)
+When the audit is NOT active/switched off, the button should display "Offline" (indicating its current state is offline)
+Clicking the button toggles between the two states as it already does — just fix the label so it reflects the current status rather than the action
+
+5. Fix audit persistence — save to database immediately on generation
+There is a bug where after the initial audit is generated, it sometimes disappears and the user has to reload or regenerate it. This is likely because the audit result is only being held in state/memory and isn't being written to the database until some later step that doesn't always complete.
+Fix this by ensuring the audit data is saved to the database the moment it is successfully generated — not deferred, not batched, not waiting for the user to do something else. The flow should be:
+
+Audit generation completes (API response comes back with the audit data)
+Immediately write the full audit result to the database in the same handler/callback — don't move on until the DB write confirms
+Then update the frontend state from the saved DB record
+On page load or revisit, always pull the audit from the database so it persists regardless of whether the user navigated away, refreshed, or the frontend state got cleared
+
+If there's any caching or in-memory storage being used as the primary store for audit results, make the database the source of truth and treat any in-memory/state copy as secondary.

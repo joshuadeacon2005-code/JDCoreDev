@@ -1,0 +1,1055 @@
+# AI-Optimized Prompt: Crypto Portfolio Tracker with Alerts & News Integration
+
+## Context
+I have a client project management web application with an admin dashboard. I want to integrate a cryptocurrency tracking system that monitors coin prices, sends alerts via SMS/WhatsApp when certain conditions are met, and aggregates relevant news articles about tracked cryptocurrencies.
+
+## Current Tech Stack
+- **Frontend**: React with TypeScript
+- **UI Components**: shadcn/ui (Card, Button, Dialog, Badge, Tabs, etc.)
+- **State Management**: TanStack Query (React Query)
+- **Backend**: Express.js with TypeScript
+- **Database**: PostgreSQL with Drizzle ORM
+- **Date Handling**: date-fns
+- **Background Jobs**: Node.js (consider node-cron or similar)
+
+## Project Goals
+
+### Core Features:
+1. 📊 **Cryptocurrency Price Tracking** - Monitor real-time prices for selected coins
+2. 🔔 **Smart Alerts** - Price threshold alerts and percentage change notifications
+3. 📱 **Multi-Channel Notifications** - SMS and/or WhatsApp via Twilio
+4. 📰 **News Aggregation** - Scan and display relevant articles about tracked coins
+5. 📈 **Portfolio Dashboard** - Visual dashboard with price charts and alerts
+
+---
+
+## Part 1: Database Schema
+
+### A. Tracked Coins Table
+
+```sql
+CREATE TABLE tracked_coins (
+  id SERIAL PRIMARY KEY,
+  
+  -- Coin Identity
+  coin_id VARCHAR(50) NOT NULL UNIQUE,        -- e.g., 'bitcoin', 'ethereum'
+  symbol VARCHAR(10) NOT NULL,                 -- e.g., 'BTC', 'ETH'
+  name VARCHAR(100) NOT NULL,                  -- e.g., 'Bitcoin', 'Ethereum'
+  
+  -- Tracking Settings
+  is_active BOOLEAN DEFAULT true,
+  check_interval_minutes INTEGER DEFAULT 15,  -- How often to check price
+  
+  -- Display
+  icon_url TEXT,                               -- CoinGecko icon URL
+  added_at TIMESTAMP DEFAULT NOW(),
+  
+  -- Metadata
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_tracked_coins_active ON tracked_coins(is_active);
+```
+
+### B. Price Alerts Table
+
+```sql
+CREATE TYPE alert_type AS ENUM ('price_above', 'price_below', 'percent_increase', 'percent_decrease');
+CREATE TYPE alert_status AS ENUM ('active', 'triggered', 'disabled');
+
+CREATE TABLE price_alerts (
+  id SERIAL PRIMARY KEY,
+  
+  -- Alert Configuration
+  coin_id VARCHAR(50) NOT NULL REFERENCES tracked_coins(coin_id) ON DELETE CASCADE,
+  alert_type alert_type NOT NULL,
+  
+  -- Threshold Values
+  target_price DECIMAL(20, 8),                 -- For price_above/price_below
+  percent_change DECIMAL(5, 2),                -- For percent_increase/decrease
+  timeframe_hours INTEGER DEFAULT 24,          -- Time window for percent change
+  
+  -- Alert State
+  status alert_status DEFAULT 'active',
+  triggered_at TIMESTAMP,
+  trigger_price DECIMAL(20, 8),
+  
+  -- Notification Settings
+  notify_sms BOOLEAN DEFAULT false,
+  notify_whatsapp BOOLEAN DEFAULT true,
+  notification_sent BOOLEAN DEFAULT false,
+  
+  -- Metadata
+  label VARCHAR(255),                          -- User-friendly label
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_price_alerts_active ON price_alerts(status) WHERE status = 'active';
+CREATE INDEX idx_price_alerts_coin ON price_alerts(coin_id);
+```
+
+### C. Price History Table
+
+```sql
+CREATE TABLE price_history (
+  id SERIAL PRIMARY KEY,
+  
+  coin_id VARCHAR(50) NOT NULL REFERENCES tracked_coins(coin_id) ON DELETE CASCADE,
+  
+  -- Price Data
+  price_usd DECIMAL(20, 8) NOT NULL,
+  price_hkd DECIMAL(20, 8),
+  
+  -- Market Data
+  market_cap BIGINT,
+  volume_24h BIGINT,
+  percent_change_1h DECIMAL(10, 4),
+  percent_change_24h DECIMAL(10, 4),
+  percent_change_7d DECIMAL(10, 4),
+  
+  -- Timestamp
+  recorded_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_price_history_coin_time ON price_history(coin_id, recorded_at DESC);
+```
+
+### D. Coin News Table
+
+```sql
+CREATE TABLE coin_news (
+  id SERIAL PRIMARY KEY,
+  
+  coin_id VARCHAR(50) NOT NULL REFERENCES tracked_coins(coin_id) ON DELETE CASCADE,
+  
+  -- Article Info
+  title TEXT NOT NULL,
+  description TEXT,
+  url TEXT NOT NULL UNIQUE,
+  source_name VARCHAR(100),
+  author VARCHAR(255),
+  
+  -- Content
+  image_url TEXT,
+  content_snippet TEXT,
+  
+  -- Metadata
+  published_at TIMESTAMP,
+  fetched_at TIMESTAMP DEFAULT NOW(),
+  
+  -- Relevance
+  relevance_score DECIMAL(3, 2),               -- 0.00 to 1.00
+  sentiment VARCHAR(20)                         -- positive, negative, neutral
+);
+
+CREATE INDEX idx_coin_news_coin_published ON coin_news(coin_id, published_at DESC);
+CREATE INDEX idx_coin_news_url ON coin_news(url);
+```
+
+### E. Notification Settings Table
+
+```sql
+CREATE TABLE notification_settings (
+  id SERIAL PRIMARY KEY,
+  
+  -- Twilio Configuration
+  twilio_account_sid VARCHAR(255),
+  twilio_auth_token VARCHAR(255),
+  twilio_phone_number VARCHAR(20),             -- Twilio number for SMS
+  twilio_whatsapp_number VARCHAR(20),          -- Twilio WhatsApp number
+  
+  -- Recipient
+  recipient_phone_number VARCHAR(20) NOT NULL, -- Your phone number
+  recipient_whatsapp_number VARCHAR(20),       -- Your WhatsApp number
+  
+  -- Preferences
+  enable_sms BOOLEAN DEFAULT true,
+  enable_whatsapp BOOLEAN DEFAULT true,
+  quiet_hours_start TIME,                      -- e.g., 23:00
+  quiet_hours_end TIME,                        -- e.g., 07:00
+  
+  -- Rate Limiting
+  max_notifications_per_hour INTEGER DEFAULT 10,
+  
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Insert default settings
+INSERT INTO notification_settings (id) VALUES (1);
+```
+
+### Drizzle ORM Schema (`shared/schema.ts`)
+
+```typescript
+export const alertTypeEnum = pgEnum("alert_type", [
+  "price_above", "price_below", "percent_increase", "percent_decrease"
+]);
+
+export const alertStatusEnum = pgEnum("alert_status", [
+  "active", "triggered", "disabled"
+]);
+
+export const trackedCoins = pgTable("tracked_coins", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  coinId: varchar("coin_id", { length: 50 }).notNull().unique(),
+  symbol: varchar("symbol", { length: 10 }).notNull(),
+  name: varchar("name", { length: 100 }).notNull(),
+  isActive: boolean("is_active").default(true),
+  checkIntervalMinutes: integer("check_interval_minutes").default(15),
+  iconUrl: text("icon_url"),
+  addedAt: timestamp("added_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const priceAlerts = pgTable("price_alerts", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  coinId: varchar("coin_id", { length: 50 }).notNull().references(() => trackedCoins.coinId, { onDelete: "cascade" }),
+  alertType: alertTypeEnum("alert_type").notNull(),
+  targetPrice: decimal("target_price", { precision: 20, scale: 8 }),
+  percentChange: decimal("percent_change", { precision: 5, scale: 2 }),
+  timeframeHours: integer("timeframe_hours").default(24),
+  status: alertStatusEnum("status").default("active"),
+  triggeredAt: timestamp("triggered_at"),
+  triggerPrice: decimal("trigger_price", { precision: 20, scale: 8 }),
+  notifySms: boolean("notify_sms").default(false),
+  notifyWhatsapp: boolean("notify_whatsapp").default(true),
+  notificationSent: boolean("notification_sent").default(false),
+  label: varchar("label", { length: 255 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const priceHistory = pgTable("price_history", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  coinId: varchar("coin_id", { length: 50 }).notNull().references(() => trackedCoins.coinId, { onDelete: "cascade" }),
+  priceUsd: decimal("price_usd", { precision: 20, scale: 8 }).notNull(),
+  priceHkd: decimal("price_hkd", { precision: 20, scale: 8 }),
+  marketCap: bigint("market_cap", { mode: "number" }),
+  volume24h: bigint("volume_24h", { mode: "number" }),
+  percentChange1h: decimal("percent_change_1h", { precision: 10, scale: 4 }),
+  percentChange24h: decimal("percent_change_24h", { precision: 10, scale: 4 }),
+  percentChange7d: decimal("percent_change_7d", { precision: 10, scale: 4 }),
+  recordedAt: timestamp("recorded_at").defaultNow().notNull(),
+});
+
+export const coinNews = pgTable("coin_news", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  coinId: varchar("coin_id", { length: 50 }).notNull().references(() => trackedCoins.coinId, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  description: text("description"),
+  url: text("url").notNull().unique(),
+  sourceName: varchar("source_name", { length: 100 }),
+  author: varchar("author", { length: 255 }),
+  imageUrl: text("image_url"),
+  contentSnippet: text("content_snippet"),
+  publishedAt: timestamp("published_at"),
+  fetchedAt: timestamp("fetched_at").defaultNow().notNull(),
+  relevanceScore: decimal("relevance_score", { precision: 3, scale: 2 }),
+  sentiment: varchar("sentiment", { length: 20 }),
+});
+
+export const notificationSettings = pgTable("notification_settings", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  twilioAccountSid: varchar("twilio_account_sid", { length: 255 }),
+  twilioAuthToken: varchar("twilio_auth_token", { length: 255 }),
+  twilioPhoneNumber: varchar("twilio_phone_number", { length: 20 }),
+  twilioWhatsappNumber: varchar("twilio_whatsapp_number", { length: 20 }),
+  recipientPhoneNumber: varchar("recipient_phone_number", { length: 20 }).notNull(),
+  recipientWhatsappNumber: varchar("recipient_whatsapp_number", { length: 20 }),
+  enableSms: boolean("enable_sms").default(true),
+  enableWhatsapp: boolean("enable_whatsapp").default(true),
+  quietHoursStart: time("quiet_hours_start"),
+  quietHoursEnd: time("quiet_hours_end"),
+  maxNotificationsPerHour: integer("max_notifications_per_hour").default(10),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+```
+
+---
+
+## Part 2: External API Integrations
+
+### A. CoinGecko API (Free Tier)
+
+**API Documentation**: https://www.coingecko.com/en/api/documentation
+
+**No API Key Required** for basic usage (50 calls/minute)
+
+**Key Endpoints**:
+
+1. **Search Coins**: `GET /api/v3/search?query={query}`
+2. **Coin Price**: `GET /api/v3/simple/price?ids={coin_ids}&vs_currencies=usd,hkd&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true`
+3. **Coin Details**: `GET /api/v3/coins/{coin_id}`
+4. **Price History**: `GET /api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=7`
+
+**Implementation** (`server/services/coingecko.ts`):
+
+```typescript
+import axios from 'axios';
+
+const COINGECKO_BASE_URL = 'https://api.coingecko.com/api/v3';
+
+export interface CoinPrice {
+  coinId: string;
+  priceUsd: number;
+  priceHkd: number;
+  marketCap: number;
+  volume24h: number;
+  percentChange24h: number;
+}
+
+export async function searchCoins(query: string) {
+  const response = await axios.get(`${COINGECKO_BASE_URL}/search`, {
+    params: { query }
+  });
+  return response.data.coins;
+}
+
+export async function getCoinPrices(coinIds: string[]): Promise<CoinPrice[]> {
+  const response = await axios.get(`${COINGECKO_BASE_URL}/simple/price`, {
+    params: {
+      ids: coinIds.join(','),
+      vs_currencies: 'usd,hkd',
+      include_market_cap: true,
+      include_24hr_vol: true,
+      include_24hr_change: true,
+    }
+  });
+  
+  return Object.entries(response.data).map(([coinId, data]: [string, any]) => ({
+    coinId,
+    priceUsd: data.usd,
+    priceHkd: data.hkd,
+    marketCap: data.usd_market_cap,
+    volume24h: data.usd_24h_vol,
+    percentChange24h: data.usd_24h_change,
+  }));
+}
+
+export async function getCoinDetails(coinId: string) {
+  const response = await axios.get(`${COINGECKO_BASE_URL}/coins/${coinId}`);
+  return {
+    id: response.data.id,
+    symbol: response.data.symbol.toUpperCase(),
+    name: response.data.name,
+    iconUrl: response.data.image?.large || response.data.image?.small,
+    description: response.data.description?.en,
+  };
+}
+```
+
+### B. News API Integration
+
+**Option 1: News API** (https://newsapi.org/)
+- Free tier: 100 requests/day
+- Requires API key
+
+**Option 2: CryptoPanic API** (https://cryptopanic.com/developers/api/)
+- Crypto-specific news
+- Free tier available
+
+**Option 3: Web Scraping** (CoinTelegraph, CoinDesk, etc.)
+- Use Cheerio for scraping
+- No API limits but less reliable
+
+**Recommended: CryptoPanic API** (`server/services/cryptonews.ts`):
+
+```typescript
+import axios from 'axios';
+
+const CRYPTOPANIC_API_KEY = process.env.CRYPTOPANIC_API_KEY;
+const CRYPTOPANIC_BASE_URL = 'https://cryptopanic.com/api/v1';
+
+export interface NewsArticle {
+  title: string;
+  description: string;
+  url: string;
+  sourceName: string;
+  publishedAt: Date;
+  imageUrl?: string;
+}
+
+export async function fetchCoinNews(coinSymbol: string, limit: number = 10): Promise<NewsArticle[]> {
+  try {
+    const response = await axios.get(`${CRYPTOPANIC_BASE_URL}/posts/`, {
+      params: {
+        auth_token: CRYPTOPANIC_API_KEY,
+        currencies: coinSymbol,
+        kind: 'news',
+        limit,
+      }
+    });
+    
+    return response.data.results.map((article: any) => ({
+      title: article.title,
+      description: article.title, // CryptoPanic doesn't provide description
+      url: article.url,
+      sourceName: article.source.title,
+      publishedAt: new Date(article.published_at),
+      imageUrl: article.metadata?.image,
+    }));
+  } catch (error) {
+    console.error('Error fetching news:', error);
+    return [];
+  }
+}
+```
+
+### C. Twilio Integration (SMS & WhatsApp)
+
+**Setup**:
+1. Sign up at https://www.twilio.com/
+2. Get Account SID, Auth Token, Phone Number
+3. Enable WhatsApp sandbox or get approved number
+
+**Implementation** (`server/services/twilio.ts`):
+
+```typescript
+import twilio from 'twilio';
+import { db } from '../db';
+import { notificationSettings } from '@shared/schema';
+import { eq } from 'drizzle-orm';
+
+let twilioClient: any = null;
+
+async function getTwilioClient() {
+  if (twilioClient) return twilioClient;
+  
+  const settings = await db.select().from(notificationSettings).limit(1);
+  if (!settings.length || !settings[0].twilioAccountSid) {
+    throw new Error('Twilio not configured');
+  }
+  
+  const config = settings[0];
+  twilioClient = twilio(config.twilioAccountSid!, config.twilioAuthToken!);
+  return twilioClient;
+}
+
+export async function sendSMS(message: string) {
+  const client = await getTwilioClient();
+  const settings = await db.select().from(notificationSettings).limit(1);
+  const config = settings[0];
+  
+  if (!config.enableSms) {
+    console.log('SMS disabled');
+    return;
+  }
+  
+  // Check quiet hours
+  if (isQuietHours(config)) {
+    console.log('Quiet hours - SMS not sent');
+    return;
+  }
+  
+  await client.messages.create({
+    body: message,
+    from: config.twilioPhoneNumber,
+    to: config.recipientPhoneNumber,
+  });
+}
+
+export async function sendWhatsApp(message: string) {
+  const client = await getTwilioClient();
+  const settings = await db.select().from(notificationSettings).limit(1);
+  const config = settings[0];
+  
+  if (!config.enableWhatsapp) {
+    console.log('WhatsApp disabled');
+    return;
+  }
+  
+  if (isQuietHours(config)) {
+    console.log('Quiet hours - WhatsApp not sent');
+    return;
+  }
+  
+  await client.messages.create({
+    body: message,
+    from: `whatsapp:${config.twilioWhatsappNumber}`,
+    to: `whatsapp:${config.recipientWhatsappNumber}`,
+  });
+}
+
+function isQuietHours(config: any): boolean {
+  if (!config.quietHoursStart || !config.quietHoursEnd) return false;
+  
+  const now = new Date();
+  const currentTime = now.getHours() * 60 + now.getMinutes();
+  
+  const [startHour, startMin] = config.quietHoursStart.split(':').map(Number);
+  const [endHour, endMin] = config.quietHoursEnd.split(':').map(Number);
+  
+  const startTime = startHour * 60 + startMin;
+  const endTime = endHour * 60 + endMin;
+  
+  if (startTime < endTime) {
+    return currentTime >= startTime && currentTime <= endTime;
+  } else {
+    return currentTime >= startTime || currentTime <= endTime;
+  }
+}
+```
+
+---
+
+## Part 3: Background Jobs / Price Monitoring
+
+**Install Dependencies**:
+```bash
+npm install node-cron
+```
+
+**Price Monitor Service** (`server/services/priceMonitor.ts`):
+
+```typescript
+import cron from 'node-cron';
+import { db } from '../db';
+import { trackedCoins, priceAlerts, priceHistory } from '@shared/schema';
+import { eq, and } from 'drizzle-orm';
+import { getCoinPrices } from './coingecko';
+import { sendSMS, sendWhatsApp } from './twilio';
+
+export function startPriceMonitoring() {
+  // Run every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
+    console.log('Running price check...');
+    await checkPrices();
+  });
+  
+  console.log('Price monitoring started');
+}
+
+async function checkPrices() {
+  try {
+    // Get all active tracked coins
+    const coins = await db.select()
+      .from(trackedCoins)
+      .where(eq(trackedCoins.isActive, true));
+    
+    if (coins.length === 0) return;
+    
+    // Fetch current prices
+    const coinIds = coins.map(c => c.coinId);
+    const prices = await getCoinPrices(coinIds);
+    
+    // Save to price history
+    for (const price of prices) {
+      await db.insert(priceHistory).values({
+        coinId: price.coinId,
+        priceUsd: price.priceUsd.toString(),
+        priceHkd: price.priceHkd.toString(),
+        marketCap: price.marketCap,
+        volume24h: price.volume24h,
+        percentChange24h: price.percentChange24h.toString(),
+      });
+    }
+    
+    // Check alerts
+    await checkAlerts(prices);
+    
+  } catch (error) {
+    console.error('Error checking prices:', error);
+  }
+}
+
+async function checkAlerts(prices: any[]) {
+  const activeAlerts = await db.select()
+    .from(priceAlerts)
+    .where(eq(priceAlerts.status, 'active'));
+  
+  for (const alert of activeAlerts) {
+    const priceData = prices.find(p => p.coinId === alert.coinId);
+    if (!priceData) continue;
+    
+    let shouldTrigger = false;
+    const currentPrice = priceData.priceUsd;
+    
+    switch (alert.alertType) {
+      case 'price_above':
+        shouldTrigger = currentPrice > Number(alert.targetPrice);
+        break;
+      case 'price_below':
+        shouldTrigger = currentPrice < Number(alert.targetPrice);
+        break;
+      case 'percent_increase':
+        shouldTrigger = priceData.percentChange24h > Number(alert.percentChange);
+        break;
+      case 'percent_decrease':
+        shouldTrigger = priceData.percentChange24h < -Number(alert.percentChange);
+        break;
+    }
+    
+    if (shouldTrigger && !alert.notificationSent) {
+      await triggerAlert(alert, currentPrice, priceData);
+    }
+  }
+}
+
+async function triggerAlert(alert: any, currentPrice: number, priceData: any) {
+  // Update alert status
+  await db.update(priceAlerts)
+    .set({
+      status: 'triggered',
+      triggeredAt: new Date(),
+      triggerPrice: currentPrice.toString(),
+      notificationSent: true,
+    })
+    .where(eq(priceAlerts.id, alert.id));
+  
+  // Get coin details
+  const coin = await db.select()
+    .from(trackedCoins)
+    .where(eq(trackedCoins.coinId, alert.coinId))
+    .limit(1);
+  
+  if (!coin.length) return;
+  
+  // Format message
+  const message = formatAlertMessage(alert, coin[0], currentPrice, priceData);
+  
+  // Send notifications
+  try {
+    if (alert.notifySms) {
+      await sendSMS(message);
+    }
+    if (alert.notifyWhatsapp) {
+      await sendWhatsApp(message);
+    }
+  } catch (error) {
+    console.error('Error sending notification:', error);
+  }
+}
+
+function formatAlertMessage(alert: any, coin: any, currentPrice: number, priceData: any): string {
+  const symbol = coin.symbol;
+  const name = coin.name;
+  const change24h = priceData.percentChange24h.toFixed(2);
+  
+  let message = `🚨 ${name} (${symbol}) Alert!\n\n`;
+  
+  switch (alert.alertType) {
+    case 'price_above':
+      message += `Price is now $${currentPrice.toFixed(2)}, above your target of $${Number(alert.targetPrice).toFixed(2)}`;
+      break;
+    case 'price_below':
+      message += `Price is now $${currentPrice.toFixed(2)}, below your target of $${Number(alert.targetPrice).toFixed(2)}`;
+      break;
+    case 'percent_increase':
+      message += `Price increased ${change24h}% in the last 24h (target: ${alert.percentChange}%)`;
+      break;
+    case 'percent_decrease':
+      message += `Price decreased ${change24h}% in the last 24h (target: ${alert.percentChange}%)`;
+      break;
+  }
+  
+  message += `\n\nCurrent Price: $${currentPrice.toFixed(2)} USD`;
+  message += `\n24h Change: ${change24h}%`;
+  
+  if (alert.label) {
+    message += `\n\nNote: ${alert.label}`;
+  }
+  
+  return message;
+}
+```
+
+**Start in Server** (`server/index.ts`):
+
+```typescript
+import { startPriceMonitoring } from './services/priceMonitor';
+
+// After Express setup
+startPriceMonitoring();
+```
+
+---
+
+## Part 4: Backend API Endpoints
+
+### Tracked Coins Endpoints
+
+**GET `/api/admin/crypto/coins`** - List all tracked coins
+**POST `/api/admin/crypto/coins`** - Add coin to track
+**PATCH `/api/admin/crypto/coins/:coinId`** - Update coin settings
+**DELETE `/api/admin/crypto/coins/:coinId`** - Remove coin
+
+**GET `/api/admin/crypto/coins/:coinId/price-history`** - Get price history
+**GET `/api/admin/crypto/coins/:coinId/news`** - Get news articles
+
+### Alerts Endpoints
+
+**GET `/api/admin/crypto/alerts`** - List all alerts
+**POST `/api/admin/crypto/alerts`** - Create new alert
+**PATCH `/api/admin/crypto/alerts/:id`** - Update alert
+**DELETE `/api/admin/crypto/alerts/:id`** - Delete alert
+
+### Settings Endpoints
+
+**GET `/api/admin/crypto/settings`** - Get notification settings
+**PATCH `/api/admin/crypto/settings`** - Update settings
+
+### Search Endpoint
+
+**GET `/api/admin/crypto/search?q={query}`** - Search for coins to add
+
+---
+
+## Part 5: Frontend Components
+
+### A. Main Crypto Dashboard Page
+
+**New File**: `client/pages/admin/crypto-tracker.tsx`
+
+```tsx
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { AdminLayout } from '@/components/AdminLayout';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { TrendingUp, TrendingDown, Bell, Plus, Settings, Newspaper } from 'lucide-react';
+
+export default function CryptoTracker() {
+  const [activeTab, setActiveTab] = useState('portfolio');
+  
+  const { data: coins } = useQuery({
+    queryKey: ['/api/admin/crypto/coins'],
+  });
+  
+  const { data: alerts } = useQuery({
+    queryKey: ['/api/admin/crypto/alerts'],
+  });
+  
+  return (
+    <AdminLayout>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-semibold">Crypto Tracker</h1>
+            <p className="text-muted-foreground">
+              Monitor cryptocurrency prices with real-time alerts
+            </p>
+          </div>
+          
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowSettingsDialog(true)}>
+              <Settings className="h-4 w-4 mr-2" />
+              Settings
+            </Button>
+            <Button onClick={() => setShowAddCoinDialog(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Coin
+            </Button>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList>
+            <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
+            <TabsTrigger value="alerts">
+              Alerts
+              {alerts?.filter(a => a.status === 'active').length > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {alerts.filter(a => a.status === 'active').length}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="news">News</TabsTrigger>
+          </TabsList>
+
+          {/* Portfolio Tab */}
+          <TabsContent value="portfolio">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {coins?.map(coin => (
+                <CoinCard key={coin.id} coin={coin} />
+              ))}
+            </div>
+          </TabsContent>
+
+          {/* Alerts Tab */}
+          <TabsContent value="alerts">
+            <AlertsList alerts={alerts} />
+          </TabsContent>
+
+          {/* News Tab */}
+          <TabsContent value="news">
+            <NewsGrid coins={coins} />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </AdminLayout>
+  );
+}
+```
+
+### B. Coin Card Component
+
+```tsx
+function CoinCard({ coin }: { coin: any }) {
+  const { data: latestPrice } = useQuery({
+    queryKey: ['/api/admin/crypto/coins', coin.coinId, 'latest'],
+    refetchInterval: 60000, // Refresh every minute
+  });
+  
+  const isPositive = latestPrice?.percentChange24h >= 0;
+  
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="flex items-center gap-2">
+          {coin.iconUrl && (
+            <img src={coin.iconUrl} alt={coin.symbol} className="w-8 h-8" />
+          )}
+          <div>
+            <CardTitle className="text-lg">{coin.symbol}</CardTitle>
+            <p className="text-sm text-muted-foreground">{coin.name}</p>
+          </div>
+        </div>
+      </CardHeader>
+      
+      <CardContent>
+        <div className="space-y-2">
+          <div>
+            <div className="text-2xl font-bold">
+              ${latestPrice?.priceUsd.toFixed(2)}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              ≈ HK${latestPrice?.priceHkd.toFixed(2)}
+            </div>
+          </div>
+          
+          <div className={`flex items-center gap-1 text-sm ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+            {isPositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+            <span>{Math.abs(latestPrice?.percentChange24h || 0).toFixed(2)}%</span>
+            <span className="text-muted-foreground">24h</span>
+          </div>
+          
+          <div className="pt-2 flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => handleViewDetails(coin)}>
+              Details
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => handleAddAlert(coin)}>
+              <Bell className="h-3 w-3 mr-1" />
+              Alert
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+### C. Add Coin Dialog
+
+```tsx
+function AddCoinDialog({ open, onOpenChange }: DialogProps) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCoin, setSelectedCoin] = useState(null);
+  
+  const { data: searchResults } = useQuery({
+    queryKey: ['/api/admin/crypto/search', searchQuery],
+    enabled: searchQuery.length > 2,
+  });
+  
+  const addCoinMutation = useMutation({
+    mutationFn: async (coinData: any) => {
+      return apiRequest('POST', '/api/admin/crypto/coins', coinData);
+    },
+    onSuccess: () => {
+      toast({ title: 'Coin added successfully' });
+      onOpenChange(false);
+    },
+  });
+  
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add Cryptocurrency</DialogTitle>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          <div>
+            <Label>Search Coin</Label>
+            <Input
+              placeholder="Bitcoin, Ethereum, etc."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          
+          {searchResults && (
+            <div className="max-h-60 overflow-y-auto space-y-2">
+              {searchResults.map((coin: any) => (
+                <div
+                  key={coin.id}
+                  className="p-3 border rounded-lg cursor-pointer hover:bg-muted"
+                  onClick={() => setSelectedCoin(coin)}
+                >
+                  <div className="flex items-center gap-2">
+                    <img src={coin.thumb} alt={coin.symbol} className="w-6 h-6" />
+                    <div>
+                      <div className="font-medium">{coin.name}</div>
+                      <div className="text-sm text-muted-foreground">{coin.symbol}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {selectedCoin && (
+            <div className="p-4 bg-muted rounded-lg">
+              <p className="font-medium">Selected: {selectedCoin.name}</p>
+            </div>
+          )}
+        </div>
+        
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            onClick={() => addCoinMutation.mutate(selectedCoin)}
+            disabled={!selectedCoin}
+          >
+            Add Coin
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+### D. Create Alert Dialog
+
+Similar structure to Add Coin Dialog but with:
+- Alert type selector (price above/below, percent change)
+- Target value input
+- Notification method checkboxes (SMS, WhatsApp)
+- Label and notes fields
+
+### E. Settings Dialog
+
+Configure:
+- Twilio credentials
+- Recipient phone numbers
+- Quiet hours
+- Notification preferences
+
+---
+
+## Part 6: Testing & Validation
+
+### Test Scenarios
+
+1. **Add Coin**:
+   - Search for Bitcoin
+   - Add to tracked coins
+   - Verify appears in portfolio
+
+2. **Price Updates**:
+   - Wait for background job
+   - Verify prices update in UI
+   - Check price history recorded
+
+3. **Create Alert**:
+   - Set alert for BTC > $100,000
+   - Verify alert shows as active
+   - Test triggering mechanism
+
+4. **Notifications**:
+   - Configure Twilio settings
+   - Trigger alert manually
+   - Verify SMS/WhatsApp received
+
+5. **News Aggregation**:
+   - Fetch news for tracked coin
+   - Verify articles display
+   - Check relevance and freshness
+
+6. **Quiet Hours**:
+   - Set quiet hours
+   - Trigger alert during quiet hours
+   - Verify notification blocked
+
+---
+
+## Part 7: Security & Best Practices
+
+### Security Measures
+
+1. **API Keys**:
+   - Store in environment variables
+   - Never commit to git
+   - Encrypt Twilio tokens in database
+
+2. **Rate Limiting**:
+   - Implement max notifications per hour
+   - Respect API rate limits (CoinGecko, News API)
+
+3. **Error Handling**:
+   - Graceful failures for API timeouts
+   - Log errors without exposing sensitive data
+   - Retry logic for failed notifications
+
+4. **Data Validation**:
+   - Validate phone numbers
+   - Sanitize search queries
+   - Validate price thresholds
+
+### Performance Optimization
+
+1. **Caching**:
+   - Cache coin prices for 1 minute
+   - Cache news articles for 1 hour
+
+2. **Database Indexing**:
+   - Index on coin_id and timestamp
+   - Index on alert status
+
+3. **Background Jobs**:
+   - Use separate process for price monitoring
+   - Implement job queues for heavy operations
+
+---
+
+## Part 8: Success Criteria
+
+✅ Can add and remove coins from tracking
+✅ Real-time price updates in dashboard
+✅ Create multiple alert types
+✅ SMS notifications working via Twilio
+✅ WhatsApp notifications working via Twilio
+✅ Quiet hours respected
+✅ News articles aggregated and displayed
+✅ Price history charts functional
+✅ Mobile-responsive dashboard
+✅ Background jobs running reliably
+
+---
+
+## Part 9: Optional Enhancements
+
+- 📊 Price charts using Chart.js or Recharts
+- 💼 Portfolio tracking (track holdings, not just prices)
+- 🔮 Price predictions using historical data
+- 📧 Email notifications as alternative
+- 🌐 Multi-currency support (EUR, GBP, etc.)
+- 📱 Progressive Web App for mobile
+- 🔐 Two-factor authentication for settings
+- 📈 Performance analytics (best/worst performers)
+
+---
+
+**Please implement this cryptocurrency tracker following existing patterns. Prioritize reliability of notifications and accuracy of price data. Ensure proper error handling and rate limiting to avoid service disruptions.**

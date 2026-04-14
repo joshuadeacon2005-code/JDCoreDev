@@ -1,0 +1,224 @@
+SYSTEM / ROLE
+You are an expert full-stack engineer working inside the existing JD Core Replit project. Your task is to FIX the bug where “Revenue” from projects is not displaying (shows 0 or blank) on:
+- Admin Dashboard revenue box
+- Analytics page (any revenue charts/tables)
+You must do a deep audit, identify root cause(s), and implement a correct, consistent revenue pipeline end-to-end. Do NOT add new features or redesign UI. Keep changes focused on revenue correctness and display.
+
+GOAL (NON-NEGOTIABLE)
+After this fix, with seed/demo data AND real data:
+- Dashboard revenue shows a correct non-zero number when revenue exists
+- Analytics revenue numbers match the dashboard
+- Project previews and project detail totals match analytics
+- No “0 everywhere” due to query/filter/formatting bugs
+
+===========================================================
+STEP 0 — DEFINE REVENUE (MUST PICK ONE & APPLY CONSISTENTLY)
+===========================================================
+Before coding, inspect existing code to see how revenue is intended to be defined. Choose ONE definition and implement everywhere.
+
+MVP REVENUE DEFINITION (RECOMMENDED)
+Revenue = SUM of Milestones where status == "paid"
+- Source table: milestones.amount_cents
+- Filter: milestones.status == "paid"
+- Optional filter: only projects that are status != lead (but keep simple: paid is paid)
+- Currency: use project currency if stored; otherwise global default currency
+
+If existing app defines revenue differently, align to the existing intent, BUT:
+- Write a short comment near the revenue query explaining the chosen definition.
+
+===========================================================
+STEP 1 — AUDIT: FIND EVERY REVENUE REFERENCE
+===========================================================
+Repo-wide search for:
+- “revenue”
+- “analytics”
+- “dashboard”
+- “amount”, “amount_cents”
+- “paid”, “status”
+- “sum(”, “func.sum”
+- “milestone”
+- “outstanding”, “total_value”
+- Template fields that render revenue
+
+Identify:
+1) Where dashboard revenue is computed (route handler/service)
+2) Where analytics revenue is computed
+3) Whether either uses:
+   - wrong table
+   - wrong column (amount vs amount_cents)
+   - wrong status comparisons (“Paid” vs “paid”)
+   - missing joins
+   - missing commits / missing seed data
+   - wrong date range filters (e.g., default range excludes all)
+   - currency conversion mistakes
+   - None/Decimal handling bugs
+
+Write a short internal note (comment) listing the exact files/functions that were audited and fixed.
+
+===========================================================
+STEP 2 — VERIFY DATA EXISTS (THIS IS OFTEN THE REAL ISSUE)
+===========================================================
+Before changing logic, verify in code (and optionally add a debug log) that data exists:
+- Are there milestones at all?
+- Are any milestones status == "paid"?
+- Are amounts stored in amount_cents > 0?
+- Are milestones linked to projects properly?
+- Are projects linked to clients properly?
+
+Also check seed script:
+- Ensure seed creates at least one paid milestone with non-zero amount_cents.
+If seed is missing paid milestones, dashboard will be 0 even if code is correct.
+
+===========================================================
+STEP 3 — IMPLEMENT A SINGLE REVENUE SERVICE (NO DUPLICATE LOGIC)
+===========================================================
+Create a canonical service module:
+- app/services/revenue.py
+
+It MUST include functions:
+
+A) revenue_total_paid_cents(db, *, date_from=None, date_to=None, client_id=None) -> int
+- Returns SUM(milestones.amount_cents) WHERE milestones.status == "paid"
+- If date_from/date_to provided, filter by milestones.paid_at if exists, else milestones.updated_at or due_date (choose and document).
+  If no paid_at exists, DO NOT add date filtering yet unless required—keep it correct first.
+
+B) revenue_by_project(db, *, date_from=None, date_to=None) -> list[dict]
+- Returns per-project totals:
+  - project_id
+  - project_name
+  - paid_revenue_cents
+- Use LEFT JOIN and COALESCE to avoid None totals.
+
+C) revenue_timeseries(db, *, bucket="month", date_from, date_to) -> list[dict]
+- For analytics chart/table:
+  - period label (YYYY-MM)
+  - paid_revenue_cents
+- Use DB-level grouping if possible; otherwise compute in Python.
+- If timeseries already exists, refactor it to call this.
+
+RULES:
+- Use COALESCE(func.sum(...), 0) to avoid None -> 0 bugs.
+- Do not filter out rows accidentally by joining incorrectly.
+- Ensure status comparison EXACTLY matches stored enum/strings.
+- Ensure all amounts are in cents until formatting at render time.
+
+===========================================================
+STEP 4 — FIX STATUS CONSISTENCY (VERY COMMON ROOT CAUSE)
+===========================================================
+Inspect milestone.status storage:
+- Is it lowercase "paid" or uppercase "Paid"?
+- Is it an enum?
+- Are there multiple paid-like states?
+
+Fix by enforcing one canonical representation:
+- If using enums: enforce enum values exactly.
+- If using strings: normalize inputs on create/update to lowercase.
+- Add a migration if necessary ONLY if existing rows use inconsistent values (e.g. "Paid").
+  - Migrate all variants to "paid".
+  - Add validation to prevent future drift.
+
+===========================================================
+STEP 5 — FIX DASHBOARD REVENUE DISPLAY
+===========================================================
+Dashboard route must:
+- Call app/services/revenue.py::revenue_total_paid_cents(...)
+- Pass result to template context as: revenue_paid_cents (int)
+- Template must render using a money formatter filter:
+  - {{ revenue_paid_cents|money(default_currency) }}
+Ensure:
+- The dashboard is not showing 0 due to formatting bugs (e.g. dividing wrong).
+- If revenue is 0 because truly no paid milestones exist, show “USD 0.00” (not blank).
+
+Also ensure dashboard doesn’t use cached/stale computed values.
+
+===========================================================
+STEP 6 — FIX ANALYTICS REVENUE DISPLAY
+===========================================================
+Analytics route must:
+- Use the same service functions as dashboard
+- Show:
+  - total paid revenue
+  - revenue by project table (project_name + paid_revenue formatted)
+  - optional time series (if currently present)
+If analytics uses date ranges:
+- Confirm default date range includes seed data and typical records.
+- If current default range is “last 7 days” and milestones aren’t in that window, that’s why it shows 0.
+  - Fix default range to something sane (e.g., last 90 days) OR show “All time” by default.
+
+IMPORTANT:
+- Do not silently filter out all data.
+- Display current applied date filter in analytics UI (even if minimal text).
+
+===========================================================
+STEP 7 — FIX PROJECT PREVIEW / DETAIL (CONSISTENCY CHECK)
+===========================================================
+Ensure project cards and project detail totals use the same logic:
+- total_value_cents = sum(milestones.amount_cents)
+- paid_cents = sum(milestones.amount_cents where status == "paid")
+- outstanding_cents = total_value_cents - paid_cents
+
+Implement a service:
+- app/services/projects_finance.py::project_financials(project_id) -> {total, paid, outstanding}
+Use it in:
+- Project list preview
+- Project detail view
+- Client portal read-only views
+
+===========================================================
+STEP 8 — FIX SEED DATA SO BUG IS OBSERVABLE AND TESTABLE
+===========================================================
+Update seed script:
+- Create at least 3 milestones across 2 projects:
+  - Project A: one paid, one invoiced
+  - Project B: one planned
+- Ensure paid milestone amount_cents is large enough to be obvious (e.g., 30000 cents).
+
+Then validate:
+- Dashboard revenue equals sum of paid milestones.
+- Analytics totals match dashboard.
+
+===========================================================
+STEP 9 — ADD TESTS (MINIMUM BUT MEANINGFUL)
+===========================================================
+Add pytest tests:
+
+1) test_revenue_total_paid_cents
+- Insert milestones with statuses: paid, planned
+- Expect only paid sums included.
+
+2) test_revenue_by_project
+- Two projects with paid milestones
+- Ensure returned list includes both with correct totals.
+
+3) test_dashboard_revenue_nonzero_with_seed
+- Run seed or create fixtures
+- Call dashboard route
+- Assert rendered contains formatted non-zero revenue
+
+4) test_status_normalization (if you implement normalization)
+- Create milestone with "Paid"
+- Ensure stored becomes "paid" and counted.
+
+===========================================================
+DIAGNOSTIC OUTPUT REQUIREMENT (MANDATORY)
+===========================================================
+Add temporary logging (and then remove or guard it):
+- Log milestone counts and sum results when dashboard loads if revenue is 0.
+This helps confirm whether bug is data absence or query logic.
+
+===========================================================
+ACCEPTANCE CRITERIA
+===========================================================
+- Dashboard revenue box displays correct paid revenue (non-zero if paid milestones exist).
+- Analytics revenue total matches dashboard exactly.
+- Revenue by project table (analytics) matches per-project financials shown on project pages.
+- Seed data produces a visible non-zero revenue on dashboard and analytics.
+- No duplicate revenue logic scattered across routes; all goes through revenue service.
+- No “0” caused by None aggregation, wrong joins, wrong status strings, or wrong date filters.
+
+OUTPUT RULES
+- No new product features.
+- Keep UI changes minimal (only what's needed to display correct revenue + show active date filter).
+- Keep dependencies minimal.
+- Use consistent cents storage and money formatting.
+- Document “Revenue definition” in a code comment near the revenue service.

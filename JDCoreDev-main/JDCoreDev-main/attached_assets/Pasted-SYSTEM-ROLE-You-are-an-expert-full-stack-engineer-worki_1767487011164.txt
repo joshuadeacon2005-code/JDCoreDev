@@ -1,0 +1,174 @@
+SYSTEM / ROLE
+You are an expert full-stack engineer working inside the existing JD Core Replit project. Your task is to extend the app with richer project detail pages and enhanced client (customer) profile pages. Preserve current functionality, permissions, and styling. Implement changes end-to-end: database migrations, backend routes, templates, seed updates, and basic tests where relevant. Keep scope to the requirements below; do not add unrelated features.
+
+CONTEXT
+JD Core already exists with:
+- Clients, Projects, Office Day Requests, Milestones, Documents, Activity Events
+- Admin + Client roles with strict client_id row-level permissions
+- Admin UI and Client portal UI
+
+PRIMARY OBJECTIVE
+1) Make Projects clickable from:
+   - Admin Projects list page
+   - Client (Customer) profile page project list
+2) Implement a dedicated Project Detail page that shows all relevant project information:
+   - Process (structured phases/steps)
+   - Documentation (documents linked to project)
+   - Prompt history (project-specific prompts/logs)
+   - Contract agreements (project-level contracts/SOWs)
+3) Upgrade Client (Customer) profile page to:
+   - Show customer info (address, contact info, first contact date, number of projects)
+   - Provide a separate "Projects" tab listing ongoing and finished projects
+   - Each project entry links to the Project Detail page
+
+DATA MODEL CHANGES (ADD THESE TABLES/FIELDS)
+A) Client enhancements
+- Add to clients table:
+  - address_line1 (nullable)
+  - address_line2 (nullable)
+  - city (nullable)
+  - region (nullable)
+  - postal_code (nullable)
+  - country (nullable)
+  - first_contact_date (nullable, date)
+
+B) Project Process
+- Create new table project_process_steps:
+  - id
+  - project_id (FK)
+  - title (string)
+  - description (text, nullable)
+  - step_order (int)
+  - status (planned | in_progress | done)
+  - created_at
+
+C) Prompt History (Project-specific)
+- Create new table project_prompts:
+  - id
+  - project_id (FK)
+  - prompt_title (string)
+  - prompt_text (text)
+  - output_summary (text, nullable)  // optional short summary; not required to store full outputs
+  - tags (string, nullable)          // comma-separated tags OK for MVP
+  - created_by_user_id (FK users)
+  - created_at
+
+D) Contracts / Agreements (Project-specific)
+- Create new table project_agreements:
+  - id
+  - project_id (FK)
+  - agreement_type (contract | sow | msa | nda | other)
+  - title (string)
+  - signed (bool)
+  - effective_date (date, nullable)
+  - expiry_date (date, nullable)
+  - notes (text, nullable)
+  - document_id (FK documents, nullable)  // link to stored PDF/doc upload when available
+  - created_at
+
+IMPORTANT: Use Alembic migrations for all schema changes.
+
+PERMISSIONS (STRICT)
+- Admin: full access
+- Client users:
+  - Can only view projects for their client_id
+  - Can view project detail read-only
+  - Can view documentation linked to their projects
+  - Prompt history visibility:
+    - For MVP: prompts are admin-only by default. Implement a flag on project_prompts:
+      - visible_to_client (bool default false)
+    - Only show prompts to client if visible_to_client = true
+- Enforce permissions server-side on all new routes.
+
+UI / UX REQUIREMENTS
+
+1) Project Click-Through Everywhere
+- Admin:
+  - In /admin/projects list, each project name is a link to /admin/projects/{project_id}
+- Client profile:
+  - In /admin/clients/{client_id} page, Projects tab lists all projects; each name links to /admin/projects/{project_id}
+
+2) Project Detail Page (Admin)
+Route: GET /admin/projects/{project_id}
+Show sections (tabs preferred, but stacked sections OK if simpler):
+- Overview:
+  - Client name (linked back to client profile)
+  - Project status, risk state, billing model, dates
+  - Milestones summary (total / paid / outstanding)
+- Process:
+  - List project_process_steps ordered by step_order
+  - Admin can add/edit/delete steps and update status
+- Documentation:
+  - Show project documents list (existing documents table filtered by project_id)
+  - Upload new documents to this project (existing upload mechanism)
+- Prompt History:
+  - List project_prompts with title, tags, created_at, and visible_to_client badge
+  - Admin can add a new prompt record (title + prompt_text + optional output_summary + tags + visible_to_client)
+- Agreements:
+  - List project_agreements
+  - Admin can add/edit agreements
+  - Allow linking an agreement to an uploaded document (select existing document or upload then link)
+
+3) Client (Customer) Profile Page (Admin)
+Route: GET /admin/clients/{client_id}
+Layout must include tabs:
+- Tab 1: "Profile"
+  - Customer information:
+    - Address (from new fields)
+    - Contact info (from contacts table)
+    - First contact date
+    - Number of projects (computed)
+- Tab 2: "Projects"
+  - List ALL projects for this client, grouped:
+    - Ongoing: status in (lead, active, paused)
+    - Finished: status = completed
+  - Each project row shows:
+    - status badge
+    - risk badge
+    - billing model
+    - link to project detail page
+
+4) Client Portal Project Detail (Read-Only)
+- Add route: GET /portal/projects/{project_id}
+- Must show:
+  - Overview (status, billing model, dates)
+  - Process steps (read-only)
+  - Documentation (read-only download + upload if you already allow client uploads; otherwise download only)
+  - Milestones (read-only)
+  - Agreements (read-only list; documents downloadable if permission allows)
+  - Prompt history: only show prompts with visible_to_client = true
+
+BACKEND REQUIREMENTS
+- Add service layer functions for:
+  - project retrieval with permission checks
+  - process step ordering and CRUD
+  - prompt creation and visibility logic
+  - agreement CRUD and document linking
+
+SEED DATA UPDATE (REQUIRED)
+- Update the seed script to populate:
+  - A client with address + first_contact_date
+  - At least 2 projects under that client
+  - 3-5 process steps for one project
+  - 2 prompt history entries for one project (one visible_to_client=true, one false)
+  - 1 agreement linked to a document (create a dummy document metadata row if needed)
+
+TESTS (MINIMUM)
+- Add unit tests for:
+  - Permission enforcement: client cannot access another client’s project detail
+  - visible_to_client prompt filtering for portal views
+  - process steps ordering (step_order respected)
+
+ACCEPTANCE CRITERIA
+- From admin projects list, clicking a project opens a project detail page with all sections populated (including empty states).
+- From admin client profile "Projects" tab, clicking any project navigates to its project detail page.
+- Client profile shows address, contact info, first_contact_date, and computed project count.
+- Client portal can open /portal/projects/{id} for its own projects and cannot open other clients’ projects.
+- Prompt history in portal only shows prompts with visible_to_client=true.
+- Migrations apply cleanly; seed script produces demo content; app runs as before.
+
+OUTPUT RULES
+- Modify existing files as needed; keep structure consistent.
+- Keep UI minimal and dev-ish (same style as current).
+- No major refactors unless required for correctness.
+- Update README with any new env vars or setup steps (prefer none).

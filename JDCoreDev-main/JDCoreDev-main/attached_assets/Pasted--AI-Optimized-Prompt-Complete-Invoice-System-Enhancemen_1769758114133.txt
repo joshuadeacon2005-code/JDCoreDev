@@ -1,0 +1,1138 @@
+# AI-Optimized Prompt: Complete Invoice System Enhancement
+
+## Overview
+Enhance the existing client project management system with comprehensive invoice generation capabilities, payment settings management, and accounts department contact tracking. This includes:
+
+1. ✅ Generate invoices from **three locations**: Client Detail page, Projects page, and Documents page
+2. ✅ Support **both invoice types**: Development (milestone-based) and Hosting (monthly recurring)
+3. ✅ **Accounts Department** contacts for invoice communications
+4. ✅ **Payment Settings** management with multiple payment methods
+5. ✅ **Clear USD currency** display throughout invoices
+6. ✅ **Auto-save** generated invoices to documents table
+
+---
+
+## Part 1: Database Schema Changes
+
+### A. Add Accounts Department to Clients Table
+
+```sql
+ALTER TABLE clients 
+ADD COLUMN accounts_dept_name VARCHAR(255),
+ADD COLUMN accounts_dept_email VARCHAR(255),
+ADD COLUMN accounts_dept_phone VARCHAR(50),
+ADD COLUMN accounts_dept_notes TEXT;
+```
+
+**Drizzle Schema Update** (`shared/schema.ts`):
+```typescript
+export const clients = pgTable("clients", {
+  // ... existing fields ...
+  
+  // NEW: Accounts Department Contact
+  accountsDeptName: text("accounts_dept_name"),
+  accountsDeptEmail: text("accounts_dept_email"),
+  accountsDeptPhone: text("accounts_dept_phone"),
+  accountsDeptNotes: text("accounts_dept_notes"),
+});
+```
+
+### B. Create Payment Settings Table
+
+```sql
+CREATE TABLE payment_settings (
+  id SERIAL PRIMARY KEY,
+  
+  -- Bank Transfer
+  bank_name VARCHAR(255),
+  account_holder_name VARCHAR(255),
+  account_number VARCHAR(100),
+  routing_number VARCHAR(50),
+  swift_code VARCHAR(50),
+  iban VARCHAR(50),
+  
+  -- Digital Payments
+  paypal_email VARCHAR(255),
+  venmo_username VARCHAR(100),
+  cashapp_tag VARCHAR(100),
+  zelle_email VARCHAR(255),
+  stripe_payment_link TEXT,
+  
+  -- Crypto (optional)
+  bitcoin_address VARCHAR(100),
+  ethereum_address VARCHAR(100),
+  
+  -- Check Payments
+  check_payable_to VARCHAR(255),
+  mailing_address TEXT,
+  
+  -- Notes & Currency
+  payment_notes TEXT,
+  default_currency VARCHAR(3) DEFAULT 'USD' NOT NULL,
+  usd_to_hkd_rate DECIMAL(10, 4) DEFAULT 7.8000,
+  
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+INSERT INTO payment_settings (id, default_currency, usd_to_hkd_rate) VALUES (1, 'USD', 7.8000);
+```
+
+**Drizzle Schema** (`shared/schema.ts`):
+```typescript
+export const paymentSettings = pgTable("payment_settings", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  bankName: text("bank_name"),
+  accountHolderName: text("account_holder_name"),
+  accountNumber: text("account_number"),
+  routingNumber: text("routing_number"),
+  swiftCode: text("swift_code"),
+  iban: text("iban"),
+  paypalEmail: text("paypal_email"),
+  venmoUsername: text("venmo_username"),
+  cashappTag: text("cashapp_tag"),
+  zelleEmail: text("zelle_email"),
+  stripePaymentLink: text("stripe_payment_link"),
+  bitcoinAddress: text("bitcoin_address"),
+  ethereumAddress: text("ethereum_address"),
+  checkPayableTo: text("check_payable_to"),
+  mailingAddress: text("mailing_address"),
+  paymentNotes: text("payment_notes"),
+  defaultCurrency: text("default_currency").notNull().default("USD"),
+  usdToHkdRate: decimal("usd_to_hkd_rate", { precision: 10, scale: 4 }).notNull().default("7.8000"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+```
+
+---
+
+## Part 2: Backend API Endpoints
+
+### A. Payment Settings Endpoints
+
+**GET `/api/admin/payment-settings`**
+```typescript
+app.get("/api/admin/payment-settings", async (req, res) => {
+  const settings = await db.select().from(paymentSettings).limit(1);
+  if (settings.length === 0) {
+    const [newSettings] = await db.insert(paymentSettings)
+      .values({ defaultCurrency: "USD" })
+      .returning();
+    return res.json(newSettings);
+  }
+  res.json(settings[0]);
+});
+```
+
+**PATCH `/api/admin/payment-settings`**
+```typescript
+app.patch("/api/admin/payment-settings", async (req, res) => {
+  const data = req.body;
+  const [updated] = await db.update(paymentSettings)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(paymentSettings.id, 1))
+    .returning();
+  res.json(updated);
+});
+```
+
+### B. Invoice Generation Endpoints
+
+**POST `/api/admin/invoices/hosting`**
+
+Request:
+```typescript
+{
+  clientId: number;
+  projectIds: number[];
+  invoiceDate: string;
+  dueDate: string;
+}
+```
+
+Response:
+```typescript
+{
+  invoiceUrl: string;
+  invoiceNumber: string;
+  totalAmount: number;
+  documentId?: number;  // If saved to documents table
+}
+```
+
+Logic:
+1. Validate projectIds belong to clientId
+2. Fetch client (including accounts dept), projects, hosting fees, payment settings
+3. Generate invoice number: `HOST-{clientId}-{YYYYMM}-{sequential}`
+4. Create .docx with JDCOREDEV branding
+5. Save to storage
+6. Optionally save to documents table
+7. Return download URL
+
+**POST `/api/admin/invoices/development`**
+
+Request:
+```typescript
+{
+  clientId: number;
+  projectId: number;
+  milestoneId: number;
+  invoiceDate: string;
+  dueDate: string;
+}
+```
+
+Response: Same as hosting
+
+Logic:
+1. Validate milestone → project → client relationship
+2. Fetch all data including payment settings
+3. Generate invoice number: `{PROJECT_CODE}-{invoiceSeq}-M{milestoneNum}`
+   - Example: `PC3D-001-M1`
+4. Create .docx with milestone details, deliverables, payment schedule
+5. Save and return
+
+---
+
+## Part 3: Frontend Components
+
+### A. Payment Settings Page
+
+**New File**: `client/pages/admin/payment-settings.tsx`
+
+**Structure**:
+```tsx
+<AdminLayout>
+  <div className="space-y-6">
+    <header>
+      <h1>Payment Settings</h1>
+      <p>Configure payment methods displayed on invoices</p>
+    </header>
+
+    {/* Bank Transfer Card */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Bank Transfer</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-4">
+          <Input label="Bank Name" />
+          <Input label="Account Holder" />
+          <Input label="Account Number" type="password" />
+          <Input label="Routing Number" />
+          <Input label="SWIFT Code" />
+          <Input label="IBAN" />
+        </div>
+      </CardContent>
+    </Card>
+
+    {/* Digital Payments Card */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Digital Payments</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-4">
+          <Input label="PayPal Email" type="email" />
+          <Input label="Venmo Username" />
+          <Input label="CashApp Tag" />
+          <Input label="Zelle Email" type="email" />
+        </div>
+      </CardContent>
+    </Card>
+
+    {/* Stripe Card */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Stripe</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Input label="Payment Link" placeholder="https://buy.stripe.com/..." />
+      </CardContent>
+    </Card>
+
+    {/* Check Payments Card */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Check Payments</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Input label="Payable To" />
+        <Textarea label="Mailing Address" />
+      </CardContent>
+    </Card>
+
+    {/* Currency & Notes Card */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Currency & Exchange Rates</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <Label>Default Currency</Label>
+          <Select defaultValue="USD">
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="USD">USD - US Dollar</SelectItem>
+              <SelectItem value="EUR">EUR - Euro</SelectItem>
+              <SelectItem value="GBP">GBP - British Pound</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        
+        <div>
+          <Label>USD to HKD Exchange Rate</Label>
+          <Input 
+            type="number" 
+            step="0.0001"
+            placeholder="7.8000" 
+            defaultValue="7.8000"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Used to display approximate HKD amounts on invoices. Update periodically to reflect current exchange rates.
+          </p>
+        </div>
+        
+        <div>
+          <Label>Additional Payment Notes</Label>
+          <Textarea 
+            placeholder="e.g., Please include invoice number in payment reference"
+          />
+        </div>
+      </CardContent>
+    </Card>
+
+    <div className="flex justify-end">
+      <Button size="lg">Save Payment Settings</Button>
+    </div>
+  </div>
+</AdminLayout>
+```
+
+**Add to Navigation**:
+```typescript
+{
+  name: "Payment Settings",
+  href: "/admin/payment-settings",
+  icon: DollarSign
+}
+```
+
+### B. Client Detail Page Updates
+
+**Location**: `client/pages/admin/client-detail.tsx`
+
+**Add Accounts Department Section** to edit dialog:
+```tsx
+<div className="space-y-4">
+  <h3 className="text-lg font-semibold">Accounts Department</h3>
+  <p className="text-sm text-muted-foreground">
+    Invoice reminders will be sent to this contact
+  </p>
+  
+  <div className="grid grid-cols-2 gap-4">
+    <Input label="Contact Name" {...form.register("accountsDeptName")} />
+    <Input label="Email" type="email" {...form.register("accountsDeptEmail")} />
+    <Input label="Phone" {...form.register("accountsDeptPhone")} />
+    <Textarea label="Notes" {...form.register("accountsDeptNotes")} className="col-span-2" />
+  </div>
+</div>
+```
+
+**Display in Client Overview**:
+```tsx
+{client.accountsDeptEmail && (
+  <Card>
+    <CardHeader>
+      <CardTitle>Accounts Department</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <div className="space-y-2">
+        {client.accountsDeptName && <div>{client.accountsDeptName}</div>}
+        <div><Mail /> {client.accountsDeptEmail}</div>
+        {client.accountsDeptPhone && <div><Phone /> {client.accountsDeptPhone}</div>}
+        {client.accountsDeptNotes && <div className="text-sm text-muted-foreground">{client.accountsDeptNotes}</div>}
+      </div>
+    </CardContent>
+  </Card>
+)}
+```
+
+**Add Development/Hosting Sub-tabs** to Projects tab:
+```tsx
+<TabsContent value="projects">
+  <Tabs defaultValue="development">
+    <TabsList>
+      <TabsTrigger value="development">Development</TabsTrigger>
+      <TabsTrigger value="hosting">Hosting</TabsTrigger>
+    </TabsList>
+    
+    <TabsContent value="development">
+      {/* Show projects with status: lead, active, paused, completed */}
+    </TabsContent>
+    
+    <TabsContent value="hosting">
+      {/* Show projects with status: hosting */}
+      <Button onClick={() => setShowInvoiceDialog(true)}>
+        Generate Hosting Invoice
+      </Button>
+      {/* List of hosting projects */}
+    </TabsContent>
+  </Tabs>
+</TabsContent>
+```
+
+### C. Documents Page Enhancement
+
+**Location**: `client/pages/admin/documents.tsx`
+
+**Add Invoice Generation Button**:
+```tsx
+<div className="flex justify-between items-center">
+  <h1>Documents</h1>
+  
+  <div className="flex gap-2">
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button>
+          <FileText className="h-4 w-4 mr-2" />
+          Generate Invoice
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuItem onClick={() => setShowDevInvoiceDialog(true)}>
+          <Briefcase className="h-4 w-4 mr-2" />
+          Development Invoice
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setShowHostingInvoiceDialog(true)}>
+          <Server className="h-4 w-4 mr-2" />
+          Hosting Invoice
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    
+    <Button onClick={() => setShowUploadDialog(true)}>
+      <Upload className="h-4 w-4 mr-2" />
+      Upload Document
+    </Button>
+  </div>
+</div>
+```
+
+### D. Invoice Generator Dialog Components
+
+**New Component 1**: `HostingInvoiceGeneratorDialog.tsx`
+
+```typescript
+interface HostingInvoiceGeneratorDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  clientId?: number;  // Pre-selected client (optional)
+  onSuccess?: (invoiceUrl: string) => void;
+}
+
+export function HostingInvoiceGeneratorDialog({ open, onOpenChange, clientId, onSuccess }: Props) {
+  const [selectedClientId, setSelectedClientId] = useState(clientId || null);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<number[]>([]);
+  const [invoiceDate, setInvoiceDate] = useState(new Date());
+  const [dueDate, setDueDate] = useState(addDays(new Date(), 7));
+
+  // Fetch clients if no clientId provided
+  const { data: clients } = useQuery(["/api/admin/clients"]);
+  
+  // Fetch hosting projects for selected client
+  const { data: projects } = useQuery(
+    ["/api/admin/projects", { clientId: selectedClientId, status: "hosting" }],
+    { enabled: !!selectedClientId }
+  );
+
+  // Calculate total
+  const totalAmount = useMemo(() => {
+    if (!projects) return 0;
+    return projects
+      .filter(p => selectedProjectIds.includes(p.id))
+      .reduce((sum, p) => sum + (p.monthlyFeeCents || 0), 0);
+  }, [projects, selectedProjectIds]);
+
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", "/api/admin/invoices/hosting", {
+        clientId: selectedClientId,
+        projectIds: selectedProjectIds,
+        invoiceDate: invoiceDate.toISOString(),
+        dueDate: dueDate.toISOString(),
+      });
+    },
+    onSuccess: (data) => {
+      toast({ title: "Invoice generated successfully" });
+      onSuccess?.(data.invoiceUrl);
+      onOpenChange(false);
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Generate Hosting Invoice</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {!clientId && (
+            <div>
+              <Label>Client</Label>
+              <Select value={selectedClientId?.toString()} onValueChange={(v) => setSelectedClientId(Number(v))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select client..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {clients?.map(c => (
+                    <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {selectedClientId && projects && (
+            <>
+              <div>
+                <Label>Select Projects to Invoice</Label>
+                <div className="space-y-2 mt-2">
+                  {projects.map(project => (
+                    <div key={project.id} className="flex items-center gap-2 p-3 border rounded">
+                      <Checkbox
+                        checked={selectedProjectIds.includes(project.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedProjectIds([...selectedProjectIds, project.id]);
+                          } else {
+                            setSelectedProjectIds(selectedProjectIds.filter(id => id !== project.id));
+                          }
+                        }}
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium">{project.name}</div>
+                        <div className="text-sm text-muted-foreground">
+                          ${(project.monthlyFeeCents / 100).toFixed(2)}/month
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Invoice Date</Label>
+                  <Input type="date" value={format(invoiceDate, "yyyy-MM-dd")} onChange={(e) => setInvoiceDate(new Date(e.target.value))} />
+                </div>
+                <div>
+                  <Label>Due Date</Label>
+                  <Input type="date" value={format(dueDate, "yyyy-MM-dd")} onChange={(e) => setDueDate(new Date(e.target.value))} />
+                </div>
+              </div>
+
+              <div className="p-4 bg-muted rounded-lg">
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold">Total Amount:</span>
+                  <span className="text-2xl font-bold">${(totalAmount / 100).toFixed(2)} USD</span>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button 
+            onClick={() => generateMutation.mutate()}
+            disabled={!selectedClientId || selectedProjectIds.length === 0 || generateMutation.isPending}
+          >
+            {generateMutation.isPending ? "Generating..." : "Generate Invoice"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+**New Component 2**: `DevelopmentInvoiceGeneratorDialog.tsx`
+
+Similar structure but with:
+- Client selector (if not pre-selected)
+- Project selector (filtered by development status)
+- Milestone selector
+- Milestone details preview
+- Invoice/due date pickers
+
+---
+
+## Part 4: Invoice Document Generation
+
+### Python Invoice Generator Updates
+
+**File**: `server/invoices/generate_invoice.py`
+
+**Key Changes**:
+
+1. **Fetch Payment Settings and Client Data**:
+```python
+def generate_invoice(invoice_data: dict):
+    client = invoice_data['client']
+    payment_settings = invoice_data['payment_settings']
+    currency = payment_settings.get('defaultCurrency', 'USD')
+    
+    # Use accounts dept email if available
+    invoice_recipient_name = client.get('accountsDeptName') or client['name']
+    invoice_recipient_email = client.get('accountsDeptEmail') or client['email']
+```
+
+2. **Bill To Section with Accounts Department**:
+```python
+# Bill To
+bill_to = doc.add_paragraph()
+bill_to.add_run('BILL TO:\n').bold = True
+bill_to.add_run(f"{client['name']}\n")
+if client.get('companyName'):
+    bill_to.add_run(f"{client['companyName']}\n")
+bill_to.add_run(f"{client.get('address', '')}\n")
+
+# Accounts Department if present
+if client.get('accountsDeptEmail'):
+    doc.add_paragraph()  # Spacing
+    accts_dept = doc.add_paragraph()
+    accts_dept.add_run('ACCOUNTS DEPARTMENT:\n').bold = True
+    if client.get('accountsDeptName'):
+        accts_dept.add_run(f"{client['accountsDeptName']}\n")
+    accts_dept.add_run(f"{client['accountsDeptEmail']}\n")
+    if client.get('accountsDeptPhone'):
+        accts_dept.add_run(f"{client['accountsDeptPhone']}\n")
+    
+    # Note about invoice reminders
+    note = doc.add_paragraph()
+    note.add_run('Note: Invoice reminders and payment notifications will be sent to the accounts department contact.')
+    note.runs[0].font.size = Pt(8)
+    note.runs[0].font.italic = True
+    note.runs[0].font.color.rgb = BRAND_GRAY
+```
+
+3. **Currency Display Throughout with HKD Conversion**:
+```python
+# Exchange rate (update periodically or fetch from API)
+USD_TO_HKD_RATE = 7.8  # Approximate rate, consider fetching from API
+
+def format_amount_with_hkd(amount_cents: int, rate: float = USD_TO_HKD_RATE) -> dict:
+    """Format amount in USD with HKD equivalent"""
+    usd_amount = amount_cents / 100
+    hkd_amount = usd_amount * rate
+    return {
+        'usd': f"${usd_amount:.2f} USD",
+        'hkd': f"≈ HK${hkd_amount:.2f}",
+        'usd_value': usd_amount,
+        'hkd_value': hkd_amount
+    }
+
+# Invoice title
+title.add_run('INVOICE (USD)')
+
+# Line items with HKD
+amount_data = format_amount_with_hkd(amount)
+amount_cell.text = f"{amount_data['usd']}\n{amount_data['hkd']}"
+# Style HKD in smaller, gray text
+amount_cell.paragraphs[0].runs[1].font.size = Pt(8)
+amount_cell.paragraphs[0].runs[1].font.color.rgb = BRAND_GRAY
+
+# Totals section with HKD
+total_data = format_amount_with_hkd(total)
+total_para = doc.add_paragraph()
+total_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+# USD amount (large, bold, blue)
+usd_run = total_para.add_run(f'TOTAL DUE: {total_data["usd"]}\n')
+usd_run.font.size = Pt(16)
+usd_run.font.bold = True
+usd_run.font.color.rgb = BRAND_ACCENT
+
+# HKD equivalent (smaller, gray)
+hkd_run = total_para.add_run(total_data['hkd'])
+hkd_run.font.size = Pt(12)
+hkd_run.font.color.rgb = BRAND_GRAY
+
+# Currency note with exchange rate
+currency_note = doc.add_paragraph(
+    f'All amounts are in USD (US Dollars). Payment is due within 7 days of invoice date. '
+    f'HKD amounts are approximate conversions based on exchange rate of 1 USD = {USD_TO_HKD_RATE} HKD.'
+)
+currency_note.runs[0].font.size = Pt(9)
+currency_note.runs[0].font.italic = True
+currency_note.runs[0].font.color.rgb = BRAND_GRAY
+```
+
+4. **Dynamic Payment Methods**:
+```python
+def build_payment_methods_section(doc, payment_settings):
+    """Only show configured payment methods"""
+    
+    section = doc.add_paragraph()
+    section.add_run('Accepted Payment Methods:\n').bold = True
+    
+    methods_added = False
+    
+    # Bank Transfer
+    if payment_settings.get('bankName'):
+        methods_added = True
+        section.add_run('\n• Bank Transfer:\n')
+        if payment_settings.get('accountHolderName'):
+            section.add_run(f"  Account Holder: {payment_settings['accountHolderName']}\n")
+        section.add_run(f"  Bank: {payment_settings['bankName']}\n")
+        if payment_settings.get('accountNumber'):
+            # Mask for security
+            masked = '**** ' + payment_settings['accountNumber'][-4:]
+            section.add_run(f"  Account: {masked}\n")
+        if payment_settings.get('routingNumber'):
+            section.add_run(f"  Routing: {payment_settings['routingNumber']}\n")
+    
+    # PayPal
+    if payment_settings.get('paypalEmail'):
+        methods_added = True
+        section.add_run(f"\n• PayPal: {payment_settings['paypalEmail']}\n")
+    
+    # Venmo
+    if payment_settings.get('venmoUsername'):
+        methods_added = True
+        section.add_run(f"\n• Venmo: {payment_settings['venmoUsername']}\n")
+    
+    # CashApp
+    if payment_settings.get('cashappTag'):
+        methods_added = True
+        section.add_run(f"\n• CashApp: {payment_settings['cashappTag']}\n")
+    
+    # Zelle
+    if payment_settings.get('zelleEmail'):
+        methods_added = True
+        section.add_run(f"\n• Zelle: {payment_settings['zelleEmail']}\n")
+    
+    # Stripe
+    if payment_settings.get('stripePaymentLink'):
+        methods_added = True
+        section.add_run('\n• Online Payment (Stripe):\n')
+        section.add_run(f"  {payment_settings['stripePaymentLink']}\n")
+    
+    # Check
+    if payment_settings.get('checkPayableTo'):
+        methods_added = True
+        section.add_run('\n• Check:\n')
+        section.add_run(f"  Payable to: {payment_settings['checkPayableTo']}\n")
+        if payment_settings.get('mailingAddress'):
+            section.add_run(f"  Mail to: {payment_settings['mailingAddress']}\n")
+    
+    # Additional notes
+    if payment_settings.get('paymentNotes'):
+        section.add_run(f"\n{payment_settings['paymentNotes']}\n")
+    
+    if not methods_added:
+        section.add_run('\n• Please contact us for payment details\n')
+    
+    # Style all runs
+    for run in section.runs[1:]:
+        run.font.size = Pt(9)
+        run.font.color.rgb = BRAND_GRAY
+    
+    return section
+```
+
+### Save to Documents Table
+
+**After generating invoice**:
+```python
+# Save to documents table
+document_record = {
+    'filename': f"Invoice_{invoice_number}.docx",
+    'storagePath': invoice_file_path,
+    'mimeType': "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    'clientId': client_id,
+    'projectId': project_ids[0] if len(project_ids) == 1 else None,
+    'docType': "invoice"
+}
+
+await db.insert(documents).values(document_record)
+```
+
+---
+
+## Part 5: Email Reminder System
+
+**Update email recipient logic**:
+```typescript
+function getInvoiceRecipient(client: Client) {
+  return {
+    email: client.accountsDeptEmail || client.email,
+    name: client.accountsDeptName || client.name,
+  };
+}
+
+async function sendInvoiceReminder(invoiceId: number) {
+  const invoice = await getInvoiceWithClient(invoiceId);
+  const recipient = getInvoiceRecipient(invoice.client);
+  
+  await sendEmail({
+    to: recipient.email,
+    subject: `Invoice Reminder: ${invoice.invoiceNumber}`,
+    body: `Dear ${recipient.name},\n\nThis is a reminder that invoice ${invoice.invoiceNumber} is due on ${invoice.dueDate}.\n\nAmount Due: $${invoice.totalAmount / 100} USD\n\n...`
+  });
+}
+```
+
+---
+
+## Part 9: HKD Currency Conversion Display
+
+### Overview
+All invoices should display approximate HKD (Hong Kong Dollar) equivalents alongside USD amounts to help clients understand the cost in their local currency.
+
+### Exchange Rate Management
+
+**In Payment Settings**:
+- Add `usdToHkdRate` field (DECIMAL(10,4), default 7.8000)
+- Editable in Payment Settings admin page
+- Should be updated periodically to reflect current exchange rates
+- Note to admin: "Update periodically to reflect current exchange rates"
+
+**Fetching Exchange Rate** (Optional Enhancement):
+```python
+# Optional: Fetch live exchange rate from API
+import requests
+
+def get_current_exchange_rate():
+    """Fetch current USD to HKD rate (optional)"""
+    try:
+        response = requests.get('https://api.exchangerate-api.com/v4/latest/USD')
+        data = response.json()
+        return data['rates']['HKD']
+    except:
+        return 7.8000  # Fallback to default
+```
+
+### Invoice Display Format
+
+**Line Items**:
+```
+Description                           Amount
+─────────────────────────────────────────────
+PlushCraft 3D - Milestone 1          $500.00 USD
+                                      ≈ HK$3,900.00
+
+Monthly Hosting - Project A           $150.00 USD
+                                      ≈ HK$1,170.00
+
+Monthly Hosting - Project B           $250.00 USD
+                                      ≈ HK$1,950.00
+```
+
+**Totals Section**:
+```
+                        Subtotal:  $900.00 USD
+                                   ≈ HK$7,020.00
+                        
+                        Tax (0%):  $0.00 USD
+                        
+                     TOTAL DUE:    $900.00 USD
+                                   ≈ HK$7,020.00
+```
+
+**Styling**:
+- USD amounts: Regular size, bold for totals
+- HKD amounts: Smaller font size (80-85% of USD)
+- HKD color: Gray (#6B7280) to indicate approximate/secondary
+- USD amounts right-aligned
+- HKD amounts right-aligned beneath USD
+
+### Python Implementation
+
+**Helper Function**:
+```python
+def format_currency_with_hkd(amount_cents: int, exchange_rate: float) -> tuple:
+    """
+    Format amount in USD with HKD equivalent
+    
+    Args:
+        amount_cents: Amount in cents (USD)
+        exchange_rate: Current USD to HKD rate
+    
+    Returns:
+        tuple: (usd_string, hkd_string, usd_value, hkd_value)
+    """
+    usd_amount = amount_cents / 100
+    hkd_amount = usd_amount * exchange_rate
+    
+    return (
+        f"${usd_amount:,.2f} USD",
+        f"≈ HK${hkd_amount:,.2f}",
+        usd_amount,
+        hkd_amount
+    )
+
+# Usage in invoice generation
+exchange_rate = payment_settings.get('usdToHkdRate', 7.8)
+usd_str, hkd_str, usd_val, hkd_val = format_currency_with_hkd(amount_cents, exchange_rate)
+```
+
+**In Line Items Table**:
+```python
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+# Amount cell
+amount_cell = row.cells[3]
+amount_para = amount_cell.paragraphs[0]
+amount_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+# USD amount (primary)
+usd_run = amount_para.add_run(usd_str + '\n')
+usd_run.font.size = Pt(11)
+usd_run.font.bold = False
+usd_run.font.color.rgb = RGBColor(26, 27, 31)  # BRAND_DARK
+
+# HKD amount (secondary, smaller, gray)
+hkd_run = amount_para.add_run(hkd_str)
+hkd_run.font.size = Pt(9)
+hkd_run.font.color.rgb = RGBColor(107, 114, 128)  # BRAND_GRAY
+hkd_run.font.italic = True
+```
+
+**In Totals Section**:
+```python
+# Subtotal
+subtotal_usd, subtotal_hkd, _, _ = format_currency_with_hkd(subtotal_cents, exchange_rate)
+
+subtotal_row = totals_table.rows[0].cells
+subtotal_row[0].text = "Subtotal:"
+subtotal_row[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+subtotal_para = subtotal_row[1].paragraphs[0]
+subtotal_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+# USD
+usd_run = subtotal_para.add_run(subtotal_usd + '\n')
+usd_run.font.size = Pt(11)
+
+# HKD
+hkd_run = subtotal_para.add_run(subtotal_hkd)
+hkd_run.font.size = Pt(9)
+hkd_run.font.color.rgb = BRAND_GRAY
+hkd_run.font.italic = True
+
+# Total (similar but larger, bold, blue)
+total_usd, total_hkd, _, _ = format_currency_with_hkd(total_cents, exchange_rate)
+
+total_para = total_row[1].paragraphs[0]
+total_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+# USD (large, bold, blue)
+total_usd_run = total_para.add_run(total_usd + '\n')
+total_usd_run.font.size = Pt(16)
+total_usd_run.font.bold = True
+total_usd_run.font.color.rgb = RGBColor(59, 130, 246)  # BRAND_ACCENT
+
+# HKD (smaller, gray)
+total_hkd_run = total_para.add_run(total_hkd)
+total_hkd_run.font.size = Pt(12)
+total_hkd_run.font.color.rgb = BRAND_GRAY
+total_hkd_run.font.italic = True
+```
+
+### Currency Disclaimer
+
+Add this note after payment information section:
+
+```python
+disclaimer_para = doc.add_paragraph()
+disclaimer_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+disclaimer_run = disclaimer_para.add_run(
+    f'Currency Note: All amounts are in USD (US Dollars). Payment must be made in USD. '
+    f'HKD amounts are approximate conversions provided for reference only, based on an '
+    f'exchange rate of 1 USD = {exchange_rate:.4f} HKD. Actual conversion rates may vary '
+    f'depending on your payment method and financial institution.'
+)
+disclaimer_run.font.size = Pt(8)
+disclaimer_run.font.italic = True
+disclaimer_run.font.color.rgb = BRAND_GRAY
+
+# Optional: Add disclaimer box
+disclaimer_para.paragraph_format.space_before = Pt(12)
+disclaimer_para.paragraph_format.space_after = Pt(12)
+```
+
+### Frontend Display (Optional)
+
+**In Invoice Generator Dialogs**:
+```tsx
+<div className="p-4 bg-muted rounded-lg">
+  <div className="space-y-2">
+    <div className="flex justify-between items-center">
+      <span className="font-semibold">Total Amount:</span>
+      <div className="text-right">
+        <div className="text-2xl font-bold">${(totalAmount / 100).toFixed(2)} USD</div>
+        <div className="text-sm text-muted-foreground">≈ HK${(totalAmount / 100 * exchangeRate).toFixed(2)}</div>
+      </div>
+    </div>
+    <p className="text-xs text-muted-foreground">
+      Exchange rate: 1 USD = {exchangeRate.toFixed(4)} HKD
+    </p>
+  </div>
+</div>
+```
+
+### Testing HKD Display
+
+**Test Cases**:
+1. **Single amount**: $500 USD = ≈ HK$3,900 (at 7.8 rate)
+2. **Decimal precision**: $123.45 USD = ≈ HK$962.91
+3. **Large amounts**: $10,000 USD = ≈ HK$78,000
+4. **With commas**: $1,234.56 USD = ≈ HK$9,629.57
+5. **Zero amount**: $0.00 USD = ≈ HK$0.00
+
+**Exchange Rate Testing**:
+1. Default rate (7.8)
+2. Updated rate (7.85)
+3. Historical rates (7.75 - 7.82 typical range)
+
+### Visual Example
+
+**Invoice Total Section**:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+                     Subtotal:  $2,000.00 USD
+                                ≈ HK$15,600.00
+
+                     Tax (0%):  $0.00 USD
+
+                  TOTAL DUE:    $2,000.00 USD
+                                ≈ HK$15,600.00
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Currency Note: All amounts are in USD. Payment must 
+be made in USD. HKD amounts are approximate 
+conversions (1 USD = 7.8000 HKD) provided for 
+reference only.
+```
+
+---
+
+## Part 10: Testing & Validation
+
+### Test Scenarios
+
+1. **Payment Settings**:
+   - Configure all payment methods
+   - Generate invoice, verify all methods shown
+   - Remove payment method, verify not shown
+   - Test with empty settings
+
+2. **Accounts Department**:
+   - Add accounts dept to client
+   - Generate invoice, verify shown on invoice
+   - Send reminder, verify goes to accounts email
+   - Test client without accounts dept
+
+3. **Invoice from Documents Page**:
+   - Generate development invoice
+   - Generate hosting invoice with multiple projects
+   - Verify invoices appear in documents list
+   - Test download from documents page
+
+4. **Currency Display**:
+   - Verify "USD" appears with all amounts
+   - Check HKD conversion displays correctly
+   - Verify HKD amounts are gray and smaller font
+   - Check exchange rate in currency note
+   - Test with different exchange rates (7.8, 7.85, 7.75)
+   - Verify formatting with large amounts ($10,000+ USD)
+
+5. **Multi-Project Hosting Invoice**:
+   - Select 3+ projects
+   - Verify total calculates correctly
+   - Check line items in generated invoice
+
+### Validation Rules
+
+**Client Form**:
+- Validate accounts dept email format
+- Warn if no email contacts (primary or accounts dept)
+
+**Payment Settings**:
+- Validate email formats
+- Warn if no payment methods configured
+- Mask account numbers (show last 4 digits)
+
+**Invoice Generation**:
+- Require at least one project selected
+- Validate dates (due date after invoice date)
+- Check payment settings exist
+- Verify client has email contact
+
+---
+
+## Part 7: Expected Deliverables
+
+### Database
+- [ ] Migration for accounts dept fields on clients table
+- [ ] Migration for payment_settings table
+- [ ] Updated schema.ts with new types
+
+### Backend
+- [ ] GET/PATCH endpoints for payment settings
+- [ ] POST /api/admin/invoices/hosting
+- [ ] POST /api/admin/invoices/development
+- [ ] Updated client endpoints for accounts dept
+
+### Frontend
+- [ ] New Payment Settings page
+- [ ] Updated Client Detail with accounts dept section
+- [ ] Updated Client Edit form with accounts dept fields
+- [ ] Updated Documents page with invoice generation
+- [ ] HostingInvoiceGeneratorDialog component
+- [ ] DevelopmentInvoiceGeneratorDialog component
+- [ ] Development/Hosting sub-tabs in client projects
+
+### Invoice Generation
+- [ ] Updated Python scripts for both invoice types
+- [ ] Dynamic payment methods section
+- [ ] Currency display throughout
+- [ ] Accounts dept contact display
+- [ ] Auto-save to documents table
+
+### Email System
+- [ ] Updated reminder logic for accounts dept
+- [ ] Email templates with proper recipients
+
+---
+
+## Part 8: Success Criteria
+
+✅ Can generate invoices from **three locations**: Client Detail, Projects, Documents
+✅ Both **development and hosting** invoice types supported
+✅ **Payment settings** page functional with all methods
+✅ **Accounts department** contact tracked and used
+✅ **USD currency** clearly displayed on all invoices
+✅ **HKD conversion** displayed on all invoices with approximate amounts
+✅ **Exchange rate** configurable in payment settings
+✅ Generated invoices **auto-save** to documents table
+✅ **Dynamic payment methods** - only show configured ones
+✅ **Email reminders** go to accounts dept when configured
+✅ **Multi-project invoices** work correctly
+✅ All **validations** in place
+✅ **Security measures** for sensitive data (masked account numbers)
+✅ **JDCOREDEV branding** consistent across all invoices
+
+---
+
+**Please implement these features following existing code patterns and architecture. Ensure type safety, proper error handling, security for sensitive data, and a clean user interface integrated with the current admin design system.**

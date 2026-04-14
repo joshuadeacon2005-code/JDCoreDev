@@ -1,0 +1,152 @@
+SYSTEM / ROLE
+You are an expert full-stack engineer working inside the existing JD Core app in Replit. Add a “Hosting & Maintenance” box to every Project profile. The box must let the admin store and edit the hosting/maintenance agreement information (like the sample contract provided), and optionally render a formatted “Agreement Preview” for copy/paste. Keep UI minimal, dev-ish, and consistent with existing templates. Implement DB migrations, backend routes, templates, seed updates, and minimal tests. Do not change unrelated functionality.
+
+PRIMARY OBJECTIVE
+On each Project detail page (Admin + Client portal):
+- Admin can enter and manage hosting & maintenance terms for that project
+- Client can view a read-only summary once the project is completed
+- Data should be structured (fields), not just a single blob of text
+- Provide an optional “Agreement text” large field for full contract text
+
+DISPLAY RULE
+- Show the box ONLY when project.status == "completed" (finished).
+- If not completed, show a small note: “Hosting & Maintenance becomes available once the project is completed.”
+
+DATA MODEL (ALEMBIC MIGRATION REQUIRED)
+Create table: project_hosting_terms (one row per project)
+Fields:
+- id (pk)
+- project_id (FK projects, unique, indexed)
+- start_date (date nullable)
+- initial_term_months (int default 6)
+- monthly_fee_cents (int nullable)
+- currency (string default "USD")
+- billed_in_advance (bool default true)
+- invoice_due_days (int default 14)
+
+Scope (store as text blocks, one per field, not huge):
+- included_services (text nullable)   // bullet list style text
+- excluded_services (text nullable)   // bullet list style text
+- client_responsibilities (text nullable)
+- availability_disclaimer (text nullable)
+- term_extension_notes (text nullable) // e.g. extend 6 months or self-hosting option
+- self_hosting_handover_notes (text nullable)
+- ip_notes (text nullable)
+- confidentiality_notes (text nullable)
+- liability_cap_notes (text nullable)
+- force_majeure_notes (text nullable)
+- governing_law (string default "Hong Kong SAR")
+- termination_notice_days (int default 30)
+
+Agreement full text storage (optional):
+- agreement_full_text (text nullable)
+
+Metadata:
+- status (enum: none|draft|active|ended) default draft
+- updated_by_user_id (FK users nullable)
+- updated_at (datetime)
+- created_at (datetime)
+
+OPTIONAL: link to signed document
+- agreement_document_id (FK documents nullable)
+
+BACKEND / SERVICES
+- Add helper service: get_or_create_project_hosting_terms(project_id)
+- Enforce permissions:
+  - Admin can edit
+  - Client can view only for their own client_id projects AND only if project.status=completed
+
+ROUTES
+Admin:
+- GET  /admin/projects/{project_id} (extend existing page)
+- POST /admin/projects/{project_id}/hosting-terms (create/update hosting fields)
+- POST /admin/projects/{project_id}/hosting-terms/link-document (optional; can be part of update)
+
+Client portal:
+- GET /portal/projects/{project_id} (extend existing page to show read-only hosting terms section)
+
+UI REQUIREMENTS (THE “BOX”)
+Add a card/box component section on Project detail page titled:
+“Hosting & Maintenance”
+
+Inside the box show:
+A) Summary row (top):
+- Monthly fee: {currency} {amount}
+- Term: {initial_term_months} months
+- Start date
+- Invoice due: {invoice_due_days} days
+- Termination notice: {termination_notice_days} days
+
+B) Tabs (or collapsible sections; keep minimal)
+1) Scope
+- Included services (textarea)
+- Excluded services (textarea)
+2) Responsibilities
+- Client responsibilities (textarea)
+- Availability disclaimer (textarea)
+3) Term & Handover
+- Term extension notes (textarea)
+- Self-hosting handover notes (textarea)
+4) Legal (short)
+- IP notes (textarea)
+- Confidentiality notes (textarea)
+- Liability cap notes (textarea)
+- Force majeure notes (textarea)
+- Governing law (text input)
+- Termination notice days (number input)
+
+5) Agreement Text (optional)
+- agreement_full_text (large textarea)
+- “Agreement Preview” read-only panel that renders a formatted template using the structured fields (see below)
+
+C) Document link
+- If agreement_document_id exists: show download link
+- Admin can upload/select a document and link it
+
+ADMIN FORM UX
+- Save button “Save Hosting Terms”
+- Status dropdown: Draft / Active / Ended
+- Basic validation:
+  - monthly_fee required if status is Active
+  - start_date required if status is Active
+
+CLIENT VIEW UX (READ-ONLY)
+- Show the summary + “Included” + “Excluded” + “Term & Self-hosting” sections.
+- Hide internal/legal fields unless you want them visible (default: show governing law + termination notice; hide liability cap text unless you want transparency).
+
+AGREEMENT PREVIEW (AUTO-GENERATED TEMPLATE)
+Implement a preview panel that generates a formatted agreement (not a PDF) from the stored fields, matching the structure of the sample contract:
+- Title: INDEPENDENT CONTRACTOR SOFTWARE HOSTING & MAINTENANCE AGREEMENT
+- Parties: Client name pulled from client record; Consultant “Joshua Deacon”
+- Start Date + Initial Term
+- Sections 1–13 similar headings
+- Use fields to populate bullet lists and disclaimers
+- This is for copy/paste; not legally perfect but aligned to your template
+
+SEED DATA UPDATE
+- Ensure one completed project exists
+- Populate its project_hosting_terms with:
+  - monthly fee = 300 USD
+  - term months = 6
+  - invoice due days = 14
+  - included/excluded lists based on sample text
+  - governing law = Hong Kong SAR
+  - termination notice days = 30
+
+TESTS (MINIMUM)
+- Client cannot POST /admin/projects/{id}/hosting-terms (403)
+- Hosting box only appears when project.status=completed
+- Admin can save hosting terms successfully (200 + persists)
+
+ACCEPTANCE CRITERIA
+- Each completed project shows a Hosting & Maintenance box in admin project detail
+- Admin can enter and save fields that match the contract structure
+- Client can view a read-only summary for their completed projects
+- Agreement Preview renders correctly from the stored fields
+- No regressions; app runs in Replit with one command
+
+OUTPUT RULES
+- Keep dependencies minimal; use existing template/style system
+- Use Alembic migrations
+- Do not refactor unrelated code
+- Enforce permissions server-side
