@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lead Engine | JD CoreDev</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:      #0d0d0d;
+    --surface: #141414;
+    --border:  #222;
+    --border2: #1a1a1a;
+    --white:   #f0ede8;
+    --dim:     #666;
+    --dim2:    #333;
+    --green:   #2d7a6b;
+    --green-l: rgba(45,122,107,0.12);
+    --green-b: rgba(45,122,107,0.25);
+    --red:     #ff3b30;
+    --red-l:   rgba(255,59,48,0.1);
+    --amber:   #ff9f0a;
+    --amber-l: rgba(255,159,10,0.1);
+    --blue:    #0a84ff;
+    --mono:    'DM Mono', monospace;
+    --sans:    'DM Sans', sans-serif;
+    --display: 'Syne', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--white);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .sidebar-logo {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--border2);
+  }
+  .sidebar-logo img {
+    height: 36px;
+    width: auto;
+    display: block;
+  }
+
+  .sidebar-section {
+    padding: 20px 12px 8px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding-bottom: 6px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    margin: 1px 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--dim);
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+    font-family: var(--sans);
+    font-weight: 400;
+  }
+  .nav-item:hover  { background: var(--border2); color: var(--white); }
+  .nav-item.active { background: var(--green-l); color: var(--white); }
+  .nav-item.active .nav-icon { color: var(--green); }
+
+  .nav-icon {
+    font-size: 15px;
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .nav-badge {
+    margin-left: auto;
+    background: var(--red);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 20px;
+    min-width: 18px;
+    text-align: center;
+  }
+
+  .sidebar-bottom {
+    margin-top: auto;
+    padding: 16px 8px;
+    border-top: 1px solid var(--border2);
+  }
+
+  /* ── MAIN ── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── TOPBAR ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+    height: 56px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 20px;
+  }
+
+  .page-title {
+    font-family: var(--display);
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .topbar-actions { display: flex; align-items: center; gap: 10px; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 8px 16px; border-radius: 7px;
+    font-family: var(--sans); font-size: 13px; font-weight: 500;
+    cursor: pointer; border: none; transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-primary { background: var(--green); color: #fff; }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-ghost { background: var(--border2); color: var(--white); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: var(--border); }
+  .btn-danger { background: var(--red-l); color: var(--red); border: 1px solid rgba(255,59,48,0.2); }
+  .btn-danger:hover { background: rgba(255,59,48,0.18); }
+
+  /* ── CONTENT AREA ── */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 28px 32px;
+  }
+
+  /* ── MANUAL AUDIT PANEL ── */
+  .audit-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin-bottom: 28px;
+    position: relative;
+    overflow: hidden;
+  }
+  .audit-panel::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--green), transparent);
+  }
+
+  .audit-panel-header {
+    display: flex; align-items: flex-start;
+    justify-content: space-between; gap: 20px;
+    margin-bottom: 22px; flex-wrap: wrap;
+  }
+
+  .audit-panel-title {
+    font-family: var(--display);
+    font-size: 18px; font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 4px;
+  }
+  .audit-panel-sub { font-size: 13px; color: var(--dim); }
+
+  .url-input-row {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+
+  .url-input {
+    flex: 1;
+    min-width: 260px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 16px;
+    color: var(--white);
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .url-input::placeholder { color: var(--dim); }
+  .url-input:focus { border-color: var(--green); }
+
+  .audit-options {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    margin-top: 16px; padding-top: 16px;
+    border-top: 1px solid var(--border2);
+  }
+
+  .option-chip {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--dim); cursor: pointer;
+    user-select: none;
+  }
+  .option-chip input { accent-color: var(--green); cursor: pointer; }
+  .option-chip:hover { color: var(--white); }
+
+  /* ── PROGRESS ── */
+  .progress-bar-wrap {
+    margin-top: 20px;
+    display: none;
+  }
+  .progress-bar-wrap.show { display: block; }
+  .progress-stages {
+    display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;
+  }
+  .stage-pill {
+    font-family: var(--mono);
+    font-size: 10px; letter-spacing: 0.08em;
+    padding: 4px 10px; border-radius: 20px;
+    background: var(--border2); color: var(--dim);
+    transition: all 0.3s;
+  }
+  .stage-pill.active { background: var(--green-l); color: var(--green); }
+  .stage-pill.done   { background: rgba(48,209,88,0.1); color: #30d158; }
+  .stage-pill.error  { background: var(--red-l); color: var(--red); }
+
+  .progress-log {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    line-height: 1.8;
+    max-height: 120px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+
+  /* ── STATS ROW ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 9px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--dim);
+    margin-bottom: 8px;
+  }
+  .stat-value {
+    font-family: var(--display);
+    font-size: 30px; font-weight: 800;
+    line-height: 1; letter-spacing: -0.03em;
+  }
+  .stat-sub {
+    font-size: 11px; color: var(--dim);
+    margin-top: 4px; font-family: var(--mono);
+  }
+
+  /* ── LEADS TABLE ── */
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px; flex-wrap: wrap; gap: 10px;
+  }
+  .section-title {
+    font-family: var(--display);
+    font-size: 16px; font-weight: 700; letter-spacing: -0.02em;
+  }
+
+  .filter-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-pill {
+    font-family: var(--mono);
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 4px 12px; border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent; color: var(--dim);
+    cursor: pointer; transition: all 0.15s;
+  }
+  .filter-pill:hover, .filter-pill.active {
+    background: var(--green-l); color: var(--green);
+    border-color: var(--green-b);
+  }
+
+  .leads-table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left;
+    font-family: var(--mono); font-size: 9px;
+    letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--dim); padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    font-weight: 400;
+  }
+  td {
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--border2);
+    font-size: 13px; vertical-align: middle;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .company-cell { font-weight: 500; color: var(--white); }
+  .domain-cell  { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 20px; font-weight: 500;
+  }
+  .badge-emailed   { background: var(--green-l);  color: var(--green); }
+  .badge-draft     { background: var(--amber-l);  color: var(--amber); }
+  .badge-no_reply  { background: var(--red-l);    color: var(--red);   }
+  .badge-replied   { background: rgba(48,209,88,0.1); color: #30d158;  }
+  .badge-expired   { background: var(--border2);  color: var(--dim);   }
+  .badge-manual    { background: rgba(10,132,255,0.1); color: var(--blue); }
+
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+  }
+  .dot-green  { background: var(--green); }
+  .dot-amber  { background: var(--amber); }
+  .dot-red    { background: var(--red); }
+  .dot-grey   { background: var(--dim); }
+  .dot-blue   { background: var(--blue); }
+
+  .age-cell {
+    font-family: var(--mono); font-size: 11px; color: var(--dim);
+  }
+  .age-warning { color: var(--amber); }
+  .age-expired { color: var(--red); }
+
+  .audit-link {
+    color: var(--green); text-decoration: none;
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+  }
+  .audit-link:hover { text-decoration: underline; }
+  .audit-link-expired { color: var(--dim); text-decoration: line-through; }
+
+  .action-btn {
+    background: none; border: 1px solid var(--border);
+    border-radius: 5px; padding: 4px 10px;
+    font-size: 11px; font-family: var(--mono);
+    color: var(--dim); cursor: pointer;
+    transition: all 0.15s;
+  }
+  .action-btn:hover { border-color: var(--green); color: var(--green); }
+
+  /* ── EMPTY STATE ── */
+  .empty-state {
+    padding: 60px 24px; text-align: center; color: var(--dim);
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 16px; }
+  .empty-title { font-family: var(--display); font-size: 18px; font-weight: 700; color: #444; margin-bottom: 8px; }
+  .empty-sub { font-size: 13px; }
+
+  /* ── TOAST ── */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 18px;
+    font-size: 13px; color: var(--white);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    z-index: 100;
+    transform: translateY(80px); opacity: 0;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex; align-items: center; gap: 10px;
+    max-width: 320px;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast-icon { font-size: 18px; flex-shrink: 0; }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── MOBILE ── */
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .content { padding: 20px 16px; }
+    .topbar  { padding: 0 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <!-- REPLACE WITH: <img src="/logo.png" alt="JD CoreDev"> -->
+    <div style="font-family:'Syne',sans-serif;font-size:17px;font-weight:800;letter-spacing:-0.03em;color:#f0ede8">
+      JD <span style="color:#2d7a6b">CoreDev</span>
+    </div>
+  </div>
+
+  <div class="sidebar-section">Main</div>
+  <a href="/admin" class="nav-item">
+    <span class="nav-icon">⊞</span> Dashboard
+  </a>
+  <a href="/admin/clients" class="nav-item">
+    <span class="nav-icon">◎</span> Clients
+  </a>
+  <a href="/admin/projects" class="nav-item">
+    <span class="nav-icon">◈</span> Projects
+  </a>
+
+  <div class="sidebar-section">Tools</div>
+  <a href="/lead-engine" class="nav-item active">
+    <span class="nav-icon">◉</span> Lead Engine
+    <span class="nav-badge" id="draftBadge" style="display:none">0</span>
+  </a>
+
+  <div class="sidebar-section">Settings</div>
+  <a href="/admin/payment-settings" class="nav-item">
+    <span class="nav-icon">⊙</span> Settings
+  </a>
+
+  <div class="sidebar-bottom">
+    <div class="nav-item" style="cursor:default">
+      <span class="nav-icon" style="color:#2d7a6b">◉</span>
+      <div>
+        <div style="font-size:12px;color:#f0ede8">Josh D</div>
+        <div style="font-size:10px;font-family:'DM Mono',monospace;color:#555"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="0a606579624a606e6965786f6e6f7c24696567">[email&#160;protected]</a></div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="page-title">Lead Engine</div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost" onclick="sendDigest()">📧 Send Digest</button>
+      <button class="btn btn-primary" id="runBtn" onclick="runEngine()">▶ Run Engine</button>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+
+    <!-- MANUAL AUDIT PANEL -->
+    <div class="audit-panel">
+      <div class="audit-panel-header">
+        <div>
+          <div class="audit-panel-title">Manual Audit</div>
+          <div class="audit-panel-sub">Paste any company URL to generate an audit and outreach message instantly</div>
+        </div>
+      </div>
+
+      <div class="url-input-row">
+        <input
+          class="url-input"
+          id="urlInput"
+          type="url"
+          placeholder="https://example.com.hk"
+          onkeydown="if(event.key==='Enter') runManualAudit()"
+        >
+        <button class="btn btn-primary" onclick="runManualAudit()" id="manualBtn">
+          Audit this site →
+        </button>
+      </div>
+
+      <div class="audit-options">
+        <label class="option-chip">
+          <input type="checkbox" id="optSendEmail" checked>
+          Auto-send email if found
+        </label>
+        <label class="option-chip">
+          <input type="checkbox" id="optSaveDraft" checked>
+          Save to draft queue
+        </label>
+        <label class="option-chip">
+          <input type="checkbox" id="optNotify" checked>
+          Notify me when done
+        </label>
+      </div>
+
+      <!-- Progress -->
+      <div class="progress-bar-wrap" id="progressWrap">
+        <div class="progress-stages" id="progressStages">
+          <span class="stage-pill" id="s1">1 · Research</span>
+          <span class="stage-pill" id="s2">2 · Audit</span>
+          <span class="stage-pill" id="s3">3 · Generate Page</span>
+          <span class="stage-pill" id="s4">4 · Outreach</span>
+          <span class="stage-pill" id="s5">5 · Send</span>
+        </div>
+        <div class="progress-log" id="progressLog">Initialising...</div>
+      </div>
+    </div>
+
+    <!-- STATS -->
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card">
+        <div class="stat-label">Total Audits</div>
+        <div class="stat-value" id="statTotal">—</div>
+        <div class="stat-sub">all time</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Emails Sent</div>
+        <div class="stat-value" id="statEmailed">—</div>
+        <div class="stat-sub">auto-delivered</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Drafts Pending</div>
+        <div class="stat-value" id="statDrafts" style="color:var(--amber)">—</div>
+        <div class="stat-sub">need manual send</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">No Reply</div>
+        <div class="stat-value" id="statNoReply" style="color:var(--red)">—</div>
+        <div class="stat-sub">expired · 30 days</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Replies</div>
+        <div class="stat-value" id="statReplied" style="color:#30d158">—</div>
+        <div class="stat-sub">inbound leads</div>
+      </div>
+    </div>
+
+    <!-- LEADS TABLE -->
+    <div class="section-header">
+      <div class="section-title">All Audits</div>
+      <div class="filter-pills">
+        <button class="filter-pill active" onclick="filterTable('all', this)">All</button>
+        <button class="filter-pill" onclick="filterTable('emailed', this)">Emailed</button>
+        <button class="filter-pill" onclick="filterTable('draft', this)">Draft</button>
+        <button class="filter-pill" onclick="filterTable('no_reply', this)">No Reply</button>
+        <button class="filter-pill" onclick="filterTable('replied', this)">Replied</button>
+        <button class="filter-pill" onclick="filterTable('manual', this)">Manual</button>
+      </div>
+    </div>
+
+    <div class="leads-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Domain</th>
+            <th>Status</th>
+            <th>Channel</th>
+            <th>Age</th>
+            <th>Audit</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="leadsBody">
+          <tr>
+            <td colspan="7">
+              <div class="empty-state">
+                <div class="empty-icon">◉</div>
+                <div class="empty-title">Loading audits...</div>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast">
+  <span class="toast-icon" id="toastIcon">✓</span>
+  <span id="toastMsg">Done</span>
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+const SECRET = window.ENGINE_SECRET || prompt('Enter ENGINE_SECRET:') || '';
+const API = '/api/lead-engine';
+
+let allLeads = [];
+let activeFilter = 'all';
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg, icon = '✓', duration = 3500) {
+  const t = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  document.getElementById('toastIcon').textContent = icon;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+async function apiPost(endpoint, body = {}) {
+  const res = await fetch(`${API}${endpoint}`, {
+    method: 'POST',
+    headers: { 'x-engine-secret': SECRET, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+async function apiGet(endpoint) {
+  const res = await fetch(`${API}${endpoint}`, {
+    headers: { 'x-engine-secret': SECRET },
+  });
+  return res.json();
+}
+
+// ── Load status ───────────────────────────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const data = await apiGet('/status');
+    allLeads = data.contacted || [];
+    renderStats(allLeads, data.drafts || []);
+    renderTable(allLeads, activeFilter);
+    updateBadge(data.drafts?.filter(d => !d.sent)?.length || 0);
+  } catch (e) {
+    console.error('Failed to load status:', e);
+  }
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function renderStats(leads, drafts) {
+  document.getElementById('statTotal').textContent    = leads.length;
+  document.getElementById('statEmailed').textContent  = leads.filter(l => l.channel === 'email').length;
+  document.getElementById('statDrafts').textContent   = drafts.filter(d => !d.sent).length;
+  document.getElementById('statNoReply').textContent  = leads.filter(l => l.status === 'no_reply').length;
+  document.getElementById('statReplied').textContent  = leads.filter(l => l.status === 'replied').length;
+}
+
+function updateBadge(count) {
+  const b = document.getElementById('draftBadge');
+  b.style.display = count > 0 ? 'inline' : 'none';
+  b.textContent = count;
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+function daysSince(iso) {
+  return Math.floor((Date.now() - new Date(iso)) / 86400000);
+}
+
+function ageLabel(iso, status) {
+  const d = daysSince(iso);
+  if (status === 'no_reply' || status === 'expired') return { text: `${d}d · expired`, cls: 'age-expired' };
+  if (d >= 25) return { text: `${d}d ⚠`, cls: 'age-warning' };
+  return { text: `${d}d`, cls: '' };
+}
+
+function statusBadge(entry) {
+  const map = {
+    emailed:  ['badge-emailed',  '◉', 'Emailed'],
+    draft:    ['badge-draft',    '◎', 'Draft'],
+    no_reply: ['badge-no_reply', '✕', 'No Reply'],
+    replied:  ['badge-replied',  '✓', 'Replied'],
+    manual:   ['badge-manual',   '◈', 'Manual'],
+    expired:  ['badge-expired',  '◌', 'Expired'],
+  };
+  const key = entry.status || entry.channel || 'draft';
+  const [cls, dot, label] = map[key] || map.draft;
+  return `<span class="status-badge ${cls}">${dot} ${label}</span>`;
+}
+
+function renderTable(leads, filter) {
+  const body = document.getElementById('leadsBody');
+  const filtered = filter === 'all'
+    ? leads
+    : leads.filter(l => (l.status || l.channel) === filter);
+
+  if (filtered.length === 0) {
+    body.innerHTML = `<tr><td colspan="7"><div class="empty-state">
+      <div class="empty-icon">◎</div>
+      <div class="empty-title">No ${filter === 'all' ? '' : filter + ' '}audits yet</div>
+      <div class="empty-sub">Run the engine or paste a URL above to get started.</div>
+    </div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = filtered.map(entry => {
+    const age = ageLabel(entry.contactedAt, entry.status);
+    const isExpired = entry.status === 'no_reply';
+    const linkClass = isExpired ? 'audit-link-expired' : 'audit-link';
+    const linkAttr  = isExpired ? '' : `href="${entry.auditUrl}" target="_blank"`;
+
+    return `<tr>
+      <td class="company-cell">${entry.name}</td>
+      <td class="domain-cell">${entry.domain}</td>
+      <td>${statusBadge(entry)}</td>
+      <td><span style="font-family:var(--mono);font-size:11px;color:var(--dim)">${entry.channel || '—'}</span></td>
+      <td class="age-cell ${age.cls}">${age.text}</td>
+      <td><a class="${linkClass}" ${linkAttr}>${isExpired ? 'Expired' : 'View →'}</a></td>
+      <td>
+        ${entry.status !== 'replied'
+          ? `<button class="action-btn" onclick="markReplied('${entry.domain}')">Mark replied</button>`
+          : `<span style="font-size:11px;font-family:var(--mono);color:#30d158">✓ Replied</span>`
+        }
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function filterTable(type, el) {
+  activeFilter = type;
+  document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  renderTable(allLeads, type);
+}
+
+// ── Run engine ────────────────────────────────────────────────────────────────
+async function runEngine() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Running...';
+  try {
+    await apiPost('/run');
+    showToast('Lead engine started — check back in ~3 minutes', '◉', 5000);
+    setTimeout(loadStatus, 180000);
+  } catch (e) {
+    showToast('Failed to start engine', '✕');
+  }
+  setTimeout(() => { btn.disabled = false; btn.innerHTML = '▶ Run Engine'; }, 5000);
+}
+
+// ── Manual audit ──────────────────────────────────────────────────────────────
+async function runManualAudit() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) { showToast('Please enter a URL first', '⚠'); return; }
+
+  const btn = document.getElementById('manualBtn');
+  btn.disabled = true;
+  btn.textContent = 'Auditing...';
+
+  const wrap   = document.getElementById('progressWrap');
+  const logEl  = document.getElementById('progressLog');
+  wrap.classList.add('show');
+  logEl.textContent = '';
+
+  const stages = ['s1','s2','s3','s4','s5'];
+  const labels = ['Research','Audit','Generate Page','Outreach','Send'];
+
+  function setStage(n, state) {
+    const el = document.getElementById(`s${n}`);
+    el.className = `stage-pill ${state}`;
+    el.textContent = `${n} · ${labels[n-1]}`;
+  }
+
+  function addLog(line) {
+    logEl.textContent += line + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  try {
+    setStage(1, 'active');
+    addLog('→ Researching company...');
+
+    const sendEmail = document.getElementById('optSendEmail').checked;
+    const saveDraft = document.getElementById('optSaveDraft').checked;
+
+    const res = await apiPost('/manual-audit', {
+      url,
+      sendEmail,
+      saveDraft,
+    });
+
+    if (res.error) throw new Error(res.error);
+
+    // Simulate stage progression (server runs async)
+    for (let i = 1; i <= 5; i++) {
+      await new Promise(r => setTimeout(r, 800));
+      setStage(i, 'done');
+      if (i < 5) setStage(i + 1, 'active');
+      const msgs = [
+        '✓ Company found and researched',
+        '✓ Audit complete — score: ' + (res.score || '…') + '/100',
+        '✓ Audit page live at ' + (res.auditUrl || '…'),
+        '✓ Outreach message drafted',
+        res.emailed ? '✓ Email sent to ' + res.email : '✓ Draft saved to queue',
+      ];
+      addLog(msgs[i - 1]);
+    }
+
+    showToast(`Audit live: ${res.auditUrl || 'check dashboard'}`, '✓', 6000);
+    document.getElementById('urlInput').value = '';
+    setTimeout(loadStatus, 1000);
+
+  } catch (e) {
+    stages.forEach((_, i) => {
+      const el = document.getElementById(`s${i+1}`);
+      if (el.classList.contains('active')) el.className = 'stage-pill error';
+    });
+    addLog('✕ Error: ' + e.message);
+    showToast('Audit failed: ' + e.message, '✕');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Audit this site →';
+}
+
+// ── Mark replied ──────────────────────────────────────────────────────────────
+async function markReplied(domain) {
+  try {
+    await apiPost('/mark-replied', { domain });
+    showToast(`${domain} marked as replied`, '✓');
+    loadStatus();
+  } catch (e) {
+    showToast('Failed to update', '✕');
+  }
+}
+
+// ── Send digest ───────────────────────────────────────────────────────────────
+async function sendDigest() {
+  try {
+    await apiPost('/digest');
+    showToast('Digest sent to joshuad@jdcoredev.com', '📧');
+  } catch (e) {
+    showToast('Failed to send digest', '✕');
+  }
+}
+
+// ── Init ──────────────────────────

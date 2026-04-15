@@ -1,34 +1,6 @@
-# Dependencies
-node_modules/
-.pnp.*
-.yarn/
-
-# Build output
-dist/
-build/
-*.tar.gz
-
-# Environment & secrets
-.env
-.env.*
-!.env.example
-
-# OS files
+node_modules
+dist
 .DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-
-# PDFs and archives (large binaries)
-*.pdf
-*.zip
-
-# Logs
-*.log
-npm-debug.log*
-
-# Temp
-*.tmp
-*.swp
+server/public
+vite.config.ts.*
+*.tar.gz
