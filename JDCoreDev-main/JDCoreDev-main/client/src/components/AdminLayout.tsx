@@ -37,7 +37,6 @@ import {
   DollarSign,
   Bitcoin,
   FileText,
-  Radar,
   TrendingUp,
   Scale,
   MoreHorizontal,
@@ -52,7 +51,7 @@ const mainNavItems = [
   { title: "Projects",      icon: Briefcase,      href: "/admin/projects" },
   { title: "Invoice Reminders", icon: Mail,       href: "/admin/invoice-reminders" },
   { title: "Crypto Tracker", icon: Bitcoin,       href: "/admin/crypto" },
-  { title: "Lead Engine",   icon: Radar,          href: "/admin/lead-engine" },
+  { title: "Lead Engine",   icon: Target,         href: "/admin/leads" },
   { title: "Claude Trader", icon: TrendingUp,     href: "/admin/trader" },
   { title: "Predictions",   icon: Scale,          href: "/admin/trader/predictions" },
 ];

@@ -19,14 +19,15 @@ import {
 function TraderNav({active}:{active:string}) {
   const [,setLocation] = useLocation();
   const tabs = [
-    { label:"Dashboard",   path:"/admin/trader" },
-    { label:"Runs",        path:"/admin/trader/runs" },
-    { label:"Analytics",   path:"/admin/trader/analytics" },
-    { label:"Performance", path:"/admin/trader/performance" },
-    { label:"Chat",        path:"/admin/trader/chat" },
-    { label:"Watchlist",   path:"/admin/trader/watchlist" },
-    { label:"Settings",    path:"/admin/trader/settings" },
-    { label:"Backtest",    path:"/admin/trader/backtest" },
+    { label:"Dashboard",    path:"/admin/trader" },
+    { label:"Runs",         path:"/admin/trader/runs" },
+    { label:"Analytics",    path:"/admin/trader/analytics" },
+    { label:"Performance",  path:"/admin/trader/performance" },
+    { label:"Predictions",  path:"/admin/trader/predictions" },
+    { label:"Arb Engine",   path:"/admin/trader/arbitrage" },
+    { label:"Crypto Arb",   path:"/admin/trader/crypto-arb" },
+    { label:"Watchlist",    path:"/admin/trader/watchlist" },
+    { label:"Settings",     path:"/admin/trader/settings" },
   ];
   return (
     <div className="flex gap-1 flex-wrap mb-6">

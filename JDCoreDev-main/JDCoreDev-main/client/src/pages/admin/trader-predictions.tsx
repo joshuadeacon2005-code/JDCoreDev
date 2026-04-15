@@ -163,10 +163,39 @@ function BetCard({ bet }: { bet: any }) {
     ? JSON.parse(bet.council_transcript)
     : bet.council_transcript;
   const pnl = bet.pnl != null ? parseFloat(bet.pnl) : null;
+  const cost = parseFloat(bet.cost) || 0;
+  const contracts = parseInt(bet.contracts) || 0;
+  const isLegacy = cost === 0 && contracts === 0;
+
+  // Time-to-expiry calculation (if close time is in the council transcript or market data)
+  const closeTime = bet.close || bet.expiry;
+  let timeLeftLabel = "";
+  let timeLeftColor = "text-muted-foreground";
+  if (closeTime) {
+    const msLeft = new Date(closeTime).getTime() - Date.now();
+    const hoursLeft = msLeft / (1000 * 60 * 60);
+    if (hoursLeft <= 0) {
+      timeLeftLabel = "Expired";
+      timeLeftColor = "text-red-500";
+    } else if (hoursLeft < 1) {
+      timeLeftLabel = `${Math.round(hoursLeft * 60)}m left`;
+      timeLeftColor = "text-red-500";
+    } else if (hoursLeft < 6) {
+      timeLeftLabel = `${hoursLeft.toFixed(1)}h left`;
+      timeLeftColor = "text-amber-500";
+    } else if (hoursLeft < 24) {
+      timeLeftLabel = `${Math.round(hoursLeft)}h left`;
+      timeLeftColor = "text-blue-500";
+    } else {
+      timeLeftLabel = `${Math.round(hoursLeft / 24)}d left`;
+      timeLeftColor = "text-muted-foreground";
+    }
+  }
 
   return (
     <Card className={cn("border",
-      pnl != null && pnl > 0 ? "border-emerald-500/30"
+      isLegacy ? "border-muted opacity-60"
+      : pnl != null && pnl > 0 ? "border-emerald-500/30"
       : pnl != null && pnl < 0 ? "border-red-500/30"
       : "border-border")}>
       <CardContent className="pt-4 pb-3">
@@ -178,30 +207,48 @@ function BetCard({ bet }: { bet: any }) {
                 {bet.side?.toUpperCase()}
               </Badge>
               <span className="text-xs font-mono text-muted-foreground">{bet.market_ticker}</span>
+              {isLegacy && (
+                <Badge variant="outline" className="text-[10px] border-muted text-muted-foreground">Legacy</Badge>
+              )}
               <Badge variant="outline" className={cn("text-[10px]",
                 bet.confidence >= 0.8 ? "border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
                 : bet.confidence >= 0.6 ? "border-amber-500/20 text-amber-500"
                 : "border-muted text-muted-foreground")}>
                 {bet.confidence >= 0.8 ? "High" : bet.confidence >= 0.6 ? "Med" : "Low"} conf
               </Badge>
-              {pnl == null && (
+              {pnl == null && !isLegacy && (
                 <Badge variant="outline" className="text-[10px] border-blue-500/20 text-blue-500">
                   <Clock className="h-2.5 w-2.5 mr-1" />Pending
                 </Badge>
               )}
+              {timeLeftLabel && (
+                <Badge variant="outline" className={cn("text-[10px]", timeLeftColor)}>
+                  <Clock className="h-2.5 w-2.5 mr-1" />{timeLeftLabel}
+                </Badge>
+              )}
+              {bet.platform === "polymarket" && (
+                <Badge variant="outline" className="text-[10px] border-violet-500/20 text-violet-500">Polymarket</Badge>
+              )}
             </div>
             <p className="text-sm font-semibold leading-tight mb-1">{bet.market_title}</p>
             <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
-              <span>{bet.contracts} contracts @ ${parseFloat(bet.price).toFixed(2)}</span>
-              <span>Cost: {fmtUSD(parseFloat(bet.cost))}</span>
+              {isLegacy
+                ? <span className="italic">Legacy bet — no cost data</span>
+                : <>
+                    <span>{contracts} contracts @ ${parseFloat(bet.price).toFixed(2)}</span>
+                    <span>Cost: {fmtUSD(cost)}</span>
+                  </>
+              }
               <span>Edge: {((parseFloat(bet.edge) || 0) * 100).toFixed(1)}pp</span>
               <span>{fmtHKT(new Date(bet.logged_at), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} HKT</span>
             </div>
           </div>
           <div className="text-right flex-shrink-0">
-            {pnl == null
-              ? <p className="text-sm font-mono text-muted-foreground/50">—</p>
-              : <p className={cn("text-lg font-bold font-mono", clrPnl(pnl))}>{pnl >= 0 ? "+" : ""}{fmtUSD(pnl)}</p>
+            {isLegacy
+              ? <p className="text-xs font-mono text-muted-foreground/50">N/A</p>
+              : pnl == null
+                ? <p className="text-sm font-mono text-muted-foreground/50">—</p>
+                : <p className={cn("text-lg font-bold font-mono", clrPnl(pnl))}>{pnl >= 0 ? "+" : ""}{fmtUSD(pnl)}</p>
             }
           </div>
         </div>
@@ -753,7 +800,7 @@ function SettingsTab({ settings, onUpdate }: { settings: any; onUpdate: (k: stri
           <CardTitle className="text-sm">Scanning & Schedule</CardTitle>
         </CardHeader>
         <CardContent className="pb-4 space-y-3">
-          <ToggleRow k="cron_enabled" label="Auto-Scan (every 2 hours)" desc="Automatically scan Kalshi markets and place bets when edge is found" />
+          <ToggleRow k="cron_enabled" label="Auto-Scan (every 12 hours)" desc="Automatically scan Kalshi + Polymarket short-term markets and place bets when edge is found" />
           <Separator />
           <ChoiceRow k="mode" label="Trading Mode"
             choices={["demo", "live"]}
@@ -764,15 +811,17 @@ function SettingsTab({ settings, onUpdate }: { settings: any; onUpdate: (k: stri
         </CardContent>
       </Card>
 
-      {/* Market filters */}
+      {/* Market Focus */}
       <Card>
         <CardHeader className="pb-2 pt-4">
-          <CardTitle className="text-sm">Market Filters</CardTitle>
-          <CardDescription className="text-xs">Customise which markets the scanner targets</CardDescription>
+          <CardTitle className="text-sm">Market Focus</CardTitle>
+          <CardDescription className="text-xs">Focus the scanner on specific short-term market types (7-day max expiry)</CardDescription>
         </CardHeader>
         <CardContent className="pb-4 space-y-4">
+          <ChoiceRow k="market_focus" label="Market Category"
+            choices={["all", "crypto", "weather", "economic"]}
+            fmt={v => ({ all: "All Markets", crypto: "Crypto", weather: "Weather", economic: "Economic" }[v] || v)} />
           <FieldRow k="min_volume" label="Minimum Market Volume" desc="Skip markets with fewer contracts traded (0 = no filter)" placeholder="0" />
-          <FieldRow k="max_close_time_days" label="Max Days Until Expiry" desc="Only bet markets resolving within this many days" placeholder="90" />
           <FieldRow k="min_confidence_score" label="Minimum Confidence Score (0-1)" desc="Council agents must reach this confidence to trigger a bet" placeholder="0.6" />
         </CardContent>
       </Card>
@@ -830,15 +879,18 @@ export default function PredictionsPage() {
   const [stageStatus, setStageStatus] = useState<any>({});
   const [scanResults, setScanResults] = useState<any[]>([]);
   const [tab, setTab]                 = useState<"overview" | "bets" | "analytics" | "chat" | "councils" | "settings">("overview");
+  const [usage, setUsage]             = useState<any>(null);
 
   const loadStats = useCallback(async () => {
     try {
-      const [s, cfg] = await Promise.all([
+      const [s, cfg, u] = await Promise.all([
         fetch("/api/predictor/stats").then(r => r.json()),
         fetch("/api/predictor/settings").then(r => r.json()),
+        fetch("/api/predictor/usage").then(r => r.json()).catch(() => null),
       ]);
       setStats(s);
       setSettings(cfg);
+      if (u) setUsage(u);
     } catch {}
     setLoading(false);
   }, []);
@@ -921,14 +973,16 @@ export default function PredictionsPage() {
         {/* ── OVERVIEW ── */}
         {tab === "overview" && (
           <div className="space-y-5">
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
               {[
-                { label: "Total Bets",  value: stats?.total_bets ?? "—",      cls: "text-foreground" },
-                { label: "Win Rate",    value: stats?.win_rate != null ? `${stats.win_rate.toFixed(0)}%` : "—", cls: (stats?.win_rate || 0) >= 50 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500" },
-                { label: "Total P&L",  value: stats?.total_pnl != null ? fmtUSD(stats.total_pnl) : "—", cls: clrPnl(stats?.total_pnl || 0) },
-                { label: "ROI",        value: stats?.roi != null ? fmtPct(stats.roi) : "—", cls: clrPnl(stats?.roi || 0) },
-                { label: "Avg Edge",   value: stats?.avg_edge != null ? `${(stats.avg_edge * 100).toFixed(1)}pp` : "—", cls: "text-purple-500" },
-                { label: "Active",     value: stats?.active_positions ?? "—", cls: "text-blue-500" },
+                { label: "Total Bets",      value: stats?.total_bets ?? "—",      cls: "text-foreground" },
+                { label: "Win Rate",        value: stats?.win_rate != null ? `${stats.win_rate.toFixed(0)}%` : "—", cls: (stats?.win_rate || 0) >= 50 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500" },
+                { label: "Settled P&L",    value: stats?.settled_pnl != null ? fmtUSD(stats.settled_pnl) : "—", cls: clrPnl(stats?.settled_pnl || 0) },
+                { label: "At Stake",       value: stats?.at_stake != null ? fmtUSD(stats.at_stake) : "—", cls: "text-amber-500" },
+                { label: "Payout",         value: stats?.potential_payout != null ? fmtUSD(stats.potential_payout) : "—", cls: "text-blue-500" },
+                { label: "Potential Profit", value: stats?.potential_profit != null ? fmtUSD(stats.potential_profit) : "—", cls: clrPnl(stats?.potential_profit || 0) },
+                { label: "Avg Edge",       value: stats?.avg_edge != null ? `${(stats.avg_edge * 100).toFixed(1)}pp` : "—", cls: "text-purple-500" },
+                { label: "Active",         value: stats?.active_positions ?? "—", cls: "text-blue-500" },
               ].map(m => (
                 <Card key={m.label} className="p-4">
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{m.label}</p>
@@ -1033,6 +1087,47 @@ export default function PredictionsPage() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* API Usage Tracker */}
+            {usage && (
+              <Card>
+                <CardHeader className="pb-2 pt-4">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <DollarSign className="h-4 w-4 text-amber-500" />API Usage & Costs
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-4">
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    {[
+                      { label: "Today", cost: usage.today?.cost || 0 },
+                      { label: "This Week", cost: usage.week?.cost || 0 },
+                      { label: "This Month", cost: usage.month?.cost || 0 },
+                    ].map(p => (
+                      <div key={p.label} className="rounded-lg border p-3">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{p.label}</p>
+                        <p className={cn("text-lg font-bold font-mono", p.cost > 1 ? "text-amber-500" : p.cost > 5 ? "text-red-500" : "text-foreground")}>
+                          ${p.cost.toFixed(4)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  {usage.by_module?.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">By Module (30d)</p>
+                      {usage.by_module.map((m: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between text-xs py-1">
+                          <span className="font-mono text-muted-foreground">{m.module} ({m.model?.split("-").slice(-1)[0]})</span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-muted-foreground">{m.calls} calls</span>
+                            <span className="font-mono font-bold">${m.cost.toFixed(4)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {scanResults.length > 0 && (
               <Card>

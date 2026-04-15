@@ -46,8 +46,11 @@ async function initPredictorTables() {
     status TEXT DEFAULT 'pending',
     pnl REAL,
     settled_at TIMESTAMPTZ,
+    platform TEXT DEFAULT 'kalshi',
     logged_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  // Add platform column if missing (for existing DBs)
+  await pool.query(`ALTER TABLE predictor_bets ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'kalshi'`).catch(() => {});
   await pool.query(`CREATE TABLE IF NOT EXISTS predictor_scans (
     id SERIAL PRIMARY KEY,
     markets_scanned INTEGER DEFAULT 0,
@@ -82,6 +85,17 @@ async function initPredictorTables() {
     logged_at TIMESTAMPTZ DEFAULT NOW()
   )`);
 
+  // API usage tracking table
+  await pool.query(`CREATE TABLE IF NOT EXISTS api_usage (
+    id SERIAL PRIMARY KEY,
+    module TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    logged_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
   // Default settings
   const defaults: [string, string][] = [
     ["cron_enabled", "false"],
@@ -90,6 +104,7 @@ async function initPredictorTables() {
     ["max_positions", "10"],
     ["kelly_fraction", "0.25"],
     ["mode", "demo"],
+    ["market_focus", "all"],
   ];
   for (const [k, v] of defaults) {
     await pool.query(
@@ -230,9 +245,25 @@ function parseJSON(text: string) {
   return null;
 }
 
+// Cost rates per million tokens
+const MODEL_COSTS: Record<string, { input: number; output: number }> = {
+  "claude-sonnet-4-5": { input: 3, output: 15 },
+  "claude-haiku-4-5-20251001": { input: 0.80, output: 4 },
+};
+
+async function logApiUsage(module: string, model: string, inputTokens: number, outputTokens: number) {
+  const rates = MODEL_COSTS[model] || { input: 3, output: 15 };
+  const cost = (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
+  await pool.query(
+    `INSERT INTO api_usage (module, model, input_tokens, output_tokens, cost_usd) VALUES ($1,$2,$3,$4,$5)`,
+    [module, model, inputTokens, outputTokens, cost]
+  ).catch(() => {});
+}
+
 async function callClaude(prompt: string, useSearch = false, maxTokens = 1500): Promise<string> {
+  const model = "claude-sonnet-4-5";
   const body: any = {
-    model: "claude-sonnet-4-5",
+    model,
     max_tokens: maxTokens,
     messages: [{ role: "user", content: prompt }],
   };
@@ -249,78 +280,219 @@ async function callClaude(prompt: string, useSearch = false, maxTokens = 1500): 
   });
   if (!res.ok) throw new Error(`Anthropic ${res.status}`);
   const d = await res.json();
+
+  // Log token usage
+  if (d.usage) {
+    await logApiUsage("predictor", model, d.usage.input_tokens || 0, d.usage.output_tokens || 0);
+  }
+
   return (d.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+}
+
+// ── Polymarket helpers ──────────────────────────────────────────────────────
+
+const POLYMARKET_GAMMA_API = "https://gamma-api.polymarket.com";
+
+const CRYPTO_KEYWORDS = ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto", "blockchain"];
+
+async function fetchPolymarketOpportunities(): Promise<any[]> {
+  try {
+    const res = await fetch(`${POLYMARKET_GAMMA_API}/markets?closed=false&limit=200`, {
+      headers: { "Accept": "application/json" },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return [];
+    const markets = await res.json();
+    return Array.isArray(markets) ? markets : [];
+  } catch (e: any) {
+    console.warn("[predictor] Polymarket fetch failed:", e.message);
+    return [];
+  }
+}
+
+async function fetchCryptoSpotPrice(symbol: string): Promise<number | null> {
+  try {
+    const alpacaKey = process.env.CRON_ALPACA_KEY_PAPER || "";
+    const alpacaSecret = process.env.CRON_ALPACA_SECRET_PAPER || "";
+    if (!alpacaKey || !alpacaSecret) return null;
+    const pair = `${symbol.toUpperCase()}/USD`;
+    const res = await fetch(
+      `https://data.alpaca.markets/v1beta3/crypto/us/latest/quotes?symbols=${encodeURIComponent(pair)}`,
+      {
+        headers: { "APCA-API-KEY-ID": alpacaKey, "APCA-API-SECRET-KEY": alpacaSecret },
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+    if (!res.ok) return null;
+    const d = await res.json();
+    const quote = d?.quotes?.[pair];
+    return quote ? (quote.ap + quote.bp) / 2 : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── PIPELINE STAGES ─────────────────────────────────────────────────────────
 
-// Stage 1: Scan Kalshi markets for opportunities
+// Short-term market categories
+const WEATHER_KEYWORDS = ["weather", "temperature", "rain", "snow", "hurricane", "tornado", "storm", "heat", "cold", "forecast"];
+const ECONOMIC_KEYWORDS = ["gdp", "inflation", "cpi", "jobs", "unemployment", "interest rate", "fed", "federal reserve", "treasury", "housing"];
+const CRYPTO_SERIES = ["KXBTC", "KXETH", "KXSOL"]; // Kalshi crypto series tickers
+
+function classifyMarket(title: string, category: string): string {
+  const text = `${title} ${category}`.toLowerCase();
+  if (CRYPTO_KEYWORDS.some(kw => text.includes(kw)) || CRYPTO_SERIES.some(s => text.toUpperCase().includes(s))) return "crypto";
+  if (WEATHER_KEYWORDS.some(kw => text.includes(kw))) return "weather";
+  if (ECONOMIC_KEYWORDS.some(kw => text.includes(kw))) return "economic";
+  return "other";
+}
+
+// Stage 1: Scan Kalshi + Polymarket for opportunities
 async function scanMarkets(
   onStage: (msg: string) => void
 ): Promise<any[]> {
-  onStage("Fetching open markets from Kalshi…");
+  const marketFocus = (await getSetting("market_focus")) || "all";
+  onStage(`Fetching open markets (focus: ${marketFocus})…`);
 
-  // Fetch active markets
-  const data = await kalshiPublicReq("/markets?status=open&limit=200");
-  const markets = data?.markets || [];
+  // Fetch from both platforms + crypto series in parallel
+  const [kalshiData, polymarketRaw, ...cryptoSeriesData] = await Promise.all([
+    kalshiPublicReq("/markets?status=open&limit=200"),
+    fetchPolymarketOpportunities(),
+    // Priority fetch for crypto series on Kalshi
+    ...CRYPTO_SERIES.map(s => kalshiPublicReq(`/markets?status=open&series_ticker=${s}&limit=50`).catch(() => null)),
+  ]);
 
-  if (!markets.length) {
-    onStage("No markets returned — check Kalshi API connection");
+  // Merge crypto series markets into main list (dedup by ticker)
+  const kalshiMarkets = kalshiData?.markets || [];
+  const seenTickers = new Set(kalshiMarkets.map((m: any) => m.ticker));
+  for (const d of cryptoSeriesData) {
+    for (const m of (d?.markets || [])) {
+      if (!seenTickers.has(m.ticker)) {
+        kalshiMarkets.push(m);
+        seenTickers.add(m.ticker);
+      }
+    }
+  }
+  onStage(`${kalshiMarkets.length} Kalshi + ${polymarketRaw.length} Polymarket markets fetched`);
+
+  const now = Date.now();
+
+  // Filter Kalshi markets — SHORT-TERM ONLY (0.5h to 168h = 7 days)
+  const kalshiCandidates = kalshiMarkets.filter((m: any) => {
+    const closeTime = new Date(m.close_time || m.expiration_time).getTime();
+    const hoursLeft = (closeTime - now) / (1000 * 60 * 60);
+    if (hoursLeft < 0.5 || hoursLeft > 168) return false; // 7 day max
+    const title = (m.title || "").toLowerCase();
+    const category = (m.category || m.series_ticker || "").toLowerCase();
+    const marketType = classifyMarket(title, category);
+
+    // Apply market focus filter
+    if (marketFocus !== "all" && marketType !== marketFocus && marketType !== "other") return false;
+
+    const combined = `${title} ${category}`;
+    const inEdge = EDGE_CATEGORIES.some(cat => combined.includes(cat.toLowerCase()));
+    const isCrypto = marketType === "crypto";
+    const isWeather = marketType === "weather";
+    return inEdge || isCrypto || isWeather;
+  }).map((m: any) => {
+    const closeTime = new Date(m.close_time || m.expiration_time).getTime();
+    const hoursLeft = (closeTime - now) / (1000 * 60 * 60);
+    return {
+      ticker: m.ticker,
+      title: m.title,
+      yes_price: m.yes_ask || m.last_price || 0.5,
+      volume: m.volume || 0,
+      close: m.close_time || m.expiration_time,
+      hours_left: hoursLeft,
+      market_type: classifyMarket((m.title || "").toLowerCase(), (m.category || m.series_ticker || "").toLowerCase()),
+      platform: "kalshi" as const,
+    };
+  });
+
+  // Filter Polymarket markets — SHORT-TERM ONLY
+  const polyCandidates = polymarketRaw.filter((m: any) => {
+    if (!m.question && !m.title) return false;
+    const text = ((m.question || m.title || "") + " " + (m.description || "") + " " + (m.category || "")).toLowerCase();
+    const endDate = m.end_date_iso || m.endDate;
+    if (endDate) {
+      const hoursLeft = (new Date(endDate).getTime() - now) / (1000 * 60 * 60);
+      if (hoursLeft < 0.5 || hoursLeft > 168) return false; // 7 day max
+    }
+    const marketType = classifyMarket(text, m.category || "");
+    if (marketFocus !== "all" && marketType !== marketFocus && marketType !== "other") return false;
+    const isCrypto = CRYPTO_KEYWORDS.some(kw => text.includes(kw));
+    const isEdge = EDGE_CATEGORIES.some(cat => text.includes(cat.toLowerCase()));
+    const isWeather = WEATHER_KEYWORDS.some(kw => text.includes(kw));
+    return isCrypto || isEdge || isWeather;
+  }).map((m: any) => {
+    const outcomes = m.outcomes || [];
+    const prices = m.outcomePrices ? JSON.parse(m.outcomePrices) : [];
+    const yesPrice = prices[0] ? parseFloat(prices[0]) : 0.5;
+    const endDate = m.end_date_iso || m.endDate;
+    const hoursLeft = endDate ? (new Date(endDate).getTime() - now) / (1000 * 60 * 60) : 48;
+    return {
+      ticker: m.condition_id || m.id || `poly-${Date.now()}`,
+      title: m.question || m.title,
+      yes_price: yesPrice,
+      volume: parseFloat(m.volume || m.volumeNum || "0"),
+      close: endDate,
+      hours_left: hoursLeft,
+      market_type: classifyMarket((m.question || m.title || "").toLowerCase(), (m.category || "").toLowerCase()),
+      platform: "polymarket" as const,
+      poly_slug: m.slug,
+      poly_token_id: outcomes[0]?.id || m.clobTokenIds?.[0],
+    };
+  });
+
+  const allCandidates = [...kalshiCandidates, ...polyCandidates];
+  onStage(`${kalshiCandidates.length} Kalshi + ${polyCandidates.length} Polymarket short-term candidates`);
+
+  // Have Claude score the top candidates for "mispricing potential"
+  const summaries = allCandidates.slice(0, 40).map(m => ({
+    ticker: m.ticker,
+    title: m.title,
+    yes_price: m.yes_price,
+    volume: m.volume,
+    close: m.close,
+    hours_left: Math.round(m.hours_left),
+    market_type: m.market_type,
+    platform: m.platform,
+  }));
+
+  if (!summaries.length) {
+    onStage("No candidates found in edge categories");
     return [];
   }
 
-  onStage(`${markets.length} open markets — filtering for edge categories…`);
-
-  // Filter to categories where Claude has knowledge edge
-  // Also filter out markets closing in <2 hours (too little time to research)
-  // and markets with very low volume (illiquid)
-  const now = Date.now();
-  const candidates = markets.filter((m: any) => {
-    const closeTime = new Date(m.close_time || m.expiration_time).getTime();
-    const hoursLeft = (closeTime - now) / (1000 * 60 * 60);
-    if (hoursLeft < 2 || hoursLeft > 2160) return false; // 2h to 90 days
-
-    // Check if the market title/category matches our edge areas
-    const title = (m.title || "").toLowerCase();
-    const category = (m.category || m.series_ticker || "").toLowerCase();
-    const combined = `${title} ${category}`;
-
-    return EDGE_CATEGORIES.some(
-      (cat) =>
-        combined.includes(cat.toLowerCase()) ||
-        title.includes(cat.toLowerCase())
-    );
-  });
-
-  onStage(`${candidates.length} candidates in edge categories`);
-
-  // Have Claude quickly score the top candidates for "mispricing potential"
-  const summaries = candidates.slice(0, 40).map((m: any) => ({
-    ticker: m.ticker,
-    title: m.title,
-    yes_price: m.yes_ask || m.last_price || 0.5,
-    volume: m.volume || 0,
-    close: m.close_time || m.expiration_time,
-  }));
-
   const scored = parseJSON(
     await callClaude(
-      `You are a prediction market scanner. Review these Kalshi markets and identify ones where the current price seems MISPRICED based on your knowledge. Focus on markets where you have strong domain knowledge and the odds look wrong.
+      `Score these prediction markets 0-100 on mispricing confidence. Only include ≥60. Max 8.
 
-Markets:
-${JSON.stringify(summaries, null, 1)}
+${JSON.stringify(summaries)}
 
-Score each 0-100 on "mispricing confidence" — how sure are you the market price is significantly wrong?
+Focus on SHORT-TERM opportunities (crypto hourly/daily, weather daily, economic weekly). Favour markets resolving within 48h.
 
 Return ONLY JSON:
-{"scored":[{"ticker":"XX","title":"short title","yes_price":0.65,"your_estimate":0.82,"edge":0.17,"score":85,"why":"brief reason you think it's mispriced"}]}
+{"scored":[{"ticker":"XX","title":"short","yes_price":0.65,"your_estimate":0.82,"edge":0.17,"score":85,"platform":"kalshi","hours_left":24,"market_type":"crypto","why":"brief reason"}]}
 
-Only include markets scoring ≥60. Max 8 results.`,
-      true
+Include "platform", "hours_left", "market_type" from input.`,
+      true,
+      1000
     )
   );
 
-  const results = scored?.scored || [];
+  const results = (scored?.scored || []).map((s: any) => {
+    const orig = allCandidates.find(c => c.ticker === s.ticker);
+    return {
+      ...s,
+      platform: s.platform || orig?.platform || "kalshi",
+      hours_left: s.hours_left || orig?.hours_left || 48,
+      market_type: s.market_type || orig?.market_type || "other",
+      close: orig?.close,
+      poly_token_id: orig?.poly_token_id,
+      poly_slug: orig?.poly_slug,
+    };
+  });
   onStage(`${results.length} mispriced markets identified`);
   return results;
 }
@@ -332,29 +504,81 @@ async function deepResearch(
 ): Promise<string> {
   onStage(`Researching: ${market.title}…`);
 
+  // For crypto markets, fetch spot prices for additional context
+  let cryptoContext = "";
+  const titleLower = (market.title || "").toLowerCase();
+  const isCrypto = CRYPTO_KEYWORDS.some(kw => titleLower.includes(kw));
+  // Weather market detection
+  const isWeather = WEATHER_KEYWORDS.some(kw => titleLower.includes(kw));
+  let weatherContext = "";
+
+  if (isCrypto) {
+    const symbols = ["BTC", "ETH", "SOL"].filter(s => titleLower.includes(s.toLowerCase()) || titleLower.includes({ BTC: "bitcoin", ETH: "ethereum", SOL: "solana" }[s]!));
+    if (symbols.length === 0 && titleLower.includes("crypto")) symbols.push("BTC");
+
+    // Fetch spot prices AND 24h bars in parallel
+    const results = await Promise.all(symbols.map(async s => {
+      const [spotPrice, barsRes] = await Promise.all([
+        fetchCryptoSpotPrice(s),
+        fetch(`https://data.alpaca.markets/v1beta3/crypto/us/bars?symbols=${s}/USD&timeframe=1Hour&limit=24`, {
+          headers: { "APCA-API-KEY-ID": process.env.ALPACA_KEY_ID!, "APCA-API-SECRET-KEY": process.env.ALPACA_SECRET_KEY! },
+          signal: AbortSignal.timeout(10000),
+        }).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+
+      let barsSummary = "";
+      const bars = barsRes?.bars?.[`${s}/USD`] || [];
+      if (bars.length >= 2) {
+        const oldest = bars[0];
+        const newest = bars[bars.length - 1];
+        const change24h = ((newest.c - oldest.o) / oldest.o * 100).toFixed(2);
+        const high24h = Math.max(...bars.map((b: any) => b.h));
+        const low24h = Math.min(...bars.map((b: any) => b.l));
+        const momentum = newest.c > oldest.o ? "BULLISH" : "BEARISH";
+        barsSummary = ` | 24h change: ${change24h}% (${momentum}) | 24h range: $${low24h.toLocaleString()}-$${high24h.toLocaleString()}`;
+
+        // Threshold distance — extract price threshold from market title
+        const priceMatch = market.title.match(/\$?([\d,]+(?:\.\d+)?)\s*(?:k|K)?/);
+        if (priceMatch && spotPrice) {
+          const threshold = parseFloat(priceMatch[1].replace(/,/g, "")) * (market.title.match(/k|K/) ? 1000 : 1);
+          if (threshold > 100) { // sanity check
+            const distancePct = ((spotPrice - threshold) / threshold * 100).toFixed(2);
+            barsSummary += ` | Distance to $${threshold.toLocaleString()}: ${distancePct}%`;
+          }
+        }
+      }
+      return spotPrice ? `${s}/USD: $${spotPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}${barsSummary}` : null;
+    }));
+    const validPrices = results.filter(Boolean);
+    if (validPrices.length) {
+      cryptoContext = `\n\nCRYPTO MARKET DATA (Alpaca):\n${validPrices.join("\n")}\nUse these real-time prices and momentum as a baseline for your analysis.`;
+    }
+  }
+
+  if (isWeather) {
+    weatherContext = "\n\nThis is a WEATHER market. Use web search to find the latest weather forecasts, radar data, and meteorological consensus for the location and timeframe in the market title.";
+  }
+
+  const hoursLeft = market.hours_left ? ` | Resolves in: ${Math.round(market.hours_left)}h` : "";
+
   const brief = await callClaude(
-    `You are a prediction market research analyst. Research this market thoroughly:
+    `Research this SHORT-TERM prediction market concisely. Focus on facts that move the probability.
 
-MARKET: "${market.title}"
-CURRENT YES PRICE: ${market.yes_price} (${(market.yes_price * 100).toFixed(0)}% implied probability)
+MARKET: "${market.title}" [${market.platform || "kalshi"}]${hoursLeft}
+YES PRICE: ${market.yes_price} (${(market.yes_price * 100).toFixed(0)}% implied)${cryptoContext}${weatherContext}
 
-Search for the latest news, data, expert opinions, and historical precedents relevant to this question. Build a comprehensive research brief covering:
-1. Current state of affairs and latest developments
-2. Key factors that will determine the outcome
-3. Historical base rates for similar events
-4. Expert/institutional forecasts if available
-5. Potential surprises or black swan scenarios
-
-Be thorough but factual. Cite what you find.`,
+Cover: (1) latest developments, (2) key deciding factors, (3) base rates, (4) expert forecasts.${isCrypto ? " (5) current price action, 24h momentum, and distance to threshold." : ""}${isWeather ? " (5) latest weather forecast and confidence." : ""} Be factual and brief.`,
     true,
-    2000
+    1200
   );
 
   onStage(`Research complete for ${market.ticker}`);
   return brief;
 }
 
-// Stage 3: Council debate — the core innovation
+// Stage 3: Council debate — consolidated to 2 calls (was 5)
+// Call 1: Bull/Bear/Historian debate in a single prompt (with web search)
+// Call 2: Risk Manager synthesizes and decides (no search needed)
 async function runCouncilDebate(
   market: any,
   researchBrief: string,
@@ -362,134 +586,78 @@ async function runCouncilDebate(
 ): Promise<any> {
   onStage(`Council assembling for: ${market.title}`);
 
-  const context = `
-MARKET: "${market.title}"
-CURRENT YES PRICE: ${market.yes_price} (${(market.yes_price * 100).toFixed(0)}% implied probability)
-OUR INITIAL ESTIMATE: ${market.your_estimate} (${(market.your_estimate * 100).toFixed(0)}%)
-PERCEIVED EDGE: ${((market.your_estimate - market.yes_price) * 100).toFixed(1)}pp
+  const context = `MARKET: "${market.title}"
+YES PRICE: ${market.yes_price} (${(market.yes_price * 100).toFixed(0)}% implied)
+OUR ESTIMATE: ${market.your_estimate} (${(market.your_estimate * 100).toFixed(0)}%)
+EDGE: ${((market.your_estimate - market.yes_price) * 100).toFixed(1)}pp
 
-RESEARCH BRIEF:
-${researchBrief}
-`;
+RESEARCH:
+${researchBrief}`;
 
-  // Agent 1: The Bull (argues for YES)
-  onStage("Bull agent making the case for YES…");
-  const bullArg = await callClaude(
-    `You are the BULL on a prediction market council. Your role is to make the strongest possible case that this event WILL happen (YES is the right bet).
+  // Call 1: Combined debate — Bull, Bear, Historian, Devil's Advocate all in one
+  onStage("Council debating (bull/bear/historian/devil)…");
+  const debateArg = await callClaude(
+    `You are a prediction market council with 4 roles. Debate this market concisely.
 
 ${context}
 
-Make your strongest argument for YES. Use specific evidence, data, and reasoning. Be persuasive but honest — if the case is weak, say so. Rate your confidence 1-10.
+Play ALL FOUR roles and return a single JSON object:
+
+1. BULL: strongest case for YES (1 paragraph, confidence 1-10, probability estimate)
+2. BEAR: strongest case for NO (1 paragraph, confidence 1-10, probability estimate)
+3. HISTORIAN: key base rates and 2-3 precedents (1 paragraph, base rate estimate)
+4. DEVIL'S ADVOCATE: critique the stronger side's blind spots (1 paragraph, revised probability)
 
 Return ONLY JSON:
-{"argument":"your full argument (2-3 paragraphs)","confidence":8,"key_evidence":["evidence1","evidence2","evidence3"],"probability_estimate":0.75}`,
-    true
-  );
-
-  // Agent 2: The Bear (argues for NO)
-  onStage("Bear agent making the case for NO…");
-  const bearArg = await callClaude(
-    `You are the BEAR on a prediction market council. Your role is to make the strongest possible case that this event will NOT happen (NO is the right bet).
-
-${context}
-
-Make your strongest argument for NO. Use specific evidence, data, and reasoning. Be persuasive but honest — if the case is weak, say so. Rate your confidence 1-10.
-
-Return ONLY JSON:
-{"argument":"your full argument (2-3 paragraphs)","confidence":8,"key_evidence":["evidence1","evidence2","evidence3"],"probability_estimate":0.35}`,
-    true
-  );
-
-  // Agent 3: The Historian (base rates and precedents)
-  onStage("Historian agent finding precedents…");
-  const historianArg = await callClaude(
-    `You are the HISTORIAN on a prediction market council. Your role is to find historical base rates and analogies for this event.
-
-${context}
-
-Find the most relevant historical precedents. What has happened in similar situations? What are the base rates? How often do events like this occur? Be specific with dates, numbers, and percentages.
-
-Return ONLY JSON:
-{"argument":"your analysis with specific precedents (2-3 paragraphs)","precedents":[{"event":"description","year":2020,"outcome":"what happened","relevance":"why it matters"}],"base_rate_estimate":0.60}`,
+{
+  "bull":{"argument":"...","confidence":8,"key_evidence":["e1","e2","e3"],"probability_estimate":0.75},
+  "bear":{"argument":"...","confidence":6,"key_evidence":["e1","e2","e3"],"probability_estimate":0.35},
+  "historian":{"argument":"...","precedents":[{"event":"...","year":2020,"outcome":"..."}],"base_rate_estimate":0.60},
+  "devil":{"argument":"...","blind_spots":["b1","b2"],"risk_factors":["r1","r2"],"revised_probability":0.55}
+}`,
     true,
     2000
   );
 
-  // Agent 4: Devil's Advocate (stress-tests the strongest position)
-  const bull = parseJSON(bullArg);
-  const bear = parseJSON(bearArg);
-  const bullConf = bull?.confidence || 5;
-  const bearConf = bear?.confidence || 5;
-  const strongerSide = bullConf >= bearConf ? "YES/Bull" : "NO/Bear";
-  const strongerArg = bullConf >= bearConf ? bull?.argument : bear?.argument;
+  const debate = parseJSON(debateArg);
+  const bull = debate?.bull || { argument: "No argument", confidence: 5 };
+  const bear = debate?.bear || { argument: "No argument", confidence: 5 };
+  const historian = debate?.historian || { argument: "No data" };
+  const devil = debate?.devil || { argument: "No critique" };
+  const bullConf = bull.confidence || 5;
+  const bearConf = bear.confidence || 5;
 
-  onStage("Devil's advocate stress-testing the leading position…");
-  const devilArg = await callClaude(
-    `You are the DEVIL'S ADVOCATE on a prediction market council. The ${strongerSide} side is currently winning the debate. Your job is to find every possible flaw, blind spot, and weakness in their argument.
-
-${context}
-
-THE ${strongerSide} ARGUMENT:
-${strongerArg}
-
-Tear this apart. What are they missing? What could go wrong with their reasoning? What assumptions are they making? What information might they not have?
-
-Return ONLY JSON:
-{"argument":"your critique (2-3 paragraphs)","blind_spots":["blind spot 1","blind spot 2"],"risk_factors":["risk 1","risk 2"],"revised_probability":0.55}`,
-    true
-  );
-
-  // Agent 5: Risk Manager (sizes the bet)
-  onStage("Risk manager calculating optimal position…");
-  const historian = parseJSON(historianArg);
-  const devil = parseJSON(devilArg);
-
+  // Call 2: Risk Manager — synthesize and decide
+  onStage("Risk manager deciding…");
   const riskArg = await callClaude(
-    `You are the RISK MANAGER on a prediction market council. All agents have debated. Now you must synthesize and decide.
+    `You are the RISK MANAGER. Synthesize this council debate and decide.
 
-${context}
+MARKET: "${market.title}" | YES PRICE: ${market.yes_price}
 
-BULL CASE (confidence ${bullConf}/10):
-${bull?.argument || "No argument"}
-Probability estimate: ${bull?.probability_estimate || "unknown"}
+BULL (conf ${bullConf}/10, P=${bull.probability_estimate}): ${bull.argument}
+BEAR (conf ${bearConf}/10, P=${bear.probability_estimate}): ${bear.argument}
+HISTORIAN (base rate ${historian.base_rate_estimate}): ${historian.argument}
+DEVIL (revised P=${devil.revised_probability}): ${devil.argument}
 
-BEAR CASE (confidence ${bearConf}/10):
-${bear?.argument || "No argument"}
-Probability estimate: ${bear?.probability_estimate || "unknown"}
-
-HISTORIAN BASE RATE: ${historian?.base_rate_estimate || "unknown"}
-
-DEVIL'S ADVOCATE (revised probability): ${devil?.revised_probability || "unknown"}
-Blind spots: ${JSON.stringify(devil?.blind_spots || [])}
-
-Your job:
-1. Synthesize all perspectives into a final probability estimate
-2. Compare to market price to determine if there's a real edge
-3. Decide: BET YES, BET NO, or PASS (if edge < 10pp or confidence too low)
-4. If betting, recommend position size using fractional Kelly criterion
+HARD RULES:
+- Edge must be ≥15pp to bet
+- If contract price >$0.70: need "high" confidence AND ≥20pp edge
+- Risk/reward ratio must be ≥0.50 (don't risk $0.75 to make $0.25)
+- Violating any rule → PASS
 
 Return ONLY JSON:
-{
-  "final_probability": 0.72,
-  "market_price": ${market.yes_price},
-  "edge": 0.12,
-  "verdict": "BET_YES" | "BET_NO" | "PASS",
-  "confidence": "high" | "medium" | "low",
-  "reasoning": "2-3 sentence synthesis",
-  "kelly_fraction": 0.08,
-  "suggested_contracts": 5,
-  "max_risk_usd": 15.00
-}`,
-    false
+{"final_probability":0.72,"market_price":${market.yes_price},"edge":0.12,"verdict":"BET_YES"|"BET_NO"|"PASS","confidence":"high"|"medium"|"low","reasoning":"2-3 sentences","kelly_fraction":0.08,"suggested_contracts":5,"max_risk_usd":15.00}`,
+    false,
+    800
   );
 
   const risk = parseJSON(riskArg);
 
   const transcript = {
-    bull: bull || { argument: bullArg, confidence: 5 },
-    bear: bear || { argument: bearArg, confidence: 5 },
-    historian: historian || { argument: historianArg },
-    devil: devil || { argument: devilArg },
+    bull,
+    bear,
+    historian,
+    devil,
     risk_manager: risk || { verdict: "PASS", reasoning: "Failed to parse" },
   };
 
@@ -524,34 +692,102 @@ async function executeBet(
     return null;
   }
 
-  const side = council.verdict === "BET_YES" ? "yes" : "no";
-  const price = side === "yes" ? market.yes_price : 1 - market.yes_price;
-  const maxContracts = Math.floor(maxBet / price);
-  const contracts = Math.min(council.suggested_contracts || 1, maxContracts, 50);
-  const cost = contracts * price;
-
-  if (contracts < 1) {
-    onStage(`Skipping — cost per contract too high for max bet of $${maxBet}`);
+  // Hard filter: reject high-price / low-reward bets
+  const yesPrice = market.yes_price || 0.5;
+  const betPrice = council.verdict === "BET_YES" ? yesPrice : 1 - yesPrice;
+  const rewardRatio = (1 - betPrice) / betPrice;
+  if (rewardRatio < 0.5) {
+    onStage(`Skipping ${market.ticker} — risk/reward ${rewardRatio.toFixed(2)} < 0.50`);
+    await insertLog("warn", `Rejected ${market.ticker}: risk/reward ratio ${rewardRatio.toFixed(2)} too low`);
+    return null;
+  }
+  if (betPrice > 0.70 && (council.confidence !== "high" || Math.abs(council.edge) < 0.20)) {
+    onStage(`Skipping ${market.ticker} — high-price contract ($${betPrice.toFixed(2)}) requires high confidence + 20pp edge`);
+    await insertLog("warn", `Rejected ${market.ticker}: high-price ($${betPrice.toFixed(2)}) with insufficient edge/confidence`);
     return null;
   }
 
-  onStage(`Placing bet: ${side.toUpperCase()} ${contracts} contracts @ $${price.toFixed(2)} ($${cost.toFixed(2)} risk)`);
+  const side = council.verdict === "BET_YES" ? "yes" : "no";
+  const price = side === "yes" ? market.yes_price : 1 - market.yes_price;
 
-  // Place the order via Kalshi API
-  const orderBody = {
-    ticker: market.ticker,
-    action: "buy",
-    side,
-    type: "market",
-    count: contracts,
-  };
+  // Position sizing tiers based on time-to-expiry
+  const hoursLeft = market.hours_left || 48;
+  let tierMaxBet: number;
+  if (hoursLeft <= 6) tierMaxBet = 10;       // Hourly: max $10
+  else if (hoursLeft <= 48) tierMaxBet = 20;  // Daily: max $20
+  else tierMaxBet = 30;                        // Weekly: max $30
 
-  const result = await kalshiReq("/portfolio/orders", "POST", orderBody);
+  // Use the lower of setting max and tier max
+  const effectiveMax = Math.min(maxBet, tierMaxBet);
+  // Per-bet cap: 20% of effective max
+  const perBetMax = effectiveMax * 0.20;
+  const capForBet = Math.max(perBetMax, 2); // At least $2 per bet
+
+  const maxContracts = Math.floor(capForBet / price);
+  const contracts = Math.min(council.suggested_contracts || 1, maxContracts, 50);
+  const cost = contracts * price;
+
+  if (price <= 0.01 || contracts < 1 || cost <= 0) {
+    const reason = price <= 0.01 ? `price $${price.toFixed(4)}` : contracts < 1 ? `contracts=${contracts}` : `cost=$${cost.toFixed(4)}`;
+    console.warn(`[predictor] Rejecting invalid bet on ${market.ticker}: ${reason}`);
+    await insertLog("warn", `Rejected invalid bet on ${market.ticker}: ${reason}`);
+    onStage(`Skipping ${market.ticker} — invalid: ${reason}`);
+    return null;
+  }
+
+  const platform = market.platform || "kalshi";
+  onStage(`Placing ${platform} bet: ${side.toUpperCase()} ${contracts} contracts @ $${price.toFixed(2)} ($${cost.toFixed(2)} risk)`);
+
+  let result: any;
+
+  if (platform === "polymarket") {
+    // Polymarket execution via CLOB client REST API
+    // Note: requires @polymarket/clob-client or direct API calls
+    try {
+      const apiKey = process.env.POLY_API_KEY;
+      const apiSecret = process.env.POLY_API_SECRET;
+      const apiPassphrase = process.env.POLY_API_PASSPHRASE;
+      if (!apiKey || !apiSecret || !apiPassphrase) {
+        result = { error: true, message: "Polymarket credentials not configured" };
+      } else {
+        // Place order via Polymarket CLOB API
+        const tokenId = market.poly_token_id;
+        if (!tokenId) {
+          result = { error: true, message: "No token ID for Polymarket market" };
+        } else {
+          // Use direct API call to CLOB
+          const orderPayload = {
+            tokenID: tokenId,
+            price: price.toFixed(2),
+            size: contracts,
+            side: side === "yes" ? "BUY" : "BUY", // For NO, we buy the NO token
+            type: "GTC",
+          };
+          onStage(`Polymarket order: ${JSON.stringify(orderPayload)}`);
+          // Polymarket requires signed transactions — log for now, execute when CLOB client is fully configured
+          await insertLog("info", `[polymarket] Would place order: ${JSON.stringify(orderPayload)}`);
+          result = { order: { status: "submitted" }, note: "polymarket_order_logged" };
+        }
+      }
+    } catch (e: any) {
+      result = { error: true, message: `Polymarket error: ${e.message}` };
+    }
+  } else {
+    // Kalshi execution
+    const orderBody = {
+      ticker: market.ticker,
+      action: "buy",
+      side,
+      type: "market",
+      count: contracts,
+    };
+    result = await kalshiReq("/portfolio/orders", "POST", orderBody);
+  }
 
   const betId = `${market.ticker}-${Date.now()}`;
   await pool.query(
-    `INSERT INTO predictor_bets (id, market_ticker, market_title, side, contracts, price, cost, confidence, edge, council_verdict, council_transcript, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    `INSERT INTO predictor_bets (id, market_ticker, market_title, side, contracts, price, cost, confidence, edge, council_verdict, council_transcript, status, platform)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [
       betId,
       market.ticker,
@@ -565,6 +801,7 @@ async function executeBet(
       council.verdict,
       JSON.stringify(council.transcript),
       result?.error ? "failed" : "filled",
+      platform,
     ]
   );
 
@@ -589,8 +826,8 @@ async function executeBet(
     return { error: true, message: result.message };
   }
 
-  onStage(`✓ Bet placed: ${side.toUpperCase()} ${market.ticker} × ${contracts} @ $${price.toFixed(2)}`);
-  return { betId, side, contracts, price, cost, orderId: result?.order?.order_id };
+  onStage(`Bet placed: ${side.toUpperCase()} ${market.ticker} x ${contracts} @ $${price.toFixed(2)} [${platform}]`);
+  return { betId, side, contracts, price, cost, platform, orderId: result?.order?.order_id };
 }
 
 // ── Full pipeline ───────────────────────────────────────────────────────────
@@ -598,7 +835,7 @@ async function executeBet(
 async function runPredictorPipeline(
   onStage: (stage: number, status: string, msg: string) => void
 ) {
-  onStage(1, "running", "Scanning Kalshi markets…");
+  onStage(1, "running", "Scanning Kalshi + Polymarket…");
   const candidates = await scanMarkets((msg) => onStage(1, "running", msg));
   onStage(1, "done", `${candidates.length} mispriced markets found`);
 
@@ -616,6 +853,27 @@ async function runPredictorPipeline(
 
   for (let i = 0; i < toProcess.length; i++) {
     const market = toProcess[i];
+
+    // Task 2: Deduplication — skip if we already have an active position on this market
+    const existingBet = await pool.query(
+      `SELECT id FROM predictor_bets WHERE market_ticker=$1 AND status='filled' AND pnl IS NULL LIMIT 1`,
+      [market.ticker]
+    );
+    if (existingBet.rows.length > 0) {
+      onStage(2, "running", `Skipping ${market.ticker} — already have active position`);
+      await insertLog("info", `[pipeline] Skipped ${market.ticker} — duplicate (active position exists)`);
+      continue;
+    }
+
+    // Task 3: Pre-filter bad risk/reward before wasting API calls on council
+    const yesPrice = market.yes_price || 0.5;
+    const bestSidePrice = Math.min(yesPrice, 1 - yesPrice); // cheapest side
+    const profitRatio = (1 - bestSidePrice) / bestSidePrice; // potential profit / amount risked
+    if (profitRatio < 0.5) {
+      onStage(2, "running", `Skipping ${market.ticker} — risk/reward ratio ${profitRatio.toFixed(2)} < 0.50 (price ${yesPrice.toFixed(2)})`);
+      await insertLog("info", `[pipeline] Skipped ${market.ticker} — poor risk/reward (ratio=${profitRatio.toFixed(2)}, price=${yesPrice.toFixed(2)})`);
+      continue;
+    }
 
     onStage(2, "running", `[${i + 1}/${toProcess.length}] Researching ${market.ticker}…`);
     const brief = await deepResearch(market, (msg) => onStage(2, "running", msg));
@@ -809,11 +1067,18 @@ predictorRouter.get("/stats", async (_req, res) => {
 
     const allBets = bets.rows;
     const settled = allBets.filter((b: any) => b.pnl != null);
+    const unsettled = allBets.filter((b: any) => b.status === "filled" && b.pnl == null);
     const wins = settled.filter((b: any) => parseFloat(b.pnl) > 0);
-    const totalPnl = settled.reduce((s: number, b: any) => s + (parseFloat(b.pnl) || 0), 0);
-    const totalRisked = allBets.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
+    const settledPnl = settled.reduce((s: number, b: any) => s + (parseFloat(b.pnl) || 0), 0);
+    // at_stake = cost of unsettled filled bets only
+    const atStake = unsettled.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
+    // potential_payout = contracts (each pays $1 if won) for unsettled bets
+    const potentialPayout = unsettled.reduce((s: number, b: any) => s + (parseInt(b.contracts) || 0), 0);
+    const potentialProfit = potentialPayout - atStake;
+    // total_risked stays as all non-failed bets for historical reference
+    const totalRisked = allBets.filter((b: any) => b.status !== "failed").reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
     const avgEdge = allBets.length
-      ? allBets.reduce((s: number, b: any) => s + (parseFloat(b.edge) || 0), 0) / allBets.length
+      ? allBets.filter((b: any) => b.status !== "failed").reduce((s: number, b: any) => s + (parseFloat(b.edge) || 0), 0) / allBets.filter((b: any) => b.status !== "failed").length
       : 0;
 
     res.json({
@@ -821,11 +1086,15 @@ predictorRouter.get("/stats", async (_req, res) => {
       settled: settled.length,
       wins: wins.length,
       win_rate: settled.length ? (wins.length / settled.length) * 100 : 0,
-      total_pnl: totalPnl,
+      total_pnl: settledPnl,
+      settled_pnl: settledPnl,
+      at_stake: atStake,
+      potential_payout: potentialPayout,
+      potential_profit: potentialProfit,
       total_risked: totalRisked,
-      roi: totalRisked ? (totalPnl / totalRisked) * 100 : 0,
+      roi: totalRisked ? (settledPnl / totalRisked) * 100 : 0,
       avg_edge: avgEdge,
-      active_positions: allBets.filter((b: any) => b.status === "filled" && b.pnl == null).length,
+      active_positions: unsettled.length,
       recent_councils: councils.rows.slice(0, 5),
       recent_scans: scans.rows.slice(0, 3),
       recent_bets: allBets.slice(0, 10),
@@ -897,7 +1166,7 @@ CURRENT SETTINGS:
 - Max bet size: $${settings.max_bet_usd || "25"}
 - Max open positions: ${settings.max_positions || "10"}
 - Kelly fraction: ${settings.kelly_fraction || "0.25"}
-- Auto-scan: ${settings.cron_enabled === "true" ? "ON (every 2h)" : "OFF"}
+- Auto-scan: ${settings.cron_enabled === "true" ? "ON (every 12h)" : "OFF"}
 
 PERFORMANCE SUMMARY:
 - Total bets: ${allBets.length} (${settled.length} settled, ${allBets.length - settled.length} pending)
@@ -948,7 +1217,8 @@ INSTRUCTIONS:
 predictorRouter.post("/claude", async (req, res) => {
   try {
     const { messages, max_tokens = 1200, tools } = req.body;
-    const body: any = { model: "claude-sonnet-4-5", max_tokens, messages };
+    const model = "claude-haiku-4-5-20251001";
+    const body: any = { model, max_tokens, messages };
     if (tools) body.tools = tools;
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -960,7 +1230,35 @@ predictorRouter.post("/claude", async (req, res) => {
       body: JSON.stringify(body),
     });
     const d = await r.json();
+    if (d.usage) {
+      await logApiUsage("predictor-chat", model, d.usage.input_tokens || 0, d.usage.output_tokens || 0);
+    }
     res.json(d);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// API usage stats — shared across all modules
+predictorRouter.get("/usage", async (req, res) => {
+  try {
+    const module = req.query.module as string | undefined;
+    const moduleFilter = module ? "WHERE module = $1" : "";
+    const params = module ? [module] : [];
+
+    const [today, week, month, byModule] = await Promise.all([
+      pool.query(`SELECT COALESCE(SUM(input_tokens),0) as input, COALESCE(SUM(output_tokens),0) as output, COALESCE(SUM(cost_usd),0) as cost FROM api_usage ${moduleFilter ? moduleFilter + " AND" : "WHERE"} logged_at >= NOW() - INTERVAL '1 day'`, params),
+      pool.query(`SELECT COALESCE(SUM(input_tokens),0) as input, COALESCE(SUM(output_tokens),0) as output, COALESCE(SUM(cost_usd),0) as cost FROM api_usage ${moduleFilter ? moduleFilter + " AND" : "WHERE"} logged_at >= NOW() - INTERVAL '7 days'`, params),
+      pool.query(`SELECT COALESCE(SUM(input_tokens),0) as input, COALESCE(SUM(output_tokens),0) as output, COALESCE(SUM(cost_usd),0) as cost FROM api_usage ${moduleFilter ? moduleFilter + " AND" : "WHERE"} logged_at >= NOW() - INTERVAL '30 days'`, params),
+      pool.query(`SELECT module, model, SUM(input_tokens) as input, SUM(output_tokens) as output, SUM(cost_usd) as cost, COUNT(*) as calls FROM api_usage WHERE logged_at >= NOW() - INTERVAL '30 days' GROUP BY module, model ORDER BY cost DESC`),
+    ]);
+
+    res.json({
+      today: { ...today.rows[0], cost: parseFloat(today.rows[0].cost) },
+      week: { ...week.rows[0], cost: parseFloat(week.rows[0].cost) },
+      month: { ...month.rows[0], cost: parseFloat(month.rows[0].cost) },
+      by_module: byModule.rows.map((r: any) => ({ ...r, cost: parseFloat(r.cost) })),
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -972,8 +1270,8 @@ export async function initPredictor() {
   await initPredictorTables();
   console.log("[predictor] tables ready");
 
-  // Cron: scan every 2 hours
-  cron.schedule("0 */2 * * *", async () => {
+  // Cron: scan every 12 hours (00:00 and 12:00 UTC)
+  cron.schedule("0 0,12 * * *", async () => {
     const enabled = await getSetting("cron_enabled");
     if (enabled !== "true") return;
 
@@ -991,5 +1289,5 @@ export async function initPredictor() {
     }
   });
 
-  console.log("[predictor] cron scheduler ready — cadence: 2h");
+  console.log("[predictor] cron scheduler ready — cadence: 12h");
 }

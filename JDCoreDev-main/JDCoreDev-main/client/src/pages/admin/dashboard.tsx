@@ -1111,9 +1111,9 @@ export default function AdminDashboard() {
                   <Bot className="h-4 w-4 text-teal-500" />
                   Recent Agent Activity
                 </CardTitle>
-                <Link href="/admin/trader/chat">
+                <Link href="/admin/trader/predictions">
                   <Button variant="ghost" size="sm" data-testid="button-view-agent-chat">
-                    Chat <ArrowRight className="h-3 w-3 ml-1" />
+                    Predictions <ArrowRight className="h-3 w-3 ml-1" />
                   </Button>
                 </Link>
               </CardHeader>
