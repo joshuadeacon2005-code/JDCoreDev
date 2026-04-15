@@ -276,6 +276,13 @@ export default function TraderDashboard() {
   },[keys]);
 
   const placeOrder = useCallback(async(symbol:string,side:string,notional:number,rationale="")=>{
+    // Hard guard: never buy when cash <= 0
+    if(side==="buy" && account){
+      const cash = account.cash ?? 0;
+      if(cash <= 0){ log(`BLOCKED ${symbol} buy — cash $${cash.toFixed(2)} <= 0`,"warn"); return null; }
+      if(notional > cash){ notional = Math.floor(cash * 0.95); log(`Capped ${symbol} buy to $${notional} (95% of $${cash.toFixed(0)} cash)`,"warn"); }
+      if(notional < 1){ log(`Skip ${symbol} — not enough cash ($${cash.toFixed(2)})`,"warn"); return null; }
+    }
     log(`${side.toUpperCase()} ${symbol} ~$${notional.toFixed(0)} — ${rationale}`,side);
     const price = side==="buy" ? await getQuote(keys,symbol) : null;
     const body  = buildOrderBody({symbol,side,notional,price,mode,stopLossPct:rc.stopLoss,takeProfitPct:rc.takeProfit});
@@ -327,17 +334,34 @@ export default function TraderDashboard() {
 
   const executeTrades = useCallback(async(pipe:any)=>{
     if(!pipe?.positions?.length){log("No trades","warn");return;}
+
+    // Refresh account before trading to get latest cash
+    await fetchAccount();
+    const cash = account?.cash ?? 0;
+    if(cash <= 0){
+      log(`BLOCKED all buys — cash $${cash.toFixed(2)} <= 0. Sell positions first.`,"warn");
+      // Still allow sells
+    }
+
     setAgentStatus("executing");
     const sellSet=new Set((pipe.analysis||[]).filter((a:any)=>a.v==="SELL").map((a:any)=>a.t));
     const heldSet=new Set(positions.map(p=>p.symbol));
+    // Always process sells first to free up cash
     for(const pos of positions){ if(sellSet.has(pos.symbol)){await placeOrder(pos.symbol,"sell",pos.mktVal,"Sell signal");await sleep(500);} }
-    for(const p of pipe.positions){
-      if(heldSet.has(p.t)) continue;
-      const n=p.notional||((account?.equity||10000)*(p.alloc/100));
-      if(n<1||(account?.buyingPower||0)<n) continue;
-      await placeOrder(p.t,"buy",n,p.why||"AI signal");
-      await sleep(700);
+
+    // Only buy if we have positive cash
+    if(cash > 0){
+      for(const p of pipe.positions){
+        if(heldSet.has(p.t)) continue;
+        const n=p.notional||((account?.equity||10000)*(p.alloc/100));
+        if(n<1||cash<n) continue;
+        await placeOrder(p.t,"buy",n,p.why||"AI signal");
+        await sleep(700);
+      }
+    } else {
+      log("Skipping all buys — no cash available","warn");
     }
+
     log("Execution complete ✓","success");
     await fetchPositions(); await fetchOrders(); await fetchAccount();
     setAgentStatus("monitoring");

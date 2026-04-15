@@ -749,6 +749,22 @@ traderRouter.post('/alpaca-proxy', async (req, res) => {
     if (!key || !secret || !path) return res.status(400).json({ error: 'key, secret, path required' });
     const k = await resolveKeys(key, secret, _ip);
     const base = k.isPaper ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
+
+    // Hard guard: block buy orders when cash <= 0
+    if (method === 'POST' && path === '/v2/orders' && body?.side === 'buy') {
+      const acctRes = await fetch(base + '/v2/account', {
+        headers: { 'APCA-API-KEY-ID': k.key, 'APCA-API-SECRET-KEY': k.secret },
+      });
+      if (acctRes.ok) {
+        const acct = await acctRes.json();
+        const cash = parseFloat(acct.cash || '0');
+        if (cash <= 0) {
+          console.warn(`[trader] BLOCKED buy order for ${body.symbol} — cash $${cash.toFixed(2)} <= 0`);
+          return res.status(400).json({ error: `Buy blocked: cash balance $${cash.toFixed(2)}. Sell positions first.`, code: 'INSUFFICIENT_CASH' });
+        }
+      }
+    }
+
     const r = await fetch(base + path, {
       method,
       headers: { 'APCA-API-KEY-ID': k.key, 'APCA-API-SECRET-KEY': k.secret, 'Content-Type': 'application/json' },
