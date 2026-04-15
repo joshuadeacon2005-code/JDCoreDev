@@ -12,6 +12,7 @@ import {
   Play, RefreshCw, AlertTriangle, CheckCircle2, Clock, DollarSign,
   ChevronDown, ChevronRight, Search, Gavel, Eye, Zap,
   Scale, Flame, BookOpen, BarChart2, MessageSquare, Send, Trash2,
+  Activity,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
@@ -627,6 +628,219 @@ function ChatTab() {
   );
 }
 
+// ── Active Tab ────────────────────────────────────────────────────────────────
+
+/** Extract grouping key from ticker — e.g. KXKASHOUT-26APR → "KASH", KXINSURRECTION-29 → "INSURRECTION" */
+function tickerGroupKey(ticker: string): string {
+  const m = ticker?.match(/^KX(.+?)(?:ANNOUNCE)?OUT/i);
+  if (m) return m[1].toUpperCase();
+  // Fallback: strip date suffixes
+  const base = ticker?.replace(/-\d{2}[A-Z]{3}.*$/, "").replace(/-\d{2}-.*$/, "");
+  return base || ticker || "OTHER";
+}
+
+function ActiveTab() {
+  const [bets, setBets] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/predictor/history?type=bets").then(r => r.json()).catch(() => []),
+      fetch("/api/predictor/orders").then(r => r.json()).catch(() => ({ orders: [] })),
+    ]).then(([b, o]) => {
+      setBets(Array.isArray(b) ? b.filter((x: any) => x.pnl == null && x.status !== "failed") : []);
+      setOrders(o?.orders || []);
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading active positions…</p>;
+
+  // Merge DB bets with live Kalshi order data where available
+  const enrichedBets = bets.map(bet => {
+    const liveOrder = orders.find((o: any) => o.ticker === bet.market_ticker);
+    return {
+      ...bet,
+      live_status: liveOrder?.order_status || bet.status,
+      live_price: liveOrder?.yes_price ?? liveOrder?.no_price ?? null,
+      remaining_count: liveOrder?.remaining_count ?? null,
+      limit_price: liveOrder?.yes_price != null ? liveOrder.yes_price : (liveOrder?.no_price ?? null),
+    };
+  });
+
+  // Group by topic/person
+  const groups = new Map<string, { label: string; bets: typeof enrichedBets }>();
+  for (const bet of enrichedBets) {
+    const key = tickerGroupKey(bet.market_ticker);
+    if (!groups.has(key)) {
+      // Try to extract a human-readable label from the market title
+      const nameMatch = bet.market_title?.match(/(?:Will\s+)?(.+?)(?:\s+(?:announce|leaves?|invoke|meet|depart))/i);
+      groups.set(key, { label: nameMatch?.[1]?.trim() || key, bets: [] });
+    }
+    groups.get(key)!.bets.push(bet);
+  }
+
+  // Also add any live Kalshi orders not in our DB
+  for (const order of orders) {
+    const inDb = bets.some(b => b.market_ticker === order.ticker);
+    if (!inDb) {
+      const key = tickerGroupKey(order.ticker);
+      if (!groups.has(key)) {
+        groups.set(key, { label: key, bets: [] });
+      }
+      groups.get(key)!.bets.push({
+        id: order.order_id,
+        market_ticker: order.ticker,
+        market_title: order.ticker,
+        side: order.side,
+        contracts: order.remaining_count || order.count || 0,
+        price: (order.yes_price || order.no_price || 0) / 100,
+        cost: ((order.remaining_count || order.count || 0) * (order.yes_price || order.no_price || 0)) / 100,
+        status: order.order_status,
+        live_status: order.order_status,
+        edge: 0,
+        confidence: 0,
+        logged_at: order.created_time || new Date().toISOString(),
+      });
+    }
+  }
+
+  const sortedGroups = Array.from(groups.entries()).sort((a, b) => b[1].bets.length - a[1].bets.length);
+
+  if (!sortedGroups.length) {
+    return (
+      <div className="py-16 text-center">
+        <Activity className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+        <p className="text-sm text-muted-foreground">No active positions or pending orders.</p>
+      </div>
+    );
+  }
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  // Totals
+  const totalAtStake = enrichedBets.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
+  const totalContracts = enrichedBets.reduce((s: number, b: any) => s + (parseInt(b.contracts) || 0), 0);
+  const totalPayout = enrichedBets.filter((b: any) => parseFloat(b.cost) > 0).reduce((s: number, b: any) => s + (parseInt(b.contracts) || 0), 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Summary strip */}
+      <div className="flex items-center gap-6 px-3 py-2 rounded-lg border bg-muted/30 text-xs">
+        <span><strong>{enrichedBets.length}</strong> active positions</span>
+        <span><strong>{sortedGroups.length}</strong> markets</span>
+        <span>At stake: <strong className="text-amber-500 font-mono">{fmtUSD(totalAtStake)}</strong></span>
+        <span>Payout if won: <strong className="text-emerald-500 font-mono">{fmtUSD(totalPayout)}</strong></span>
+        <span>Potential profit: <strong className={cn("font-mono", clrPnl(totalPayout - totalAtStake))}>{fmtUSD(totalPayout - totalAtStake)}</strong></span>
+      </div>
+
+      {sortedGroups.map(([key, group]) => {
+        const isExpanded = expandedGroups.has(key) || sortedGroups.length <= 3;
+        const groupCost = group.bets.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
+        const groupContracts = group.bets.reduce((s: number, b: any) => s + (parseInt(b.contracts) || 0), 0);
+        const groupPayout = group.bets.filter((b: any) => parseFloat(b.cost) > 0).reduce((s: number, b: any) => s + (parseInt(b.contracts) || 0), 0);
+
+        return (
+          <Card key={key} className="border">
+            <button
+              onClick={() => toggleGroup(key)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                <div>
+                  <p className="text-sm font-semibold">{group.label}</p>
+                  <p className="text-[10px] text-muted-foreground">{group.bets.length} position{group.bets.length > 1 ? "s" : ""}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-xs">
+                <div className="text-right">
+                  <p className="text-[10px] text-muted-foreground">Cost</p>
+                  <p className="font-mono font-bold text-amber-500">{fmtUSD(groupCost)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-muted-foreground">Payout</p>
+                  <p className="font-mono font-bold text-emerald-500">{fmtUSD(groupPayout)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-muted-foreground">Profit</p>
+                  <p className={cn("font-mono font-bold", clrPnl(groupPayout - groupCost))}>{fmtUSD(groupPayout - groupCost)}</p>
+                </div>
+              </div>
+            </button>
+
+            {isExpanded && (
+              <div className="px-4 pb-3 space-y-2 border-t">
+                {group.bets.map((bet: any) => {
+                  const contracts = parseInt(bet.contracts) || 0;
+                  const price = parseFloat(bet.price) || 0;
+                  const cost = parseFloat(bet.cost) || 0;
+                  const payout = contracts; // Kalshi binary = $1 per contract
+                  const profit = payout - cost;
+                  const priceInCents = Math.round(price * 100);
+                  const statusLabel = bet.live_status || bet.status || "pending";
+                  const statusColor = statusLabel === "resting" ? "text-amber-500 border-amber-500/20" :
+                    statusLabel === "executed" || statusLabel === "filled" ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20" :
+                    "text-blue-500 border-blue-500/20";
+
+                  return (
+                    <div key={bet.id} className="flex items-center justify-between py-2 px-3 rounded-lg bg-muted/20 gap-3">
+                      <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
+                        <Badge variant="outline" className={cn("text-[10px]",
+                          bet.side === "yes" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
+                          {bet.side?.toUpperCase()}
+                        </Badge>
+                        <span className="text-xs font-mono text-muted-foreground truncate">{bet.market_ticker}</span>
+                        <Badge variant="outline" className={cn("text-[10px]", statusColor)}>
+                          {statusLabel}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs flex-shrink-0">
+                        <div className="text-right">
+                          <p className="text-[10px] text-muted-foreground">Contracts</p>
+                          <p className="font-mono font-bold">{contracts || "—"}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-muted-foreground">Price</p>
+                          <p className="font-mono font-bold">{priceInCents ? `${priceInCents}¢` : "—"}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-muted-foreground">Cost</p>
+                          <p className="font-mono font-bold text-amber-500">{cost > 0 ? fmtUSD(cost) : "—"}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-muted-foreground">Payout</p>
+                          <p className="font-mono font-bold text-emerald-500">{payout > 0 ? fmtUSD(payout) : "—"}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-muted-foreground">Profit</p>
+                          <p className={cn("font-mono font-bold", clrPnl(profit))}>{cost > 0 ? fmtUSD(profit) : "—"}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Market question shown once for context */}
+                <p className="text-[10px] text-muted-foreground italic px-3 pt-1">
+                  {group.bets[0]?.market_title}
+                </p>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Bets Tab ──────────────────────────────────────────────────────────────────
 
 function BetsTab() {
@@ -878,22 +1092,25 @@ export default function PredictionsPage() {
   const [scanning, setScanning]       = useState(false);
   const [stageStatus, setStageStatus] = useState<any>({});
   const [scanResults, setScanResults] = useState<any[]>([]);
-  const [tab, setTab]                 = useState<"overview" | "bets" | "analytics" | "chat" | "councils" | "settings">("overview");
+  const [tab, setTab]                 = useState<"overview" | "active" | "bets" | "analytics" | "chat" | "councils" | "settings">("overview");
   const [usage, setUsage]             = useState<any>(null);
   const [kalshiBalance, setKalshiBalance] = useState<number | null>(null);
+  const [polyBalance, setPolyBalance] = useState<number | null>(null);
 
   const loadStats = useCallback(async () => {
     try {
-      const [s, cfg, u, acct] = await Promise.all([
+      const [s, cfg, u, acct, polyAcct] = await Promise.all([
         fetch("/api/predictor/stats").then(r => r.json()),
         fetch("/api/predictor/settings").then(r => r.json()),
         fetch("/api/predictor/usage").then(r => r.json()).catch(() => null),
         fetch("/api/predictor/account").then(r => r.json()).catch(() => null),
+        fetch("/api/predictor/polymarket-account").then(r => r.json()).catch(() => null),
       ]);
       setStats(s);
       setSettings(cfg);
       if (u) setUsage(u);
       if (acct?.balance != null) setKalshiBalance(acct.balance / 100); // Kalshi returns cents
+      if (polyAcct?.balance != null) setPolyBalance(polyAcct.balance);
     } catch {}
     setLoading(false);
   }, []);
@@ -942,6 +1159,7 @@ export default function PredictionsPage() {
 
   const TABS = [
     { id: "overview"  as const, label: "Overview",  Icon: Eye         },
+    { id: "active"    as const, label: "Active",     Icon: Activity    },
     { id: "bets"      as const, label: "Bets",       Icon: DollarSign  },
     { id: "analytics" as const, label: "Analytics",  Icon: BarChart2   },
     { id: "chat"      as const, label: "Chat",       Icon: MessageSquare },
@@ -1007,7 +1225,7 @@ export default function PredictionsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Polymarket</p>
-                    <p className="text-lg font-bold font-mono text-muted-foreground">Not connected</p>
+                    <p className={cn("text-lg font-bold font-mono", polyBalance != null ? "text-foreground" : "text-muted-foreground")}>{polyBalance != null ? fmtUSD(polyBalance) : "—"}</p>
                   </div>
                   <Badge variant="secondary" className="text-[10px]">CLOB</Badge>
                 </div>
@@ -1169,6 +1387,7 @@ export default function PredictionsPage() {
           </div>
         )}
 
+        {tab === "active"    && <ActiveTab />}
         {tab === "bets"      && <BetsTab />}
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "chat"      && <ChatTab />}

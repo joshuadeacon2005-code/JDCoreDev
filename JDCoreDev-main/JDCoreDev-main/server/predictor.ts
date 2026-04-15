@@ -4,6 +4,7 @@
  */
 
 import { Router } from "express";
+import crypto from "crypto";
 import cron from "node-cron";
 import { pool } from "./db";
 
@@ -13,7 +14,7 @@ export const predictorRouter = Router();
 
 const KALSHI_BASE = {
   demo: "https://demo-api.kalshi.co/trade-api/v2",
-  prod: "https://trading-api.kalshi.com/trade-api/v2",
+  prod: "https://api.elections.kalshi.com/trade-api/v2",
 };
 
 // Categories where Claude has genuine informational edge
@@ -141,8 +142,11 @@ interface KalshiKeys {
   isDemo: boolean;
 }
 
+let _kalshiModeCache: string | null = null;
+
 function getKalshiKeys(): KalshiKeys {
-  const isDemo = (process.env.KALSHI_MODE || "demo") === "demo";
+  // Prefer DB setting, fall back to env
+  const isDemo = (_kalshiModeCache || process.env.KALSHI_MODE || "demo") !== "live";
   return {
     keyId: isDemo
       ? process.env.KALSHI_KEY_ID_DEMO || ""
@@ -152,6 +156,33 @@ function getKalshiKeys(): KalshiKeys {
       : process.env.KALSHI_PRIVATE_KEY_LIVE || "",
     isDemo,
   };
+}
+
+// Sync mode cache from DB on startup
+(async () => {
+  try { _kalshiModeCache = await getSetting("mode"); } catch {}
+})();
+
+function normalizePrivateKey(raw: string): string {
+  // Handle single-line PEM keys (spaces instead of newlines)
+  const m = raw.match(/(-----BEGIN [A-Z ]+-----)(.+)(-----END [A-Z ]+-----)/);
+  if (m) {
+    const body = m[2].trim().replace(/ /g, "\n");
+    return `${m[1]}\n${body}\n${m[3]}`;
+  }
+  return raw;
+}
+
+function signKalshiRequest(privateKeyPem: string, timestamp: string, method: string, path: string): string {
+  const pathOnly = path.split("?")[0];
+  const message = timestamp + method.toUpperCase() + pathOnly;
+  const pem = normalizePrivateKey(privateKeyPem);
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(message);
+  return sign.sign(
+    { key: pem, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST },
+    "base64"
+  );
 }
 
 // Kalshi v2 uses RSA-PSS signing for auth. For the demo env, we use simple
@@ -198,10 +229,13 @@ async function kalshiReq(path: string, method = "GET", body: any = null): Promis
     const token = await kalshiLogin(keys);
     headers["Authorization"] = `Bearer ${token}`;
   } else {
-    // Prod uses KALSHI-ACCESS-KEY + timestamp + signature headers
-    // Simplified: just key header for now (full RSA-PSS signing in production)
+    // Prod uses RSA-PSS signed requests — sign with full path including /trade-api/v2
+    const ts = String(Date.now());
+    const fullPath = "/trade-api/v2" + path;
+    const sig = signKalshiRequest(keys.privateKey, ts, method, fullPath);
     headers["KALSHI-ACCESS-KEY"] = keys.keyId;
-    headers["KALSHI-ACCESS-TIMESTAMP"] = String(Date.now());
+    headers["KALSHI-ACCESS-TIMESTAMP"] = ts;
+    headers["KALSHI-ACCESS-SIGNATURE"] = sig;
   }
 
   try {
@@ -946,11 +980,67 @@ predictorRouter.get("/account", async (_req, res) => {
   }
 });
 
+// Get Polymarket wallet balance (USDC on Polygon)
+predictorRouter.get("/polymarket-account", async (_req, res) => {
+  try {
+    const wallet = process.env.POLY_FUNDER;
+    if (!wallet) return res.status(400).json({ error: "POLY_FUNDER not configured" });
+
+    // USDC contract on Polygon (bridged USDC.e)
+    const usdcContract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+    // balanceOf(address) selector = 0x70a08231 + address padded to 32 bytes
+    const data = "0x70a08231" + wallet.replace("0x", "").padStart(64, "0");
+
+    const rpcRes = await fetch("https://polygon-bor-rpc.publicnode.com", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: usdcContract, data }, "latest"] }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const rpc = await rpcRes.json();
+    const rawBalance = BigInt(rpc.result || "0x0");
+    const balance = Number(rawBalance) / 1e6; // USDC has 6 decimals
+
+    // Also check native USDC contract
+    const usdcNative = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359";
+    const rpcRes2 = await fetch("https://polygon-bor-rpc.publicnode.com", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "eth_call", params: [{ to: usdcNative, data }, "latest"] }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const rpc2 = await rpcRes2.json();
+    const rawBalance2 = BigInt(rpc2.result || "0x0");
+    const balanceNative = Number(rawBalance2) / 1e6;
+
+    res.json({ wallet, balance: balance + balanceNative, usdc_bridged: balance, usdc_native: balanceNative });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Get active positions
 predictorRouter.get("/positions", async (_req, res) => {
   try {
     const data = await kalshiReq("/portfolio/positions?settlement_status=unsettled");
     res.json(data);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get pending/resting Kalshi orders (unfilled limit orders)
+predictorRouter.get("/orders", async (_req, res) => {
+  try {
+    const [resting, pending] = await Promise.all([
+      kalshiReq("/portfolio/orders?status=resting").catch(() => ({ orders: [] })),
+      kalshiReq("/portfolio/orders?status=pending").catch(() => ({ orders: [] })),
+    ]);
+    const orders = [
+      ...(resting?.orders || []).map((o: any) => ({ ...o, order_status: "resting" })),
+      ...(pending?.orders || []).map((o: any) => ({ ...o, order_status: "pending" })),
+    ];
+    res.json({ orders });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1050,6 +1140,7 @@ predictorRouter.post("/settings", async (req, res) => {
     const { key, value } = req.body;
     if (!key) return res.status(400).json({ error: "key required" });
     await setSetting(key, String(value));
+    if (key === "mode") { _kalshiModeCache = String(value); kalshiToken = null; kalshiTokenExpiry = 0; }
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
