@@ -139,17 +139,20 @@ export default function CryptoArbPage() {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [tab, setTab] = useState<"overview" | "opportunities" | "trades" | "chat" | "settings">("overview");
+  const [usage, setUsage] = useState<any>(null);
 
   const loadData = useCallback(async () => {
     try {
-      const [s, cfg, sp] = await Promise.all([
+      const [s, cfg, sp, u] = await Promise.all([
         fetch("/api/crypto-arb/stats").then(r => r.json()),
         fetch("/api/crypto-arb/settings").then(r => r.json()),
         fetch("/api/crypto-arb/spot-prices").then(r => r.json()),
+        fetch("/api/predictor/usage?module=crypto-arb").then(r => r.json()).catch(() => null),
       ]);
       setStats(s);
       setSettings(cfg);
       setSpotPrices(Array.isArray(sp) ? sp : []);
+      if (u) setUsage(u);
     } catch {}
     setLoading(false);
   }, []);
@@ -236,6 +239,16 @@ export default function CryptoArbPage() {
         {/* ── OVERVIEW ── */}
         {tab === "overview" && (
           <div className="space-y-5">
+            <div className="flex items-center gap-4 px-3 py-2 rounded-lg border border-amber-500/20 bg-amber-500/5 text-xs">
+              <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                <DollarSign className="h-3 w-3" /><span className="font-medium">API Credits</span>
+              </div>
+              <div className="flex items-center gap-4 font-mono">
+                <span>Today: <strong>${(usage?.today?.cost || 0).toFixed(4)}</strong></span>
+                <span>Week: <strong>${(usage?.week?.cost || 0).toFixed(4)}</strong></span>
+                <span>Month: <strong>${(usage?.month?.cost || 0).toFixed(4)}</strong></span>
+              </div>
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               {[
                 { label: "Total Trades", value: stats?.total_trades ?? "—",  cls: "text-foreground" },

@@ -856,7 +856,7 @@ async function runPredictorPipeline(
 
     // Task 2: Deduplication — skip if we already have an active position on this market
     const existingBet = await pool.query(
-      `SELECT id FROM predictor_bets WHERE market_ticker=$1 AND status='filled' AND pnl IS NULL LIMIT 1`,
+      `SELECT id FROM predictor_bets WHERE market_ticker=$1 AND status NOT IN ('failed') AND pnl IS NULL LIMIT 1`,
       [market.ticker]
     );
     if (existingBet.rows.length > 0) {
@@ -1067,18 +1067,20 @@ predictorRouter.get("/stats", async (_req, res) => {
 
     const allBets = bets.rows;
     const settled = allBets.filter((b: any) => b.pnl != null);
-    const unsettled = allBets.filter((b: any) => b.status === "filled" && b.pnl == null);
+    // Active = any non-failed, non-settled bet (covers 'filled', 'executed', 'resting', 'pending', etc.)
+    const unsettled = allBets.filter((b: any) => b.status !== "failed" && b.pnl == null);
     const wins = settled.filter((b: any) => parseFloat(b.pnl) > 0);
     const settledPnl = settled.reduce((s: number, b: any) => s + (parseFloat(b.pnl) || 0), 0);
-    // at_stake = cost of unsettled filled bets only
+    // at_stake = cost of active unsettled bets (skip legacy $0 bets)
     const atStake = unsettled.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
     // potential_payout = contracts (each pays $1 if won) for unsettled bets
-    const potentialPayout = unsettled.reduce((s: number, b: any) => s + (parseInt(b.contracts) || 0), 0);
+    const potentialPayout = unsettled.filter((b: any) => parseFloat(b.cost) > 0).reduce((s: number, b: any) => s + (parseInt(b.contracts) || 0), 0);
     const potentialProfit = potentialPayout - atStake;
     // total_risked stays as all non-failed bets for historical reference
-    const totalRisked = allBets.filter((b: any) => b.status !== "failed").reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
-    const avgEdge = allBets.length
-      ? allBets.filter((b: any) => b.status !== "failed").reduce((s: number, b: any) => s + (parseFloat(b.edge) || 0), 0) / allBets.filter((b: any) => b.status !== "failed").length
+    const nonFailed = allBets.filter((b: any) => b.status !== "failed");
+    const totalRisked = nonFailed.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
+    const avgEdge = nonFailed.length
+      ? nonFailed.reduce((s: number, b: any) => s + (parseFloat(b.edge) || 0), 0) / nonFailed.length
       : 0;
 
     res.json({

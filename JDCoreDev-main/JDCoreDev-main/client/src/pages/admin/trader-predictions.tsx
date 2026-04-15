@@ -880,17 +880,20 @@ export default function PredictionsPage() {
   const [scanResults, setScanResults] = useState<any[]>([]);
   const [tab, setTab]                 = useState<"overview" | "bets" | "analytics" | "chat" | "councils" | "settings">("overview");
   const [usage, setUsage]             = useState<any>(null);
+  const [kalshiBalance, setKalshiBalance] = useState<number | null>(null);
 
   const loadStats = useCallback(async () => {
     try {
-      const [s, cfg, u] = await Promise.all([
+      const [s, cfg, u, acct] = await Promise.all([
         fetch("/api/predictor/stats").then(r => r.json()),
         fetch("/api/predictor/settings").then(r => r.json()),
         fetch("/api/predictor/usage").then(r => r.json()).catch(() => null),
+        fetch("/api/predictor/account").then(r => r.json()).catch(() => null),
       ]);
       setStats(s);
       setSettings(cfg);
       if (u) setUsage(u);
+      if (acct?.balance != null) setKalshiBalance(acct.balance / 100); // Kalshi returns cents
     } catch {}
     setLoading(false);
   }, []);
@@ -973,6 +976,44 @@ export default function PredictionsPage() {
         {/* ── OVERVIEW ── */}
         {tab === "overview" && (
           <div className="space-y-5">
+            {/* API Usage Strip */}
+            <div className="flex items-center gap-4 px-3 py-2 rounded-lg border border-amber-500/20 bg-amber-500/5 text-xs">
+              <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                <DollarSign className="h-3 w-3" />
+                <span className="font-medium">API Credits</span>
+              </div>
+              <div className="flex items-center gap-4 font-mono">
+                <span>Today: <strong>${(usage?.today?.cost || 0).toFixed(4)}</strong></span>
+                <span>Week: <strong>${(usage?.week?.cost || 0).toFixed(4)}</strong></span>
+                <span>Month: <strong className={cn((usage?.month?.cost || 0) > 5 ? "text-red-500" : (usage?.month?.cost || 0) > 1 ? "text-amber-500" : "")}>${(usage?.month?.cost || 0).toFixed(4)}</strong></span>
+              </div>
+              {usage?.by_module?.length > 0 && (
+                <span className="text-muted-foreground ml-auto">{usage.by_module.reduce((s: number, m: any) => s + parseInt(m.calls || 0), 0)} calls (30d)</span>
+              )}
+            </div>
+
+            {/* Kalshi / Polymarket Balances */}
+            <div className="grid grid-cols-2 gap-3">
+              <Card className="p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Kalshi Balance</p>
+                    <p className="text-lg font-bold font-mono">{kalshiBalance != null ? fmtUSD(kalshiBalance) : "—"}</p>
+                  </div>
+                  <Badge variant="secondary" className="text-[10px]">{settings.mode === "live" ? "LIVE" : "Demo"}</Badge>
+                </div>
+              </Card>
+              <Card className="p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Polymarket</p>
+                    <p className="text-lg font-bold font-mono text-muted-foreground">Not connected</p>
+                  </div>
+                  <Badge variant="secondary" className="text-[10px]">CLOB</Badge>
+                </div>
+              </Card>
+            </div>
+
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
               {[
                 { label: "Total Bets",      value: stats?.total_bets ?? "—",      cls: "text-foreground" },
@@ -1087,47 +1128,6 @@ export default function PredictionsPage() {
                 </CardContent>
               </Card>
             </div>
-
-            {/* API Usage Tracker */}
-            {usage && (
-              <Card>
-                <CardHeader className="pb-2 pt-4">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <DollarSign className="h-4 w-4 text-amber-500" />API Usage & Costs
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="pb-4">
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    {[
-                      { label: "Today", cost: usage.today?.cost || 0 },
-                      { label: "This Week", cost: usage.week?.cost || 0 },
-                      { label: "This Month", cost: usage.month?.cost || 0 },
-                    ].map(p => (
-                      <div key={p.label} className="rounded-lg border p-3">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{p.label}</p>
-                        <p className={cn("text-lg font-bold font-mono", p.cost > 1 ? "text-amber-500" : p.cost > 5 ? "text-red-500" : "text-foreground")}>
-                          ${p.cost.toFixed(4)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                  {usage.by_module?.length > 0 && (
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">By Module (30d)</p>
-                      {usage.by_module.map((m: any, i: number) => (
-                        <div key={i} className="flex items-center justify-between text-xs py-1">
-                          <span className="font-mono text-muted-foreground">{m.module} ({m.model?.split("-").slice(-1)[0]})</span>
-                          <div className="flex items-center gap-3">
-                            <span className="text-muted-foreground">{m.calls} calls</span>
-                            <span className="font-mono font-bold">${m.cost.toFixed(4)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
 
             {scanResults.length > 0 && (
               <Card>

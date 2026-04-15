@@ -220,6 +220,7 @@ export default function TraderDashboard() {
   const [lastSync,    setLastSync]    = useState<Date|null>(null);
   const [histRange,   setHistRange]   = useState<"1W"|"1M"|"3M">("1M");
   const [liveConfirm, setLiveConfirm] = useState(false);
+  const [usage, setUsage]             = useState<any>(null);
 
   const agentActive = useRef(false);
   const cycleTimer  = useRef<any>(null);
@@ -369,7 +370,10 @@ export default function TraderDashboard() {
   const stopAgent=useCallback(()=>{ agentActive.current=false; clearTimeout(cycleTimer.current); setAgentStatus("stopped"); log("Agent stopped","warn"); },[]);
 
   const refreshAll = useCallback(async()=>{
-    await Promise.all([fetchAccount(),fetchPositions(),fetchOrders()]);
+    await Promise.all([
+      fetchAccount(),fetchPositions(),fetchOrders(),
+      fetch("/api/predictor/usage").then(r=>r.json()).then(u=>setUsage(u)).catch(()=>{}),
+    ]);
     setLastSync(new Date());
   },[fetchAccount,fetchPositions,fetchOrders]);
 
@@ -608,6 +612,20 @@ export default function TraderDashboard() {
             <LogOut className="h-3 w-3 mr-1.5"/>Disconnect
           </Button>
         </div>
+
+        {/* API Usage Strip */}
+        {usage && (
+          <div className="mb-4 flex items-center gap-4 px-3 py-2 rounded-lg border border-amber-500/20 bg-amber-500/5 text-xs">
+            <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+              <DollarSign className="h-3 w-3" /><span className="font-medium">API Credits</span>
+            </div>
+            <div className="flex items-center gap-4 font-mono">
+              <span>Today: <strong>${(usage?.today?.cost || 0).toFixed(4)}</strong></span>
+              <span>Week: <strong>${(usage?.week?.cost || 0).toFixed(4)}</strong></span>
+              <span>Month: <strong>${(usage?.month?.cost || 0).toFixed(4)}</strong></span>
+            </div>
+          </div>
+        )}
 
         {/* ── Portfolio Overview ── */}
         {account&&(
