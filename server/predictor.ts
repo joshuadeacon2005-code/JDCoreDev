@@ -1517,7 +1517,7 @@ predictorRouter.get("/poly-balance", async (_req, res) => {
     const balance = clobBalance ?? chainBalance;
     console.log(`[poly-balance] final: CLOB=${clobBalance} chain=${chainBalance} → using ${balance} (${clobBalance != null ? "clob" : chainSource})`);
 
-    // Get all polymarket bets from DB (including failed — show with flag)
+    // Get all polymarket bets from DB (including failed — shown separately in UI)
     const openBets = await pool.query(
       `SELECT id, market_ticker, market_title, side, contracts, price, cost, status, pnl, logged_at, order_id
        FROM predictor_bets

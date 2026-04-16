@@ -546,69 +546,44 @@ function PolyPortfolioSection({ polyBalance, onRefresh }: { polyBalance: any; on
           ))}
         </div>
 
-        {/* Active + failed positions from DB */}
+        {/* Active positions only — failed/attempted bets are on the Bets → Attempted tab */}
         {(() => {
           const active = positions.filter((p: any) => !p.all_failed);
-          const failed = positions.filter((p: any) => p.all_failed);
-          const PolyPosCard = ({ pos, dim }: { pos: any; dim?: boolean }) => (
-            <div className={cn("rounded-lg border p-3", dim ? "border-muted/40 opacity-60" :
-              pos.side === "yes" ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5")}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                    <Badge variant="outline" className={cn("text-[10px]",
-                      pos.side === "yes" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
-                      {pos.side?.toUpperCase()}
-                    </Badge>
-                    {dim && (
-                      <Badge variant="outline" className="text-[10px] border-red-500/20 text-red-500/70">Attempted — Failed</Badge>
-                    )}
-                    <span className="text-[10px] font-mono text-muted-foreground">{pos.ticker}</span>
-                  </div>
-                  <p className="text-sm font-semibold leading-tight mb-1.5">{pos.title || pos.ticker}</p>
-                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
-                    {pos.wagers && pos.wagers.length > 1
-                      ? <span>{pos.wagers.length} wagers · {pos.wagers.reduce((s: number, w: any) => s + (parseFloat(w.contracts) || 0), 0)} contracts total</span>
-                      : pos.contracts > 0 && <span>{pos.contracts} contracts</span>
-                    }
-                    {!dim && <span>Cost: <span className="text-foreground font-mono">{fmtUSD(pos.cost_usd)}</span></span>}
-                    {!dim && <span>Max payout: <span className="text-blue-500 font-mono">{fmtUSD(pos.max_payout_usd)}</span></span>}
-                    {dim && pos.wagers && <span>Attempted: {fmtUSD(pos.wagers.reduce((s: number, w: any) => s + (parseFloat(w.cost) || 0), 0))}</span>}
-                    {pos.price != null && !dim && (
-                      <span>Price: <span className="font-mono">{(pos.price * 100).toFixed(0)}¢</span></span>
-                    )}
-                  </div>
-                </div>
-                {!dim && (
-                  <div className="text-right flex-shrink-0">
-                    <p className={cn("text-sm font-bold font-mono", clrPnl(pos.potential_profit ?? 0))}>
-                      {(pos.potential_profit ?? 0) >= 0 ? "+" : ""}{fmtUSD(pos.potential_profit ?? 0)}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">if win</p>
-                  </div>
-                )}
-              </div>
-            </div>
+          if (!active.length) return (
+            <p className="text-xs text-muted-foreground text-center py-4">No open Polymarket positions</p>
           );
           return (
-            <div className="space-y-3">
-              {active.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Active Positions ({active.length})</p>
-                  {active.map((pos: any, i: number) => <PolyPosCard key={i} pos={pos} />)}
+            <div className="space-y-2">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Active Positions ({active.length})</p>
+              {active.map((pos: any, i: number) => (
+                <div key={i} className={cn("rounded-lg border p-3",
+                  pos.side === "yes" ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5")}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                        <Badge variant="outline" className={cn("text-[10px]",
+                          pos.side === "yes" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
+                          {pos.side?.toUpperCase()}
+                        </Badge>
+                        <span className="text-[10px] font-mono text-muted-foreground">{pos.ticker}</span>
+                      </div>
+                      <p className="text-sm font-semibold leading-tight mb-1.5">{pos.title || pos.ticker}</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
+                        {pos.contracts > 0 && <span>{pos.contracts} contracts</span>}
+                        <span>Cost: <span className="text-foreground font-mono">{fmtUSD(pos.cost_usd)}</span></span>
+                        <span>Max payout: <span className="text-blue-500 font-mono">{fmtUSD(pos.max_payout_usd)}</span></span>
+                        {pos.price != null && <span>Price: <span className="font-mono">{(pos.price * 100).toFixed(0)}¢</span></span>}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className={cn("text-sm font-bold font-mono", clrPnl(pos.potential_profit ?? 0))}>
+                        {(pos.potential_profit ?? 0) >= 0 ? "+" : ""}{fmtUSD(pos.potential_profit ?? 0)}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">if win</p>
+                    </div>
+                  </div>
                 </div>
-              )}
-              {failed.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider flex items-center gap-1.5">
-                    <AlertTriangle className="h-3 w-3" />Attempted — Not Placed ({failed.length})
-                  </p>
-                  {failed.map((pos: any, i: number) => <PolyPosCard key={i} pos={pos} dim />)}
-                </div>
-              )}
-              {active.length === 0 && failed.length === 0 && (
-                <p className="text-xs text-muted-foreground text-center py-4">No open Polymarket positions</p>
-              )}
+              ))}
             </div>
           );
         })()}
@@ -1367,17 +1342,6 @@ function PlatformBetsSection({
           </div>
         )}
 
-        {failedGroups.length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground/60 mb-2 flex items-center gap-1.5">
-              <AlertTriangle className="h-3 w-3" /> Attempted — Not Placed ({failedGroups.length})
-            </p>
-            <div className="space-y-2">
-              {failedGroups.map(g => <GroupedBetCard key={g.ticker} group={g} isPoly={isPoly} />)}
-            </div>
-          </div>
-        )}
-
         {cancelledGroups.length > 0 && (
           <div>
             <p className="text-xs font-semibold text-muted-foreground/40 mb-2">Cancelled ({cancelledGroups.length})</p>
@@ -1391,9 +1355,68 @@ function PlatformBetsSection({
   );
 }
 
+function AttemptedBetsSection({ bets }: { bets: any[] }) {
+  const attempted = bets.filter(b => b.status === "failed");
+  if (!attempted.length) return (
+    <p className="text-sm text-muted-foreground text-center py-8">No attempted bets — every order placed was accepted.</p>
+  );
+
+  const groupMap = new Map<string, any>();
+  for (const b of attempted) {
+    const key = b.market_ticker;
+    if (!groupMap.has(key)) groupMap.set(key, { ticker: key, bets: [] });
+    groupMap.get(key).bets.push(b);
+  }
+  const groups = Array.from(groupMap.values());
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        These orders were analysed and approved by the council but failed to submit to the exchange — typically due to API auth or connectivity issues. No money was spent.
+      </p>
+      <div className="space-y-2">
+        {groups.map(g => {
+          const primary = g.bets[0];
+          const totalCost = g.bets.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
+          const isPoly = primary.platform === "polymarket";
+          return (
+            <Card key={g.ticker} className="border border-muted/50 opacity-75">
+              <CardContent className="pt-3 pb-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                      <Badge variant="outline" className={cn("text-[10px]", isPoly ? "border-blue-500/30 text-blue-500" : "border-purple-500/30 text-purple-500")}>
+                        {isPoly ? "Polymarket" : "Kalshi"}
+                      </Badge>
+                      <Badge variant="outline" className={cn("text-[10px]", primary.side === "yes" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
+                        {primary.side?.toUpperCase()}
+                      </Badge>
+                      {g.bets.length > 1 && (
+                        <Badge variant="outline" className="text-[10px] border-amber-500/20 text-amber-500">{g.bets.length} wagers</Badge>
+                      )}
+                      <Badge variant="outline" className="text-[10px] border-muted text-muted-foreground/60">Not placed</Badge>
+                    </div>
+                    <p className="text-sm font-semibold leading-tight mb-1">{primary.market_title || primary.market_ticker}</p>
+                    <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
+                      <span className="font-mono text-muted-foreground/50">{primary.market_ticker}</span>
+                      <span>Would have cost: <span className="font-medium">{fmtUSD(totalCost)}</span></span>
+                      <span>{fmtHKT(new Date(primary.logged_at), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} HKT</span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function BetsTab() {
-  const [bets, setBets]     = useState<any[]>([]);
+  const [bets, setBets]       = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [subTab, setSubTab]   = useState<"active" | "attempted">("active");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1407,13 +1430,37 @@ function BetsTab() {
 
   if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading bets…</p>;
 
-  const kalshiBets = bets.filter(b => !b.platform || b.platform === "kalshi");
-  const polyBets   = bets.filter(b => b.platform === "polymarket");
+  const activeBets   = bets.filter(b => b.status !== "failed");
+  const kalshiBets   = activeBets.filter(b => !b.platform || b.platform === "kalshi");
+  const polyBets     = activeBets.filter(b => b.platform === "polymarket");
+  const attemptedCnt = bets.filter(b => b.status === "failed").length;
 
   return (
     <div className="space-y-4">
-      <PlatformBetsSection platform="kalshi"     bets={kalshiBets} onLoad={load} color="purple" />
-      <PlatformBetsSection platform="polymarket" bets={polyBets}   onLoad={load} color="blue" />
+      {/* Sub-tab bar */}
+      <div className="flex gap-1">
+        {([
+          { id: "active"    as const, label: "Active Bets" },
+          { id: "attempted" as const, label: `Attempted (${attemptedCnt})`, dim: attemptedCnt === 0 },
+        ] as const).map(t => (
+          <button key={t.id} onClick={() => setSubTab(t.id)}
+            className={cn("text-xs px-3 py-1.5 rounded-md border transition-colors",
+              subTab === t.id
+                ? "border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border")}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === "active" && (
+        <div className="space-y-4">
+          <PlatformBetsSection platform="kalshi"     bets={kalshiBets} onLoad={load} color="purple" />
+          <PlatformBetsSection platform="polymarket" bets={polyBets}   onLoad={load} color="blue" />
+        </div>
+      )}
+
+      {subTab === "attempted" && <AttemptedBetsSection bets={bets} />}
     </div>
   );
 }
