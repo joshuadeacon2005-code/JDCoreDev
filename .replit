@@ -34,5 +34,5 @@ outputType = "webview"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["sh", "-c", "NODE_ENV=production node dist/index.js"]
+run = ["sh", "start.sh"]
 build = ["npm", "run", "build"]
