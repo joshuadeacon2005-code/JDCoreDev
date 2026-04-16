@@ -9,6 +9,8 @@ import { pool } from "./db";
 import crypto from "crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { ethers } from "ethers";
+import { ClobClient } from "@polymarket/clob-client";
+import { OrderType, Side } from "@polymarket/clob-client";
 
 const anthropic = new Anthropic({
   apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
@@ -315,135 +317,46 @@ async function kalshiPublicReq(path: string): Promise<any> {
 
 // ── Polymarket API helpers ───────────────────────────────────────────────────
 
-const POLY_CLOB     = "https://clob.polymarket.com";
-const POLY_GAMMA    = "https://gamma-api.polymarket.com";
-const POLY_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"; // Polygon CTF Exchange
-const POLY_CHAIN_ID = 137;
+const POLY_GAMMA = "https://gamma-api.polymarket.com";
 
-// EIP-712 order type for Polymarket CTF Exchange
-const POLY_ORDER_TYPES = {
-  Order: [
-    { name: "salt",          type: "uint256" },
-    { name: "maker",         type: "address" },
-    { name: "signer",        type: "address" },
-    { name: "taker",         type: "address" },
-    { name: "tokenId",       type: "uint256" },
-    { name: "makerAmount",   type: "uint256" },
-    { name: "takerAmount",   type: "uint256" },
-    { name: "expiration",    type: "uint256" },
-    { name: "nonce",         type: "uint256" },
-    { name: "feeRateBps",    type: "uint256" },
-    { name: "side",          type: "uint8"   },
-    { name: "signatureType", type: "uint8"   },
-  ],
-};
-
-const POLY_DOMAIN = {
-  name: "Polymarket CTF Exchange",
-  version: "1",
-  chainId: POLY_CHAIN_ID,
-  verifyingContract: POLY_EXCHANGE,
-};
 
 function getPolyCredentials() {
-  const apiKey      = process.env.POLY_API_KEY     || "";
-  const apiSecret   = process.env.POLY_API_SECRET  || "";
+  const apiKey      = process.env.POLY_API_KEY        || "";
+  const apiSecret   = process.env.POLY_API_SECRET     || "";
   const passphrase  = process.env.POLY_API_PASSPHRASE || "";
-  const privateKey  = process.env.POLY_PRIVATE_KEY || "";
-  const funder      = process.env.POLY_FUNDER      || "";
+  const privateKey  = process.env.POLY_PRIVATE_KEY    || "";
+  const funder      = process.env.POLY_FUNDER         || "";
   return { apiKey, apiSecret, passphrase, privateKey, funder };
 }
 
-// HMAC-SHA256 auth headers for Polymarket CLOB API (Level 2 auth)
-// Build URL-safe base64 HMAC-SHA256 matching @polymarket/clob-client buildPolyHmacSignature exactly:
-// - sanitize base64url → base64 before decoding
-// - output uses URL-safe base64: +→- and /→_
-function polyHmac(secret: string, timestamp: string | number, method: string, path: string, body = ""): string {
-  const sanitized = secret.replace(/-/g, "+").replace(/_/g, "/").replace(/[^A-Za-z0-9+/=]/g, "");
-  const secretBytes = Buffer.from(sanitized, "base64");
-  const message = `${timestamp}${method.toUpperCase()}${path}${body}`;
-  return crypto.createHmac("sha256", secretBytes)
-    .update(message)
-    .digest("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
-// Header names use UNDERSCORES per official @polymarket/clob-client source
-function polyHmacHeaders(method: string, path: string, body: string): Record<string, string> {
-  const { apiKey, apiSecret, passphrase, funder } = getPolyCredentials();
-  const ts = String(Math.floor(Date.now() / 1000));
-  const sig = polyHmac(apiSecret, ts, method, path, body);
-  return {
-    "POLY_API_KEY":    apiKey,
-    "POLY_SIGNATURE":  sig,
-    "POLY_TIMESTAMP":  ts,
-    "POLY_PASSPHRASE": passphrase,
-    "POLY_ADDRESS":    funder,
-    "Content-Type":    "application/json",
-  };
-}
-
-// EIP-712 sign a Polymarket order with ethers v5
-async function signPolyOrder(
-  tokenId: string,
-  makerAmountUsdc: number, // USD value e.g. 5.00
-  takerAmountTokens: number, // token count e.g. 7.69
-  side: 0 | 1               // 0=BUY 1=SELL
-): Promise<{ orderPayload: any; signature: string } | null> {
-  try {
-    const { privateKey, funder } = getPolyCredentials();
-    if (!privateKey || !funder) return null;
-
-    // Normalise private key (add 0x prefix if missing)
-    const pk = privateKey.startsWith("0x") ? privateKey : "0x" + privateKey;
-    const wallet = new ethers.Wallet(pk);
-
-    const salt = Math.floor(Math.random() * 1e15); // random nonce
-    const ZERO = "0x0000000000000000000000000000000000000000";
-
-    // Convert USD amounts to 6-decimal USDC units
-    const makerAmt = BigInt(Math.round(makerAmountUsdc * 1e6));
-    const takerAmt = BigInt(Math.round(takerAmountTokens * 1e6));
-
-    const orderValue = {
-      salt:          BigInt(salt),
-      maker:         funder,
-      signer:        wallet.address,
-      taker:         ZERO,
-      tokenId:       BigInt(tokenId),
-      makerAmount:   makerAmt,
-      takerAmount:   takerAmt,
-      expiration:    BigInt(0),
-      nonce:         BigInt(0),
-      feeRateBps:    BigInt(0),
-      side:          side,
-      signatureType: 0,
-    };
-
-    const signature = await wallet._signTypedData(POLY_DOMAIN, POLY_ORDER_TYPES, orderValue);
-
-    const orderPayload = {
-      salt:          String(salt),
-      maker:         funder,
-      signer:        wallet.address,
-      taker:         ZERO,
-      tokenId:       tokenId,
-      makerAmount:   String(makerAmt),
-      takerAmount:   String(takerAmt),
-      expiration:    "0",
-      nonce:         "0",
-      feeRateBps:    "0",
-      side:          side,
-      signatureType: 0,
-      signature,
-    };
-
-    return { orderPayload, signature };
-  } catch (e: any) {
-    console.error("[predictor] signPolyOrder error:", e.message);
-    return null;
+// Build a fully-authenticated ClobClient using official @polymarket/clob-client
+async function getPolyClobClient(): Promise<ClobClient | null> {
+  const { privateKey, apiKey, apiSecret, passphrase, funder } = getPolyCredentials();
+  if (!privateKey) return null;
+  const pk = privateKey.startsWith("0x") ? privateKey : "0x" + privateKey;
+  const wallet = new ethers.Wallet(pk);
+  const creds = (apiKey && apiSecret && passphrase)
+    ? { key: apiKey, secret: apiSecret, passphrase }
+    : undefined;
+  const client = new ClobClient(
+    "https://clob.polymarket.com",
+    137,
+    wallet as any,
+    creds as any,
+    0,
+    funder || wallet.address,
+  );
+  // If we don't have creds yet, derive them on-the-fly
+  if (!creds) {
+    try {
+      const derived = await client.createOrDeriveApiKey(0);
+      (client as any).creds = derived;
+    } catch (e: any) {
+      console.error("[poly] credential derivation failed:", e.message);
+      return null;
+    }
   }
+  return client;
 }
 
 // Fetch active Polymarket markets and score them for mispricing
@@ -563,10 +476,10 @@ async function executePolyBet(
     return null;
   }
 
-  const { apiKey } = getPolyCredentials();
-  if (!apiKey) {
-    onStage("Polymarket API key not configured — skipping");
-    return { error: true, message: "No Polymarket API key" };
+  const clobClient = await getPolyClobClient();
+  if (!clobClient) {
+    onStage("Polymarket credentials not configured — skipping");
+    return { error: true, message: "No Polymarket credentials" };
   }
 
   const isBuyYes = council.verdict === "BET_YES";
@@ -578,34 +491,27 @@ async function executePolyBet(
     return { error: true, message: "Missing token ID" };
   }
 
-  const makerAmount   = Math.min(maxBet, council.max_risk_usd || maxBet);
-  const takerAmount   = makerAmount / price; // tokens to receive
-  const contracts     = Math.max(1, Math.floor(council.suggested_contracts || 3));
-  const actualSpend   = Math.min(makerAmount, contracts * price);
+  const makerAmount = Math.min(maxBet, council.max_risk_usd || maxBet);
+  const contracts   = Math.max(1, Math.floor(council.suggested_contracts || 3));
+  const actualSpend = Math.min(makerAmount, contracts * price);
 
   onStage(`Placing Polymarket bet: ${isBuyYes ? "YES" : "NO"} ${market.ticker} @ $${price.toFixed(2)} | $${actualSpend.toFixed(2)} risk`);
 
-  const signed = await signPolyOrder(tokenId, actualSpend, actualSpend / price, 0);
-  if (!signed) {
-    onStage("EIP-712 signing failed");
-    return { error: true, message: "Signing failed" };
-  }
-
-  const body = JSON.stringify({ order: signed.orderPayload, owner: process.env.POLY_FUNDER || "", orderType: "GTC" });
-  const headers = polyHmacHeaders("POST", "/order", body);
-
   let orderResult: any = { error: true, message: "not sent" };
   try {
-    const resp = await fetch(`${POLY_CLOB}/order`, {
-      method: "POST",
-      headers,
-      body,
-      signal: AbortSignal.timeout(15000),
-    });
-    const text = await resp.text();
-    orderResult = text ? JSON.parse(text) : {};
+    const resp = await clobClient.createAndPostOrder(
+      {
+        tokenID: tokenId,
+        price:   parseFloat(price.toFixed(2)),
+        side:    isBuyYes ? Side.BUY : Side.SELL,
+        size:    parseFloat(actualSpend.toFixed(2)),
+      },
+      undefined,
+      OrderType.GTC,
+    );
+    orderResult = resp ?? {};
   } catch (e: any) {
-    orderResult = { error: true, message: e.message };
+    orderResult = { error: true, message: e.message ?? String(e) };
   }
 
   const betId    = `poly-${market.ticker}-${Date.now()}`;
@@ -1478,38 +1384,21 @@ async function getPolyUSDCBalance(funderAddress: string): Promise<{ balance: num
 // Polymarket USDC balance
 predictorRouter.get("/poly-balance", async (_req, res) => {
   try {
-    const { apiKey, apiSecret, passphrase, funder } = getPolyCredentials();
-    if (!funder && !apiKey) return res.json({ usdc_balance: 0, error: "No Polymarket credentials" });
+    const { funder } = getPolyCredentials();
 
-    // Strategy 1: Try CLOB API /balance-allowance with correct L2 auth
-    // Headers use UNDERSCORES (POLY_API_KEY) not hyphens — from official clob-client source
+    // Strategy 1: CLOB API via official ClobClient
     let clobBalance: number | null = null;
-    if (apiKey) {
-      try {
-        const ts       = Math.floor(Date.now() / 1000);
-        const path     = "/balance-allowance";
-        const sig      = polyHmac(apiSecret, ts, "GET", path);
-        const clobRes  = await fetch(`${POLY_CLOB}${path}?asset_type=COLLATERAL&signature_type=0`, {
-          headers: {
-            "POLY_API_KEY":    apiKey,
-            "POLY_SIGNATURE":  sig,
-            "POLY_TIMESTAMP":  String(ts),
-            "POLY_PASSPHRASE": passphrase,
-            "POLY_ADDRESS":    funder || "",
-            "Accept": "application/json",
-          },
-          signal: AbortSignal.timeout(8000),
-        });
-        const clobBody = await clobRes.text();
-        console.log(`[poly-balance] CLOB /balance-allowance → HTTP ${clobRes.status}: ${clobBody.slice(0, 300)}`);
-        if (clobRes.ok) {
-          const clobData = JSON.parse(clobBody);
-          // Response: { asset: "USDC", balance: "29.5", allowance: "..." } or array
-          const item = Array.isArray(clobData) ? clobData[0] : clobData;
-          clobBalance = parseFloat(item?.balance ?? item?.usdc_balance ?? item?.BALANCE ?? 0);
-        }
-      } catch (e: any) { console.log(`[poly-balance] CLOB error: ${e.message}`); }
-    }
+    try {
+      const clobClient = await getPolyClobClient();
+      if (clobClient) {
+        const balResp = await clobClient.getBalanceAllowance({ asset_type: "COLLATERAL" as any, signature_type: 0 });
+        console.log(`[poly-balance] CLOB getBalanceAllowance:`, JSON.stringify(balResp));
+        const item = Array.isArray(balResp) ? balResp[0] : balResp;
+        clobBalance = parseFloat((item as any)?.balance ?? 0);
+      }
+    } catch (e: any) { console.log(`[poly-balance] CLOB error: ${e.message}`); }
+
+    if (!funder && clobBalance == null) return res.json({ usdc_balance: 0, error: "No Polymarket credentials" });
 
     // Strategy 2: Polygon blockchain — check wallet USDC balance
     const { balance: chainBalance, source: chainSource } = funder ? await getPolyUSDCBalance(funder) : { balance: 0, source: "no-funder" };
