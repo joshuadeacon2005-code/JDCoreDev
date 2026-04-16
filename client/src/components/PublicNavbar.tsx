@@ -6,7 +6,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { Menu, MenuItem, HoveredLink } from "@/components/ui/navbar-menu";
 import { Code, Layers, Rocket, Server, Menu as MenuIcon, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151.png";
+import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
 const services = [
   { href: "/services", label: "Custom Development", icon: Code },

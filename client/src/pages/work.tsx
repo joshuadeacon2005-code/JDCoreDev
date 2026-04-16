@@ -10,9 +10,7 @@ import {
   ShoppingCart, CreditCard, BarChart3, Package, Calendar, Bell, Users,
   TrendingUp, Database, Shield, Scan, Truck
 } from "lucide-react";
-import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151.png";
-import therapistPreview1 from "@assets/psychologist_website_redesign_v2_1768487948556.png";
-import therapistPreview2 from "@assets/Screenshot_2026-01-15_at_22.43.46_1768488251598.png";
+import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
 const navItems = [
   { name: 'Home', url: '/', icon: Home },
@@ -204,18 +202,14 @@ function FeaturedShowcase({ project }: { project: typeof projects[0] }) {
           <div className="relative hidden md:block">
             <div className="relative w-full h-72">
               <div className="absolute left-0 top-0 w-[55%] h-64 z-10 rounded-lg overflow-hidden shadow-2xl border border-primary/20 transform -rotate-2 hover:rotate-0 hover:scale-105 transition-all duration-300">
-                <img 
-                  src={therapistPreview1} 
-                  alt="Therapist Website Design - Dr. Sarah Mitchell" 
-                  className="w-full h-full object-cover object-top"
-                />
+                <div className="w-full h-full bg-gradient-to-br from-teal-900/60 to-slate-800 flex items-center justify-center">
+                  <span className="text-xs text-muted-foreground text-center px-4">Therapist Website Design</span>
+                </div>
               </div>
               <div className="absolute right-0 bottom-0 w-[55%] h-64 z-20 rounded-lg overflow-hidden shadow-2xl border border-primary/20 transform rotate-2 hover:rotate-0 hover:scale-105 transition-all duration-300">
-                <img 
-                  src={therapistPreview2} 
-                  alt="Therapist Website - Full Page Preview" 
-                  className="w-full h-full object-cover object-top"
-                />
+                <div className="w-full h-full bg-gradient-to-br from-slate-800 to-teal-900/60 flex items-center justify-center">
+                  <span className="text-xs text-muted-foreground text-center px-4">Full Page Preview</span>
+                </div>
               </div>
               <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 z-30">
                 <Badge className="bg-primary text-primary-foreground uppercase tracking-widest text-[9px] font-bold shadow-lg">

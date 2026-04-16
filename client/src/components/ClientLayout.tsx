@@ -23,7 +23,7 @@ import {
   LogOut,
   Home,
 } from "lucide-react";
-import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151.png";
+import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
 const navItems = [
   { title: "Home", icon: Home, href: "/" },

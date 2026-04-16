@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import jdLogo from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151.png";
+import jdLogo from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
