@@ -505,7 +505,7 @@ function PortfolioSection({ portfolio, onRefresh }: { portfolio: any; onRefresh:
 
 // ── Polymarket Portfolio Section ──────────────────────────────────────────────
 
-function PolyPortfolioSection({ polyBalance, onRefresh }: { polyBalance: any; onRefresh: () => void }) {
+function PolyPortfolioSection({ polyBalance, onRefresh, onGoToBets }: { polyBalance: any; onRefresh: () => void; onGoToBets?: () => void }) {
   const [refreshing, setRefreshing] = useState(false);
 
   const refresh = async () => {
@@ -549,8 +549,16 @@ function PolyPortfolioSection({ polyBalance, onRefresh }: { polyBalance: any; on
         {/* Active positions only — failed/attempted bets are on the Bets → Attempted tab */}
         {(() => {
           const active = positions.filter((p: any) => !p.all_failed);
+          const failedCount = positions.filter((p: any) => p.all_failed).length;
           if (!active.length) return (
-            <p className="text-xs text-muted-foreground text-center py-4">No open Polymarket positions</p>
+            <div className="text-center py-4 space-y-1.5">
+              <p className="text-xs text-muted-foreground">No open Polymarket positions</p>
+              {failedCount > 0 && onGoToBets && (
+                <button onClick={onGoToBets} className="text-xs text-blue-500 hover:text-blue-400 underline underline-offset-2">
+                  {failedCount} attempted bet{failedCount !== 1 ? "s" : ""} not placed — view in Bets tab
+                </button>
+              )}
+            </div>
           );
           return (
             <div className="space-y-2">
@@ -2286,7 +2294,7 @@ export default function PredictionsPage() {
             {/* Portfolios — Kalshi + Polymarket side by side */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <PortfolioSection portfolio={portfolio} onRefresh={loadPortfolio} />
-              <PolyPortfolioSection polyBalance={polyBalance} onRefresh={loadPortfolio} />
+              <PolyPortfolioSection polyBalance={polyBalance} onRefresh={loadPortfolio} onGoToBets={() => setTab("bets")} />
             </div>
 
             {stats?.recent_bets?.length > 0 && (
