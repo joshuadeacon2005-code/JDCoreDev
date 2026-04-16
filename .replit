@@ -34,5 +34,5 @@ outputType = "webview"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["sh", "start.sh"]
+run = ["npm", "start"]
 build = ["npm", "run", "build"]

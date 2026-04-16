@@ -15,8 +15,8 @@ await build({
   bundle: true,
   platform: "node",
   target: "node20",
-  format: "esm",
-  outfile: path.join(root, "dist/index.js"),
+  format: "cjs",
+  outfile: path.join(root, "dist/index.cjs"),
   packages: "external",
 });
 
