@@ -1517,33 +1517,40 @@ predictorRouter.get("/poly-balance", async (_req, res) => {
     const balance = clobBalance ?? chainBalance;
     console.log(`[poly-balance] final: CLOB=${clobBalance} chain=${chainBalance} → using ${balance} (${clobBalance != null ? "clob" : chainSource})`);
 
-    // Get open polymarket bets from DB
+    // Get all polymarket bets from DB (including failed — show with flag)
     const openBets = await pool.query(
       `SELECT id, market_ticker, market_title, side, contracts, price, cost, status, pnl, logged_at, order_id
        FROM predictor_bets
-       WHERE platform='polymarket' AND status NOT IN ('cancelled','canceled','failed','settled')
+       WHERE platform='polymarket' AND status NOT IN ('cancelled','canceled','settled')
        ORDER BY logged_at DESC`
     );
-    const positions = openBets.rows.map((b: any) => {
-      const maxPayout = b.price > 0 ? b.cost / b.price : 0;
-      const potentialProfit = maxPayout - b.cost;
-      return {
-        ticker:           b.market_ticker,
-        title:            b.market_title,
-        side:             b.side,
-        contracts:        b.contracts,
-        price:            b.price,
-        cost_usd:         b.cost,
-        max_payout_usd:   maxPayout,
-        potential_profit: potentialProfit,
-        status:           b.status,
-        logged_at:        b.logged_at,
-        order_id:         b.order_id,
-      };
-    });
-    const atStake    = positions.reduce((s: number, p: any) => s + (p.cost_usd || 0), 0);
-    const maxPayout  = positions.reduce((s: number, p: any) => s + (p.max_payout_usd || 0), 0);
-    const potProfit  = positions.reduce((s: number, p: any) => s + (p.potential_profit || 0), 0);
+    // Deduplicate by ticker — group multiple wagers on the same market
+    const tickerMap = new Map<string, any>();
+    for (const b of openBets.rows) {
+      const cost = parseFloat(b.cost) || 0;
+      const price = parseFloat(b.price) || 0;
+      const contracts = parseFloat(b.contracts) || 0;
+      const maxPay = price > 0 ? cost / price : contracts;
+      const isFailed = b.status === "failed";
+      if (tickerMap.has(b.market_ticker)) {
+        const ex = tickerMap.get(b.market_ticker)!;
+        if (!isFailed) { ex.cost_usd += cost; ex.max_payout_usd += maxPay; ex.potential_profit = ex.max_payout_usd - ex.cost_usd; ex.contracts += contracts; }
+        ex.wagers.push({ side: b.side, contracts, price, cost, status: b.status, logged_at: b.logged_at });
+      } else {
+        tickerMap.set(b.market_ticker, {
+          ticker: b.market_ticker, title: b.market_title, side: b.side, contracts: isFailed ? 0 : contracts,
+          price, cost_usd: isFailed ? 0 : cost, max_payout_usd: isFailed ? 0 : maxPay,
+          potential_profit: isFailed ? 0 : (maxPay - cost), status: b.status, logged_at: b.logged_at, order_id: b.order_id,
+          all_failed: isFailed,
+          wagers: [{ side: b.side, contracts, price, cost, status: b.status, logged_at: b.logged_at }],
+        });
+      }
+    }
+    const positions = Array.from(tickerMap.values());
+    const activePositions = positions.filter((p: any) => !p.all_failed);
+    const atStake    = activePositions.reduce((s: number, p: any) => s + (p.cost_usd || 0), 0);
+    const maxPayout  = activePositions.reduce((s: number, p: any) => s + (p.max_payout_usd || 0), 0);
+    const potProfit  = activePositions.reduce((s: number, p: any) => s + (p.potential_profit || 0), 0);
     res.json({
       usdc_balance:     balance,
       at_stake:         atStake,
@@ -1643,20 +1650,30 @@ predictorRouter.get("/portfolio", async (_req, res) => {
     );
     for (const b of dbOpenBets.rows) {
       if (positionTickers.has(b.market_ticker)) continue;
-      const costUSD      = b.cost || 0;
-      const maxPayoutUSD = (b.contracts || 0) * 1.0; // $1 per contract if bet wins
+      const costUSD      = parseFloat(b.cost) || 0;
+      const maxPayoutUSD = (parseFloat(b.contracts) || 0) * 1.0;
+      const existing     = pendingMap.get(b.market_ticker);
+      if (existing) {
+        existing.cost_usd             += costUSD;
+        existing.max_payout_usd       += maxPayoutUSD;
+        existing.potential_profit_usd  = existing.max_payout_usd - existing.cost_usd;
+        existing.contracts            += parseFloat(b.contracts) || 0;
+        existing.wagers               = (existing.wagers || []).concat({ side: b.side, contracts: parseFloat(b.contracts) || 0, price: parseFloat(b.price) || 0, cost: costUSD, status: b.status, order_id: b.order_id });
+        continue;
+      }
       pendingMap.set(b.market_ticker, {
         ticker:               b.market_ticker,
         title:                b.market_title || b.market_ticker,
         side:                 b.side,
-        contracts:            b.contracts,
-        price:                b.price,
+        contracts:            parseFloat(b.contracts) || 0,
+        price:                parseFloat(b.price) || 0,
         cost_usd:             costUSD,
         max_payout_usd:       maxPayoutUSD,
         potential_profit_usd: maxPayoutUSD - costUSD,
         status:               b.status,
         order_id:             b.order_id,
         is_pending:           true,
+        wagers:               [{ side: b.side, contracts: parseFloat(b.contracts) || 0, price: parseFloat(b.price) || 0, cost: costUSD, status: b.status, order_id: b.order_id }],
       });
     }
 

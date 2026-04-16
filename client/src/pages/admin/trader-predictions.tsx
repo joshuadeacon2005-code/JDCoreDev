@@ -542,52 +542,72 @@ function PolyPortfolioSection({ polyBalance, onRefresh }: { polyBalance: any; on
           ))}
         </div>
 
-        {/* Active positions from DB */}
-        {positions.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
-              Active Positions ({positions.length})
-            </p>
-            {positions.map((pos: any, i: number) => (
-              <div key={i} className={cn("rounded-lg border p-3",
-                pos.side === "yes" ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5")}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <Badge variant="outline" className={cn("text-[10px]",
-                        pos.side === "yes" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
-                        {pos.side.toUpperCase()}
-                      </Badge>
-                      <span className="text-[10px] font-mono text-muted-foreground">{pos.ticker}</span>
-                      <Badge variant="outline" className="text-[10px] border-blue-500/20 text-blue-500">Polymarket</Badge>
-                    </div>
-                    <p className="text-sm font-semibold leading-tight mb-1.5">{pos.title}</p>
-                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
-                      {pos.contracts && <span>{pos.contracts} contracts</span>}
-                      <span>Cost: <span className="text-foreground font-mono">{fmtUSD(pos.cost_usd)}</span></span>
-                      <span>Max payout: <span className="text-blue-500 font-mono">{fmtUSD(pos.max_payout_usd)}</span></span>
-                      {pos.price != null && (
-                        <span>Price: <span className="font-mono">{(pos.price * 100).toFixed(0)}¢</span></span>
-                      )}
-                    </div>
+        {/* Active + failed positions from DB */}
+        {(() => {
+          const active = positions.filter((p: any) => !p.all_failed);
+          const failed = positions.filter((p: any) => p.all_failed);
+          const PolyPosCard = ({ pos, dim }: { pos: any; dim?: boolean }) => (
+            <div className={cn("rounded-lg border p-3", dim ? "border-muted/40 opacity-60" :
+              pos.side === "yes" ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5")}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                    <Badge variant="outline" className={cn("text-[10px]",
+                      pos.side === "yes" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
+                      {pos.side?.toUpperCase()}
+                    </Badge>
+                    {dim && (
+                      <Badge variant="outline" className="text-[10px] border-red-500/20 text-red-500/70">Attempted — Failed</Badge>
+                    )}
+                    <span className="text-[10px] font-mono text-muted-foreground">{pos.ticker}</span>
                   </div>
+                  <p className="text-sm font-semibold leading-tight mb-1.5">{pos.title || pos.ticker}</p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
+                    {pos.wagers && pos.wagers.length > 1
+                      ? <span>{pos.wagers.length} wagers · {pos.wagers.reduce((s: number, w: any) => s + (parseFloat(w.contracts) || 0), 0)} contracts total</span>
+                      : pos.contracts > 0 && <span>{pos.contracts} contracts</span>
+                    }
+                    {!dim && <span>Cost: <span className="text-foreground font-mono">{fmtUSD(pos.cost_usd)}</span></span>}
+                    {!dim && <span>Max payout: <span className="text-blue-500 font-mono">{fmtUSD(pos.max_payout_usd)}</span></span>}
+                    {dim && pos.wagers && <span>Attempted: {fmtUSD(pos.wagers.reduce((s: number, w: any) => s + (parseFloat(w.cost) || 0), 0))}</span>}
+                    {pos.price != null && !dim && (
+                      <span>Price: <span className="font-mono">{(pos.price * 100).toFixed(0)}¢</span></span>
+                    )}
+                  </div>
+                </div>
+                {!dim && (
                   <div className="text-right flex-shrink-0">
-                    <p className={cn("text-sm font-bold font-mono", clrPnl(pos.potential_profit))}>
-                      {pos.potential_profit >= 0 ? "+" : ""}{fmtUSD(pos.potential_profit)}
+                    <p className={cn("text-sm font-bold font-mono", clrPnl(pos.potential_profit ?? 0))}>
+                      {(pos.potential_profit ?? 0) >= 0 ? "+" : ""}{fmtUSD(pos.potential_profit ?? 0)}
                     </p>
                     <p className="text-[10px] text-muted-foreground">if win</p>
                   </div>
-                </div>
+                )}
               </div>
-            ))}
-          </div>
-        )}
-
-        {positions.length === 0 && (
-          <div className="text-center py-4">
-            <p className="text-xs text-muted-foreground">No open Polymarket positions</p>
-          </div>
-        )}
+            </div>
+          );
+          return (
+            <div className="space-y-3">
+              {active.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Active Positions ({active.length})</p>
+                  {active.map((pos: any, i: number) => <PolyPosCard key={i} pos={pos} />)}
+                </div>
+              )}
+              {failed.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider flex items-center gap-1.5">
+                    <AlertTriangle className="h-3 w-3" />Attempted — Not Placed ({failed.length})
+                  </p>
+                  {failed.map((pos: any, i: number) => <PolyPosCard key={i} pos={pos} dim />)}
+                </div>
+              )}
+              {active.length === 0 && failed.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-4">No open Polymarket positions</p>
+              )}
+            </div>
+          );
+        })()}
 
         {polyBalance.error && (
           <p className="text-xs text-red-500 mt-2 flex items-center gap-1">
@@ -1108,6 +1128,126 @@ function ChatTab() {
 
 // ── Bets Tab ──────────────────────────────────────────────────────────────────
 
+function GroupedBetCard({ group, onCancelled, isPoly }: { group: any; onCancelled?: () => void; isPoly?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMultiple = group.bets.length > 1;
+  const primary = group.bets[0];
+  const totalCost = group.bets.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
+  const totalContracts = group.bets.reduce((s: number, b: any) => s + (parseFloat(b.contracts) || 0), 0);
+  const pnl = primary.pnl != null ? parseFloat(primary.pnl) : null;
+  const isActive = ["resting", "executed", "open"].includes(primary.status) && pnl == null;
+  const isFailed = primary.status === "failed";
+  const isCancelled = ["cancelled", "canceled"].includes(primary.status);
+
+  return (
+    <Card className={cn("border",
+      isCancelled ? "border-muted opacity-50"
+      : isFailed ? "border-muted/50 opacity-70"
+      : isActive ? (isPoly ? "border-blue-500/30" : "border-purple-500/30")
+      : pnl != null && pnl > 0 ? "border-emerald-500/30"
+      : pnl != null && pnl < 0 ? "border-red-500/30"
+      : "border-border")}>
+      <CardContent className="pt-3 pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+              <Badge variant="outline" className={cn("text-[10px]",
+                primary.side === "yes" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
+                {primary.side?.toUpperCase()}
+              </Badge>
+              {hasMultiple && (
+                <Badge variant="outline" className="text-[10px] border-amber-500/20 text-amber-500">
+                  {group.bets.length} wagers
+                </Badge>
+              )}
+              {isActive && (
+                <Badge variant="outline" className={cn("text-[10px]", isPoly ? "border-blue-500/20 text-blue-500" : "border-purple-500/20 text-purple-500")}>
+                  <Clock className="h-2.5 w-2.5 mr-1" />{primary.status === "resting" ? "Open" : "Pending"}
+                </Badge>
+              )}
+              {isFailed && (
+                <Badge variant="outline" className="text-[10px] border-red-500/20 text-red-500/70">
+                  Attempted — Failed
+                </Badge>
+              )}
+              {isCancelled && (
+                <Badge variant="outline" className="text-[10px] border-muted text-muted-foreground">Cancelled</Badge>
+              )}
+              {pnl != null && (
+                <Badge variant="outline" className={cn("text-[10px]", pnl > 0 ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
+                  {pnl > 0 ? "Won" : "Lost"}
+                </Badge>
+              )}
+            </div>
+            <p className="text-sm font-semibold leading-tight mb-1.5">{primary.market_title || primary.market_ticker}</p>
+            <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
+              <span className="font-medium text-foreground/70">{totalContracts} contracts</span>
+              <span>Cost: <span className="text-foreground/80 font-medium">{fmtUSD(totalCost)}</span></span>
+              {!hasMultiple && <span>@ ${parseFloat(primary.price || 0).toFixed(2)} / contract</span>}
+              <span className="font-mono text-muted-foreground/50">{primary.market_ticker}</span>
+            </div>
+          </div>
+          <div className="text-right flex-shrink-0 flex flex-col items-end gap-1.5">
+            {pnl != null
+              ? <p className={cn("text-base font-bold font-mono", clrPnl(pnl))}>{pnl >= 0 ? "+" : ""}{fmtUSD(pnl)}</p>
+              : isActive ? <p className="text-xs text-muted-foreground/50 font-mono">in play</p>
+              : null
+            }
+            {hasMultiple && (
+              <button onClick={() => setExpanded(!expanded)}
+                className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+                {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                {expanded ? "hide" : "details"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Individual wagers if multiple */}
+        {hasMultiple && expanded && (
+          <div className="mt-2.5 pt-2.5 border-t border-border/50 space-y-1.5">
+            {group.bets.map((b: any, i: number) => (
+              <div key={b.id || i} className="flex items-center justify-between text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-2">
+                  <span className={cn("font-medium", b.side === "yes" ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>{b.side?.toUpperCase()}</span>
+                  <span>{parseFloat(b.contracts) || 0} contracts @ ${parseFloat(b.price || 0).toFixed(2)}</span>
+                </span>
+                <span className="font-medium">{fmtUSD(parseFloat(b.cost) || 0)}</span>
+              </div>
+            ))}
+            <div className="flex justify-between text-[10px] font-semibold pt-1 border-t border-border/30">
+              <span className="text-muted-foreground">{totalContracts} total contracts</span>
+              <span>{fmtUSD(totalCost)} total</span>
+            </div>
+          </div>
+        )}
+
+        {/* Council transcript (primary bet) */}
+        {primary.council_transcript && !isFailed && !isCancelled && (
+          <BetCouncilToggle bet={primary} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BetCouncilToggle({ bet }: { bet: any }) {
+  const [show, setShow] = useState(false);
+  const transcript = typeof bet.council_transcript === "string" ? JSON.parse(bet.council_transcript) : bet.council_transcript;
+  if (!transcript) return null;
+  return (
+    <div className="mt-2.5">
+      <button onClick={() => setShow(!show)}
+        className="flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors">
+        <Users className="h-3 w-3" />
+        {show ? "Hide" : "View"} Council Debate
+        {show ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+      </button>
+      {show && <div className="mt-2 pt-2 border-t"><CouncilViewer transcript={transcript} marketTitle={bet.market_title} /></div>}
+    </div>
+  );
+}
+
 function PlatformBetsSection({
   platform, bets, onLoad, color,
 }: {
@@ -1120,10 +1260,31 @@ function PlatformBetsSection({
   const [syncing, setSyncing]       = useState(false);
   const [msg, setMsg]               = useState<string | null>(null);
 
-  const isCancelled = (b: any) => b.status === "cancelled" || b.status === "canceled";
-  const open      = bets.filter(b => b.pnl == null && !isCancelled(b));
-  const settled   = bets.filter(b => b.pnl != null);
-  const cancelled = bets.filter(b => isCancelled(b));
+  const isKalshi = platform === "kalshi";
+  const isPoly   = platform === "polymarket";
+  const label    = isKalshi ? "Kalshi" : "Polymarket";
+  const borderColor = isKalshi ? "border-purple-500/20" : "border-blue-500/20";
+  const headColor   = isKalshi ? "text-purple-500" : "text-blue-500";
+
+  // Group bets by market_ticker
+  const groupMap = new Map<string, any>();
+  for (const b of bets) {
+    const key = b.market_ticker;
+    if (!groupMap.has(key)) groupMap.set(key, { ticker: key, bets: [] });
+    groupMap.get(key).bets.push(b);
+  }
+  const groups = Array.from(groupMap.values());
+
+  // Categorize groups
+  const isCancelledGroup = (g: any) => ["cancelled", "canceled"].includes(g.bets[0].status);
+  const isFailedGroup    = (g: any) => g.bets.every((b: any) => b.status === "failed");
+  const isSettledGroup   = (g: any) => g.bets[0].pnl != null;
+  const isActiveGroup    = (g: any) => !isCancelledGroup(g) && !isFailedGroup(g) && !isSettledGroup(g);
+
+  const activeGroups    = groups.filter(g => isActiveGroup(g));
+  const settledGroups   = groups.filter(g => isSettledGroup(g));
+  const cancelledGroups = groups.filter(g => isCancelledGroup(g));
+  const failedGroups    = groups.filter(g => isFailedGroup(g) && !isCancelledGroup(g));
 
   const handleSync = async () => {
     setSyncing(true); setMsg(null);
@@ -1137,7 +1298,7 @@ function PlatformBetsSection({
   };
 
   const handleCancelAll = async () => {
-    if (!confirm(`Cancel ALL open ${platform === "kalshi" ? "Kalshi" : "Polymarket"} limit orders? This cannot be undone.`)) return;
+    if (!confirm(`Cancel ALL open ${label} limit orders? This cannot be undone.`)) return;
     setCancelling(true); setMsg(null);
     try {
       const r = await fetch("/api/predictor/bets", { method: "DELETE" });
@@ -1148,11 +1309,6 @@ function PlatformBetsSection({
     setCancelling(false);
   };
 
-  const isKalshi = platform === "kalshi";
-  const label = isKalshi ? "Kalshi" : "Polymarket";
-  const borderColor = isKalshi ? "border-purple-500/20" : "border-blue-500/20";
-  const headColor = isKalshi ? "text-purple-500" : "text-blue-500";
-
   return (
     <Card className={`border ${borderColor}`}>
       <CardHeader className="pb-2 pt-4">
@@ -1161,10 +1317,10 @@ function PlatformBetsSection({
             {isKalshi ? <Scale className="h-4 w-4" /> : <Globe className="h-4 w-4" />}
             {label}
             <Badge variant="outline" className={`text-[10px] ${isKalshi ? "border-purple-500/30 text-purple-500" : "border-blue-500/30 text-blue-500"}`}>
-              {bets.length} bet{bets.length !== 1 ? "s" : ""}
+              {groups.length} market{groups.length !== 1 ? "s" : ""} · {bets.length} bet{bets.length !== 1 ? "s" : ""}
             </Badge>
           </CardTitle>
-          <div className="flex gap-1.5 flex-wrap">
+          <div className="flex gap-1.5 flex-wrap items-center">
             {msg && <p className="text-[10px] text-muted-foreground">{msg}</p>}
             {isKalshi && (
               <Button size="sm" variant="outline" onClick={handleSync} disabled={syncing} className="h-7 text-xs">
@@ -1172,9 +1328,11 @@ function PlatformBetsSection({
                 {syncing ? "Syncing…" : "Sync"}
               </Button>
             )}
-            <Button size="sm" variant="destructive" onClick={handleCancelAll} disabled={cancelling} className="h-7 text-xs">
-              <X className="h-3 w-3 mr-1" />{cancelling ? "Cancelling…" : "Cancel All"}
-            </Button>
+            {activeGroups.length > 0 && (
+              <Button size="sm" variant="destructive" onClick={handleCancelAll} disabled={cancelling} className="h-7 text-xs">
+                <X className="h-3 w-3 mr-1" />{cancelling ? "Cancelling…" : "Cancel All"}
+              </Button>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -1184,24 +1342,44 @@ function PlatformBetsSection({
             No {label} bets yet.{isKalshi ? " Run the pipeline or Sync to import." : " Run the pipeline to place Polymarket bets."}
           </p>
         )}
-        {open.length > 0 && (
+
+        {activeGroups.length > 0 && (
           <div>
             <p className="text-xs font-semibold text-blue-500 mb-2 flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" /> Open ({open.length})
+              <Clock className="h-3.5 w-3.5" /> Active Orders ({activeGroups.length})
             </p>
-            <div className="space-y-2">{open.map(bet => <BetCard key={bet.id} bet={bet} onCancelled={onLoad} />)}</div>
+            <div className="space-y-2">
+              {activeGroups.map(g => <GroupedBetCard key={g.ticker} group={g} onCancelled={onLoad} isPoly={isPoly} />)}
+            </div>
           </div>
         )}
-        {settled.length > 0 && (
+
+        {settledGroups.length > 0 && (
           <div>
-            <p className="text-xs font-semibold text-muted-foreground mb-2">Settled ({settled.length})</p>
-            <div className="space-y-2">{settled.map(bet => <BetCard key={bet.id} bet={bet} />)}</div>
+            <p className="text-xs font-semibold text-muted-foreground mb-2">Settled ({settledGroups.length})</p>
+            <div className="space-y-2">
+              {settledGroups.map(g => <GroupedBetCard key={g.ticker} group={g} isPoly={isPoly} />)}
+            </div>
           </div>
         )}
-        {cancelled.length > 0 && (
+
+        {failedGroups.length > 0 && (
           <div>
-            <p className="text-xs font-semibold text-muted-foreground/50 mb-2">Cancelled ({cancelled.length})</p>
-            <div className="space-y-2">{cancelled.map(bet => <BetCard key={bet.id} bet={bet} />)}</div>
+            <p className="text-xs font-semibold text-muted-foreground/60 mb-2 flex items-center gap-1.5">
+              <AlertTriangle className="h-3 w-3" /> Attempted — Not Placed ({failedGroups.length})
+            </p>
+            <div className="space-y-2">
+              {failedGroups.map(g => <GroupedBetCard key={g.ticker} group={g} isPoly={isPoly} />)}
+            </div>
+          </div>
+        )}
+
+        {cancelledGroups.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground/40 mb-2">Cancelled ({cancelledGroups.length})</p>
+            <div className="space-y-2">
+              {cancelledGroups.map(g => <GroupedBetCard key={g.ticker} group={g} isPoly={isPoly} />)}
+            </div>
           </div>
         )}
       </CardContent>
