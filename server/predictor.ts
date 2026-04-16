@@ -1633,23 +1633,43 @@ predictorRouter.get("/portfolio", async (_req, res) => {
     const bal = balData?.balance ?? balData;
     const availableUSD      = typeof bal === "object" ? (bal.balance ?? bal.available_balance ?? 0) / 100 : Number(bal) / 100;
     const totalDepositedUSD = typeof bal === "object" ? (bal.total_deposited ?? 0) / 100 : 0;
-    const totalAtStakeUSD         = positions.reduce((s, p) => s + p.cost_usd, 0);
-    const totalMaxPayoutUSD       = positions.reduce((s, p) => s + p.max_payout_usd, 0);
-    const totalPotentialProfitUSD = positions.reduce((s, p) => s + p.potential_profit_usd, 0);
 
-    const positionTickers = new Set(positions.map((p: any) => p.ticker));
     const pendingMap = new Map<string, any>();
 
-    // PRIMARY: DB is source of truth for pending orders — it has correct cost/contracts
-    // from the moment each bet was placed.
+    // PRIMARY: DB is the source of truth for all pending/open bets — it has the actual cost
+    // at the moment each bet was placed. We build this FIRST, before touching Kalshi positions.
     const dbOpenBets = await pool.query(
       `SELECT market_ticker, market_title, side, contracts, price, cost, status, order_id
        FROM predictor_bets
        WHERE status NOT IN ('cancelled','canceled','failed','filled') AND pnl IS NULL
        ORDER BY logged_at DESC`
     );
+    // Build a cost map from DB: ticker → total cost (sum of all wagers on same market)
+    const dbCostMap = new Map<string, number>();
     for (const b of dbOpenBets.rows) {
-      if (positionTickers.has(b.market_ticker)) continue;
+      const c = parseFloat(b.cost) || 0;
+      dbCostMap.set(b.market_ticker, (dbCostMap.get(b.market_ticker) || 0) + c);
+    }
+
+    // Patch Kalshi positions that have zero cost — use DB cost instead
+    // This happens when Kalshi reports partially-executed orders as "positions" but
+    // doesn't return the market_exposure (cost) field reliably.
+    for (const pos of positions) {
+      if (pos.cost_usd === 0 && dbCostMap.has(pos.ticker)) {
+        pos.cost_usd             = dbCostMap.get(pos.ticker)!;
+        pos.potential_profit_usd = pos.max_payout_usd - pos.cost_usd;
+        pos.unrealised_pnl_usd   = pos.current_value_usd - pos.cost_usd;
+      }
+    }
+
+    const pricedPositionTickers = new Set(positions.filter((p: any) => p.cost_usd > 0).map((p: any) => p.ticker));
+    const totalAtStakeUSD         = positions.reduce((s, p) => s + (p.cost_usd || 0), 0);
+    const totalMaxPayoutUSD       = positions.reduce((s, p) => s + (p.max_payout_usd || 0), 0);
+    const totalPotentialProfitUSD = positions.reduce((s, p) => s + (p.potential_profit_usd || 0), 0);
+
+    for (const b of dbOpenBets.rows) {
+      // Skip if already properly accounted for in Kalshi positions (cost > 0)
+      if (pricedPositionTickers.has(b.market_ticker)) continue;
       const costUSD      = parseFloat(b.cost) || 0;
       const maxPayoutUSD = (parseFloat(b.contracts) || 0) * 1.0;
       const existing     = pendingMap.get(b.market_ticker);

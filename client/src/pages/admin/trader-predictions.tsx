@@ -469,9 +469,13 @@ function PortfolioSection({ portfolio, onRefresh }: { portfolio: any; onRefresh:
                     </div>
                     <p className="text-sm font-semibold leading-tight mb-1.5">{order.title}</p>
                     <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
-                      {order.contracts && <span>{order.contracts} contracts</span>}
-                      {order.price && <span>Limit: <span className="text-foreground font-mono">{(order.price * 100).toFixed(0)}¢</span></span>}
-                      {order.cost_usd > 0 && <span>Max cost: <span className="text-foreground font-mono">{fmtUSD(order.cost_usd)}</span></span>}
+                      {(order.contracts || 0) > 0 && <span>{order.contracts} contracts</span>}
+                      {(order.price || 0) > 0 && <span>Limit: <span className="text-foreground font-mono">{((order.price || 0) * 100).toFixed(0)}¢</span></span>}
+                      {(order.cost_usd || 0) > 0
+                        ? <span>Cost: <span className="text-foreground font-mono font-semibold">{fmtUSD(order.cost_usd)}</span></span>
+                        : order.wagers?.length > 0 && <span>Total: <span className="text-foreground font-mono font-semibold">{fmtUSD(order.wagers.reduce((s: number, w: any) => s + (w.cost || 0), 0))}</span></span>
+                      }
+                      {(order.max_payout_usd || 0) > 0 && <span>Max payout: <span className="text-blue-500 font-mono">{fmtUSD(order.max_payout_usd)}</span></span>}
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
