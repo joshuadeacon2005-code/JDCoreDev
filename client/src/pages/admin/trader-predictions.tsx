@@ -591,14 +591,25 @@ function PolyPortfolioSection({ polyBalance, onRefresh, onGoToBets }: { polyBala
         {/* Balance row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           {[
-            { label: "USDC Balance",     value: fmtUSD(polyBalance.usdc_balance),     cls: "text-emerald-600 dark:text-emerald-400" },
-            { label: "Total at Stake",   value: fmtUSD(polyBalance.at_stake),          cls: "text-amber-500" },
-            { label: "Max Payout",       value: fmtUSD(polyBalance.max_payout),        cls: "text-blue-500" },
-            { label: "Potential Profit", value: fmtUSD(polyBalance.potential_profit),  cls: clrPnl(polyBalance.potential_profit ?? 0) },
+            {
+              label: "Wallet Balance",
+              value: fmtUSD(polyBalance.usdc_balance),
+              sub: polyBalance.clob_balance > 0 ? null : polyBalance.chain_balance > 0 ? "on Polygon · not deposited" : "no USDC found",
+              cls: polyBalance.usdc_balance > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+            },
+            {
+              label: "Trading Balance",
+              value: fmtUSD(polyBalance.clob_balance ?? 0),
+              sub: polyBalance.clob_balance > 0 ? "ready to trade" : "deposit at polymarket.com",
+              cls: (polyBalance.clob_balance ?? 0) > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+            },
+            { label: "Total at Stake",   value: fmtUSD(polyBalance.at_stake),         sub: null, cls: "text-amber-500" },
+            { label: "Potential Profit", value: fmtUSD(polyBalance.potential_profit), sub: null, cls: clrPnl(polyBalance.potential_profit ?? 0) },
           ].map(m => (
             <div key={m.label} className="rounded-lg border bg-muted/30 p-3">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{m.label}</p>
               <p className={cn("text-base font-bold font-mono", m.cls)}>{m.value}</p>
+              {m.sub && <p className="text-[9px] text-muted-foreground mt-0.5">{m.sub}</p>}
             </div>
           ))}
         </div>

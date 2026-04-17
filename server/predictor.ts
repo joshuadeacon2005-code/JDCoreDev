@@ -1403,15 +1403,17 @@ predictorRouter.get("/poly-balance", async (_req, res) => {
     // Strategy 2: Polygon blockchain — check wallet USDC balance
     const { balance: chainBalance, source: chainSource } = funder ? await getPolyUSDCBalance(funder) : { balance: 0, source: "no-funder" };
 
-    const balance = clobBalance ?? chainBalance;
-    console.log(`[poly-balance] final: CLOB=${clobBalance} chain=${chainBalance} → using ${balance} (${clobBalance != null ? "clob" : chainSource})`);
+    // clob = USDC available for trading; chain = USDC held in wallet on Polygon
+    const clobAvailable = clobBalance ?? 0;
+    const totalVisible  = Math.max(clobAvailable, chainBalance); // show the highest visible balance
+    console.log(`[poly-balance] final: CLOB=${clobBalance} chain=${chainBalance}`);
 
     // Determine wallet funding status for UI guidance
-    const walletStatus = balance > 0
-      ? "funded"
-      : chainBalance === 0 && clobBalance === 0
-        ? "needs_deposit"   // wallet exists but has no USDC in Polymarket
-        : "unfunded";       // wallet has on-chain USDC but not deposited to Polymarket
+    const walletStatus = clobAvailable > 0
+      ? "funded"            // USDC is live in Polymarket and ready to trade
+      : chainBalance > 0
+        ? "unfunded"        // USDC is on-chain but not yet deposited to Polymarket
+        : "needs_deposit";  // wallet has no USDC anywhere
 
     // Get all polymarket bets from DB (including failed — shown separately in UI)
     const openBets = await pool.query(
@@ -1448,7 +1450,9 @@ predictorRouter.get("/poly-balance", async (_req, res) => {
     const maxPayout  = activePositions.reduce((s: number, p: any) => s + (p.max_payout_usd || 0), 0);
     const potProfit  = activePositions.reduce((s: number, p: any) => s + (p.potential_profit || 0), 0);
     res.json({
-      usdc_balance:     balance,
+      usdc_balance:     totalVisible,    // on-chain wallet balance (what they have)
+      clob_balance:     clobAvailable,   // USDC deposited and ready to trade on CLOB
+      chain_balance:    chainBalance,    // raw on-chain balance
       at_stake:         atStake,
       max_payout:       maxPayout,
       potential_profit: potProfit,
