@@ -1406,6 +1406,13 @@ predictorRouter.get("/poly-balance", async (_req, res) => {
     const balance = clobBalance ?? chainBalance;
     console.log(`[poly-balance] final: CLOB=${clobBalance} chain=${chainBalance} → using ${balance} (${clobBalance != null ? "clob" : chainSource})`);
 
+    // Determine wallet funding status for UI guidance
+    const walletStatus = balance > 0
+      ? "funded"
+      : chainBalance === 0 && clobBalance === 0
+        ? "needs_deposit"   // wallet exists but has no USDC in Polymarket
+        : "unfunded";       // wallet has on-chain USDC but not deposited to Polymarket
+
     // Get all polymarket bets from DB (including failed — shown separately in UI)
     const openBets = await pool.query(
       `SELECT id, market_ticker, market_title, side, contracts, price, cost, status, pnl, logged_at, order_id
@@ -1447,6 +1454,8 @@ predictorRouter.get("/poly-balance", async (_req, res) => {
       potential_profit: potProfit,
       open_count:       positions.length,
       positions,
+      funder_address:   funder || null,
+      wallet_status:    walletStatus,
     });
   } catch (e: any) {
     res.json({ usdc_balance: 0, error: e.message });

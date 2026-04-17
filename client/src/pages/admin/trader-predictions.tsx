@@ -507,6 +507,7 @@ function PortfolioSection({ portfolio, onRefresh }: { portfolio: any; onRefresh:
 
 function PolyPortfolioSection({ polyBalance, onRefresh, onGoToBets }: { polyBalance: any; onRefresh: () => void; onGoToBets?: () => void }) {
   const [refreshing, setRefreshing] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -517,6 +518,13 @@ function PolyPortfolioSection({ polyBalance, onRefresh, onGoToBets }: { polyBala
   if (!polyBalance) return null;
 
   const positions: any[] = polyBalance.positions || [];
+  const walletStatus: string = polyBalance.wallet_status || "unknown";
+  const funderAddr: string = polyBalance.funder_address || "";
+
+  const copyAddr = () => {
+    if (!funderAddr) return;
+    navigator.clipboard.writeText(funderAddr).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+  };
 
   return (
     <Card>
@@ -529,8 +537,57 @@ function PolyPortfolioSection({ polyBalance, onRefresh, onGoToBets }: { polyBala
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
           </button>
         </div>
+        {funderAddr && (
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="text-[10px] text-muted-foreground">Wallet:</span>
+            <button
+              onClick={copyAddr}
+              className="text-[10px] font-mono text-blue-500 hover:text-blue-400 transition-colors"
+              title="Click to copy"
+            >
+              {funderAddr.slice(0, 6)}…{funderAddr.slice(-4)}
+            </button>
+            {copied && <span className="text-[10px] text-emerald-500">Copied!</span>}
+            <a
+              href={`https://polygonscan.com/address/${funderAddr}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              title="View on PolygonScan"
+            >
+              ↗
+            </a>
+          </div>
+        )}
       </CardHeader>
       <CardContent className="pb-4">
+
+        {/* Wallet needs funding banner */}
+        {walletStatus === "needs_deposit" && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 mb-4 space-y-1">
+            <p className="text-xs font-semibold text-amber-500 flex items-center gap-1.5">
+              <span>⚠</span> Wallet has no USDC deposited on Polymarket
+            </p>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              To enable live trading, deposit USDC (Polygon) to this wallet, then visit{" "}
+              <a href="https://polymarket.com/wallet" target="_blank" rel="noopener noreferrer"
+                className="text-blue-500 underline underline-offset-1">polymarket.com/wallet</a>{" "}
+              to deposit into the CLOB trading account.
+            </p>
+          </div>
+        )}
+        {walletStatus === "unfunded" && (
+          <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5 mb-4 space-y-1">
+            <p className="text-xs font-semibold text-blue-500">USDC detected on Polygon — not yet in Polymarket</p>
+            <p className="text-[11px] text-muted-foreground">
+              Visit{" "}
+              <a href="https://polymarket.com/wallet" target="_blank" rel="noopener noreferrer"
+                className="text-blue-500 underline underline-offset-1">polymarket.com/wallet</a>{" "}
+              to deposit your USDC into the trading account.
+            </p>
+          </div>
+        )}
+
         {/* Balance row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           {[
