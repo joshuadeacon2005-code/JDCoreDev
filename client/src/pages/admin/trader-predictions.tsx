@@ -1967,6 +1967,8 @@ export default function PredictionsPage() {
   const [loading, setLoading]         = useState(true);
   const [running, setRunning]         = useState(false);
   const [scanning, setScanning]       = useState(false);
+  const [cryptoRunning, setCryptoRunning] = useState(false);
+  const [cryptoLog, setCryptoLog]     = useState<string[]>([]);
   const [stageStatus, setStageStatus] = useState<any>({});
   const [runLog, setRunLog]           = useState<string[]>([]);
   const [scanResults, setScanResults] = useState<any[]>([]);
@@ -2051,6 +2053,40 @@ export default function PredictionsPage() {
       setScanResults(d.candidates || []);
     } catch {}
     setScanning(false);
+  };
+
+  const runCryptoScan = async () => {
+    setCryptoRunning(true);
+    setCryptoLog([]);
+    try {
+      const response = await fetch("/api/predictor/run-crypto", { method: "POST" });
+      if (!response.body) { setCryptoRunning(false); return; }
+      const reader  = response.body.getReader();
+      const decoder = new TextDecoder();
+      let   buffer  = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data:")) continue;
+          try {
+            const ev = JSON.parse(line.slice(5).trim());
+            if (ev.type === "stage") {
+              setCryptoLog((prev) => [...prev, ev.msg]);
+            } else if (ev.type === "done" || ev.type === "error") {
+              await loadStats();
+              await loadPortfolio();
+              setRunsKey(k => k + 1);
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+    setCryptoRunning(false);
   };
 
   const updateSetting = async (key: string, value: string) => {
@@ -2190,6 +2226,71 @@ export default function PredictionsPage() {
                     <p className="text-[10px] text-muted-foreground/60 mt-1.5">
                       Politics/economics markets on Kalshi typically resolve in weeks–months, not days
                     </p>
+                  </div>
+
+                  {/* Crypto Short-Term Scan */}
+                  <div className="mb-4 border border-orange-500/20 rounded-lg p-3 bg-orange-500/5">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] font-semibold flex items-center gap-1 text-orange-600 dark:text-orange-400">
+                        <Zap className="h-3 w-3" /> Crypto Short-Term
+                      </p>
+                      <button
+                        onClick={() => updateSetting("crypto_scan_enabled", settings.crypto_scan_enabled === "true" ? "false" : "true")}
+                        className={cn(
+                          "text-[9px] px-2 py-0.5 rounded-full border transition-colors",
+                          settings.crypto_scan_enabled === "true"
+                            ? "border-orange-500/40 bg-orange-500/15 text-orange-600 dark:text-orange-400"
+                            : "border-border text-muted-foreground hover:text-foreground"
+                        )}
+                        data-testid="toggle-crypto-scan"
+                      >
+                        {settings.crypto_scan_enabled === "true" ? "Auto ON" : "Auto OFF"}
+                      </button>
+                    </div>
+                    <div className="mb-2">
+                      <p className="text-[10px] text-muted-foreground mb-1">BTC/ETH horizon:</p>
+                      <div className="flex gap-1">
+                        {[{ v: "1", label: "1d" }, { v: "3", label: "3d" }, { v: "7", label: "7d" }].map(opt => (
+                          <button key={opt.v}
+                            onClick={() => updateSetting("crypto_short_horizon_days", opt.v)}
+                            className={cn("text-[10px] px-2.5 py-1 rounded-md border transition-colors",
+                              settings.crypto_short_horizon_days === opt.v
+                                ? "border-orange-500/40 bg-orange-500/15 text-orange-600 dark:text-orange-400"
+                                : "border-border text-muted-foreground hover:text-foreground")}
+                            data-testid={`crypto-horizon-${opt.v}`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <p className="text-[10px] text-muted-foreground">Min edge:</p>
+                      <input
+                        type="number" min="5" max="40" step="1"
+                        value={Math.round(parseFloat(settings.crypto_min_edge || "0.12") * 100)}
+                        onChange={e => updateSetting("crypto_min_edge", (parseInt(e.target.value) / 100).toString())}
+                        className="w-14 text-[10px] border border-border rounded px-1.5 py-0.5 bg-background text-foreground"
+                        data-testid="input-crypto-min-edge"
+                      />
+                      <span className="text-[10px] text-muted-foreground">pp</span>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={runCryptoScan}
+                      disabled={cryptoRunning || running}
+                      className="w-full text-xs border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20"
+                      data-testid="button-run-crypto-scan"
+                    >
+                      {cryptoRunning
+                        ? <><RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />Scanning…</>
+                        : <><Zap className="h-3 w-3 mr-1.5" />Run Crypto Scan</>}
+                    </Button>
+                    {cryptoLog.length > 0 && (
+                      <div className="mt-2 max-h-20 overflow-y-auto text-[9px] font-mono text-muted-foreground space-y-0.5">
+                        {cryptoLog.slice(-6).map((line, i) => (
+                          <div key={i} className="truncate">{line}</div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2 mb-4 flex-wrap">
