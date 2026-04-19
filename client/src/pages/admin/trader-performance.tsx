@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from "recharts";
 import { useLocation } from "wouter";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -186,7 +186,7 @@ export default function TraderPerformance() {
   const hasData = snapshots.length>0 || trades.length>0 || pipelines.length>0;
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div>
         <div className="flex items-start justify-between mb-5">
           <div>
@@ -440,6 +440,6 @@ export default function TraderPerformance() {
 
         <p className="text-center text-[10px] text-muted-foreground/30 mt-6">Claude Trader · JD Core Dev · Not financial advice</p>
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }

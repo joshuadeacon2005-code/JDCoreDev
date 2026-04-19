@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useLocation } from "wouter";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -121,7 +121,7 @@ Be direct and honest. No preamble.`}],
   const rc = RISK_CONFIGS[risk];
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div>
         <div className="mb-6">
           <p className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Claude Trader</p>
@@ -266,6 +266,6 @@ Be direct and honest. No preamble.`}],
           </div>
         </div>
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }

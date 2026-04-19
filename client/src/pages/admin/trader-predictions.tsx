@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { TradingPageHeader, pnlColor } from "@/components/TradingPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -2080,7 +2080,7 @@ export default function PredictionsPage() {
   const polyPayout    = polyBalance?.max_payout ?? null;
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div>
         <TradingPageHeader
           title="Claude Predictor"
@@ -2384,6 +2384,6 @@ export default function PredictionsPage() {
         {tab === "traders"   && <NotableTradersTab />}
         {tab === "settings"  && <SettingsTab settings={settings} onUpdate={updateSetting} />}
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }

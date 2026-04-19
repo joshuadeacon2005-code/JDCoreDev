@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -247,7 +247,7 @@ export default function TraderChat() {
   const visibleMessages = messages.filter((m: any) => !dismissedIds.has(m.id));
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div className="max-w-5xl mx-auto px-4 py-6">
 
         <div className="flex items-center justify-between mb-6">
@@ -398,6 +398,6 @@ export default function TraderChat() {
           </div>
         </div>
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }

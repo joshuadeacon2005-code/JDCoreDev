@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { TradingPageHeader, pnlColor } from "@/components/TradingPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -581,7 +581,7 @@ export default function CryptoArbPage() {
   const capAllocated  = parseFloat(settings.max_bet_usd || "0");
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div>
 
         <TradingPageHeader
@@ -647,6 +647,6 @@ export default function CryptoArbPage() {
           </>
         )}
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }

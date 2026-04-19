@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, CartesianGrid, Cell, ReferenceLine,
 } from "recharts";
 import { useLocation } from "wouter";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -305,7 +305,7 @@ export default function TraderAnalytics() {
   const hasSomething = allTrades.length>0 || pipelines.length>0;
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div>
         <div className="flex items-start justify-between mb-5">
           <div>
@@ -697,6 +697,6 @@ export default function TraderAnalytics() {
           </>
         )}
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }

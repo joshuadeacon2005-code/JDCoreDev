@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { TradingPageHeader, pnlColor } from "@/components/TradingPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -334,7 +334,7 @@ export default function ArbitragePage() {
   const totalDeployed  = (kalshiAtStake ?? 0) + (polyAtStake ?? 0);
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div>
 
         <TradingPageHeader
@@ -573,7 +573,7 @@ export default function ArbitragePage() {
         {/* ── SETTINGS ── */}
         {tab === "settings" && <SettingsTab settings={settings} onUpdate={updateSetting} />}
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }
 

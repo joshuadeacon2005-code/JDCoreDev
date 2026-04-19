@@ -42,6 +42,11 @@ import {
   Scale,
   ArrowLeftRight,
   MoreHorizontal,
+  Activity,
+  Brain,
+  MessageSquare,
+  Star,
+  FlaskConical,
 } from "lucide-react";
 import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
@@ -61,12 +66,22 @@ const mainNavItems = [
 ];
 
 const moreNavItems = [
-  { title: "Milestones",        icon: Target,    href: "/admin/milestones" },
-  { title: "Invoices",          icon: Receipt,   href: "/admin/invoices" },
-  { title: "Scheduling",        icon: Calendar,  href: "/admin/scheduling" },
-  { title: "Documents",         icon: FileText,  href: "/admin/documents" },
-  { title: "Recurring Payments", icon: RefreshCw, href: "/admin/recurring-payments" },
-  { title: "Payment Settings",  icon: DollarSign, href: "/admin/payment-settings" },
+  { title: "Milestones",        icon: Target,       href: "/admin/milestones" },
+  { title: "Invoices",          icon: Receipt,      href: "/admin/invoices" },
+  { title: "Scheduling",        icon: Calendar,     href: "/admin/scheduling" },
+  { title: "Documents",         icon: FileText,     href: "/admin/documents" },
+  { title: "Recurring Payments", icon: RefreshCw,   href: "/admin/recurring-payments" },
+  { title: "Payment Settings",  icon: DollarSign,   href: "/admin/payment-settings" },
+];
+
+const traderMoreItems = [
+  { title: "Trader Runs",       icon: TrendingUp,   href: "/admin/trader/runs" },
+  { title: "Trader Analytics",  icon: BarChart3,    href: "/admin/trader/analytics" },
+  { title: "Performance",       icon: Activity,     href: "/admin/trader/performance" },
+  { title: "Trader Chat",       icon: MessageSquare, href: "/admin/trader/chat" },
+  { title: "Watchlist",         icon: Star,         href: "/admin/trader/watchlist" },
+  { title: "Trader Settings",   icon: Settings,     href: "/admin/trader/settings" },
+  { title: "Backtest",          icon: FlaskConical, href: "/admin/trader/backtest" },
 ];
 
 interface AdminLayoutProps {
@@ -87,7 +102,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
     href === "/admin" ? location === "/admin" :
     location.startsWith(href);
 
-  const anyMoreActive = moreNavItems.some(item => isActive(item.href));
+  const anyMoreActive = [...moreNavItems, ...traderMoreItems].some(item => isActive(item.href));
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -156,6 +171,28 @@ export function AdminLayout({ children }: AdminLayoutProps) {
                 More
               </p>
               {moreNavItems.map((item) => {
+                const active = isActive(item.href);
+                return (
+                  <button
+                    key={item.title}
+                    onClick={() => { setLocation(item.href); setMoreOpen(false); }}
+                    className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg text-sm transition-all ${
+                      active
+                        ? "bg-teal-500/15 text-teal-400"
+                        : "text-muted-foreground hover:text-teal-400 hover:bg-teal-500/10"
+                    }`}
+                    data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                  >
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    {item.title}
+                  </button>
+                );
+              })}
+              <div className="my-1.5 border-t border-white/10" />
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-2 pb-1.5">
+                Trader
+              </p>
+              {traderMoreItems.map((item) => {
                 const active = isActive(item.href);
                 return (
                   <button

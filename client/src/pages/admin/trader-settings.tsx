@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,7 +94,7 @@ export default function TraderSettings() {
   const cronEnabled = settings.cron_enabled === 'true';
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div className="max-w-3xl space-y-4">
         <div className="mb-6">
           <p className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Claude Trader</p>
@@ -343,6 +343,6 @@ export default function TraderSettings() {
 
         <p className="text-center text-[10px] text-muted-foreground/30 pb-4">Claude Trader v1.0 · Powered by JD Core Dev · Not financial advice</p>
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }

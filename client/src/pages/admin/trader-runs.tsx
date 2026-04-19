@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
-import { TraderLayout } from "@/components/TraderLayout";
+import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -401,7 +401,7 @@ export default function TraderRuns() {
   const mc         = modeOf(activeMode);
 
   return (
-    <TraderLayout>
+    <AdminLayout>
       <div>
 
         <div className="flex items-start justify-between mb-5">
@@ -468,6 +468,6 @@ export default function TraderRuns() {
           </div>
         )}
       </div>
-    </TraderLayout>
+    </AdminLayout>
   );
 }
