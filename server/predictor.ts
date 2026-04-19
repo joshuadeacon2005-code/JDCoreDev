@@ -1391,10 +1391,18 @@ predictorRouter.get("/poly-balance", async (_req, res) => {
     try {
       const clobClient = await getPolyClobClient();
       if (clobClient) {
-        const balResp = await clobClient.getBalanceAllowance({ asset_type: "COLLATERAL" as any, signature_type: 0 });
-        console.log(`[poly-balance] CLOB getBalanceAllowance:`, JSON.stringify(balResp));
-        const item = Array.isArray(balResp) ? balResp[0] : balResp;
-        clobBalance = parseFloat((item as any)?.balance ?? 0);
+        // Try signature_type 1 (POLY_PROXY — used by Magic/email wallets) first, then fall back to 0 (EOA)
+        let bestBalance = 0;
+        for (const sigType of [1, 0, 2]) {
+          try {
+            const balResp = await clobClient.getBalanceAllowance({ asset_type: "COLLATERAL" as any, signature_type: sigType });
+            console.log(`[poly-balance] sig_type=${sigType}:`, JSON.stringify(balResp));
+            const item = Array.isArray(balResp) ? balResp[0] : balResp;
+            const bal = parseFloat((item as any)?.balance ?? 0);
+            if (bal > bestBalance) bestBalance = bal;
+          } catch (e: any) { console.log(`[poly-balance] sig_type=${sigType} error: ${e.message}`); }
+        }
+        clobBalance = bestBalance;
       }
     } catch (e: any) { console.log(`[poly-balance] CLOB error: ${e.message}`); }
 
