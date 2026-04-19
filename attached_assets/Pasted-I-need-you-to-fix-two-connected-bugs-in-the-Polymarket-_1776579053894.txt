@@ -1,0 +1,62 @@
+I need you to fix two connected bugs in the Polymarket trader pipeline. Do not run anything live until I explicitly say so — keep the bot in demo mode throughout. Work end-to-end, then report back with a summary and any code diffs.
+Context:
+
+My Polymarket account was created via MetaMask, so it is an EOA wallet, not a Magic-Link proxy. Signature type must be 0 (EOA), and POLY_FUNDER must be my EOA address (same as the signer address), not a Gnosis Safe proxy.
+Existing Replit secrets: POLY_PRIVATE_KEY (I am updating this to a real 0x-prefixed 64-char hex private key exported from MetaMask), POLY_FUNDER (I am updating this to my MetaMask EOA address), POLY_API_KEY, POLY_API_SECRET, POLY_API_PASSPHRASE (currently stale — you will regenerate these).
+Dashboard at /admin/trader/predictions is showing negative-edge bets being placed (e.g. –30pp, –38pp, –45pp edge) even though Min Edge is configured at 10pp. This is a separate logic bug that must also be fixed.
+
+Task 1 — Audit the Polymarket client init.
+
+Find every instantiation of ClobClient (or equivalent) in the codebase.
+Ensure it is initialized with:
+
+host: "https://clob.polymarket.com"
+chain: 137
+signer: new Wallet(process.env.POLY_PRIVATE_KEY)
+signatureType: 0 (EOA — change from whatever it is now)
+funderAddress: process.env.POLY_FUNDER
+creds: { apiKey: process.env.POLY_API_KEY, secret: process.env.POLY_API_SECRET, passphrase: process.env.POLY_API_PASSPHRASE }
+
+
+Validate at startup that POLY_PRIVATE_KEY matches /^0x[a-fA-F0-9]{64}$/. If it does not, throw a loud error and refuse to start live trading. The current value is a UUID, which is wrong; this guard will prevent silent failure.
+Validate that POLY_FUNDER matches /^0x[a-fA-F0-9]{40}$/.
+
+Task 2 — Write a one-time bootstrap script at scripts/poly-bootstrap.ts (or .js to match project style).
+
+Reads POLY_PRIVATE_KEY from env.
+Instantiates a ClobClient with just the signer (no creds yet).
+Calls createOrDeriveApiKey().
+Writes the returned apiKey, secret, passphrase directly into Replit secrets using the Replit secret-management API or the replit CLI (replit secrets set POLY_API_KEY <value>, etc.) — do NOT print the values to stdout, do NOT write them to a file on disk, do NOT log them.
+On success, print only: "Bootstrap complete. POLY_API_KEY / POLY_API_SECRET / POLY_API_PASSPHRASE written to secrets."
+Add an npm script entry: "poly:bootstrap": "tsx scripts/poly-bootstrap.ts" (adjust runner to match project).
+Do NOT run the script yet. I will tell you when to run it.
+
+Task 3 — Fix the negative-edge bet bug.
+Somewhere in the pipeline, before an order is submitted to either Polymarket or Kalshi, there is supposed to be an edge filter. It's broken. Do this:
+
+Locate every place where edge is computed. Verify the sign convention. The correct convention for a YES bet is: edge = model_probability − market_ask_price (in the same units, typically 0..1 or 0..100). For a NO bet: edge = (1 − model_probability) − (1 − market_bid_price) which simplifies to edge = market_bid_price − model_probability. Confirm the code matches this; if it's using Math.abs(edge) anywhere, remove the abs.
+Add an explicit guard immediately before order submission, e.g.:
+
+ts   if (bet.edge < config.minEdge) {
+     logger.warn(`Skipping bet: edge ${bet.edge} < minEdge ${config.minEdge}`, { market: bet.marketId, side: bet.side });
+     return { skipped: true, reason: "below_min_edge" };
+   }
+
+Add unit tests in tests/edge-filter.test.ts covering: positive edge above threshold passes, positive edge below threshold blocks, negative edge blocks regardless of magnitude, NO-side and YES-side both handled correctly.
+Backfill a quick audit of the 27 existing bets in the DB and print how many would have been blocked under the corrected filter. Do not modify existing bet records — just report the count.
+
+Task 4 — Kalshi sanity check (no code changes unless broken).
+
+Verify KALSHI_PRIVATE_KEY_LIVE starts with -----BEGIN and ends with -----END RSA PRIVATE KEY-----\n (or -----END PRIVATE KEY-----\n). Do NOT print the key. Just print "Kalshi PEM format: OK" or "Kalshi PEM format: BAD".
+Verify the Kalshi base URL in code is https://api.elections.kalshi.com/trade-api/v2. If not, fix it.
+
+Task 5 — Deliverables.
+When done, report:
+
+Diff summary (files touched, key changes).
+Output of Task 3 step 4 (how many of the 27 bets would have been blocked).
+Kalshi PEM format check result.
+Confirmation that bot is still in demo mode.
+The exact command I should run to execute scripts/poly-bootstrap.ts once I've updated POLY_PRIVATE_KEY and POLY_FUNDER.
+
+Do not enable live trading. Do not place any test orders. Do not print any secret values. Do not modify POLY_PRIVATE_KEY or POLY_FUNDER — I will set those myself.
