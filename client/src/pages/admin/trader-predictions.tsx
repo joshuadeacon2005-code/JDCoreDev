@@ -1220,16 +1220,18 @@ function ChatTab() {
 
 // ── Bets Tab ──────────────────────────────────────────────────────────────────
 
-function GroupedBetCard({ group, onCancelled, isPoly }: { group: any; onCancelled?: () => void; isPoly?: boolean }) {
+function GroupedBetCard({ group, onCancelled, isPoly, now = Date.now() }: { group: any; onCancelled?: () => void; isPoly?: boolean; now?: number }) {
   const [expanded, setExpanded] = useState(false);
   const hasMultiple = group.bets.length > 1;
   const primary = group.bets[0];
   const totalCost = group.bets.reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
   const totalContracts = group.bets.reduce((s: number, b: any) => s + (parseFloat(b.contracts) || 0), 0);
+  const totalWin = group.bets.reduce((s: number, b: any) => s + potentialWin(b), 0);
   const pnl = primary.pnl != null ? parseFloat(primary.pnl) : null;
   const isActive = ["resting", "executed", "open"].includes(primary.status) && pnl == null;
   const isFailed = primary.status === "failed";
   const isCancelled = ["cancelled", "canceled"].includes(primary.status);
+  const tl = timeLeft(primary.close_time, now);
 
   return (
     <Card className={cn("border",
@@ -1270,20 +1272,34 @@ function GroupedBetCard({ group, onCancelled, isPoly }: { group: any; onCancelle
                   {pnl > 0 ? "Won" : "Lost"}
                 </Badge>
               )}
+              {tl.label && isActive && (
+                <Badge variant="outline" className={cn("text-[10px]",
+                  tl.urgent ? "border-amber-500/40 text-amber-500 bg-amber-500/5" : "border-muted text-muted-foreground")}>
+                  <Clock className="h-2.5 w-2.5 mr-1" />{tl.label}
+                </Badge>
+              )}
             </div>
             <p className="text-sm font-semibold leading-tight mb-1.5">{primary.market_title || primary.market_ticker}</p>
             <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
               <span className="font-medium text-foreground/70">{totalContracts} contracts</span>
               <span>Cost: <span className="text-foreground/80 font-medium">{fmtUSD(totalCost)}</span></span>
               {!hasMultiple && <span>@ ${parseFloat(primary.price || 0).toFixed(2)} / contract</span>}
+              {isActive && totalWin > 0 && (
+                <span>Win: <span className="text-emerald-500 font-medium">+{fmtUSD(totalWin)}</span></span>
+              )}
               <span className="font-mono text-muted-foreground/50">{primary.market_ticker}</span>
             </div>
           </div>
           <div className="text-right flex-shrink-0 flex flex-col items-end gap-1.5">
             {pnl != null
               ? <p className={cn("text-base font-bold font-mono", clrPnl(pnl))}>{pnl >= 0 ? "+" : ""}{fmtUSD(pnl)}</p>
-              : isActive ? <p className="text-xs text-muted-foreground/50 font-mono">in play</p>
-              : null
+              : isActive && totalWin > 0
+                ? <div className="text-right">
+                    <p className="text-[10px] text-muted-foreground/60 leading-none mb-0.5">potential win</p>
+                    <p className="text-sm font-bold font-mono text-emerald-500">+{fmtUSD(totalWin)}</p>
+                  </div>
+                : isActive ? <p className="text-xs text-muted-foreground/50 font-mono">in play</p>
+                : null
             }
             {hasMultiple && (
               <button onClick={() => setExpanded(!expanded)}
@@ -1341,12 +1357,13 @@ function BetCouncilToggle({ bet }: { bet: any }) {
 }
 
 function PlatformBetsSection({
-  platform, bets, onLoad, color,
+  platform, bets, onLoad, color, now = Date.now(),
 }: {
   platform: "kalshi" | "polymarket";
   bets: any[];
   onLoad: () => void;
   color: string;
+  now?: number;
 }) {
   const [cancelling, setCancelling] = useState(false);
   const [syncing, setSyncing]       = useState(false);
@@ -1441,7 +1458,7 @@ function PlatformBetsSection({
               <Clock className="h-3.5 w-3.5" /> Active Orders ({activeGroups.length})
             </p>
             <div className="space-y-2">
-              {activeGroups.map(g => <GroupedBetCard key={g.ticker} group={g} onCancelled={onLoad} isPoly={isPoly} />)}
+              {activeGroups.map(g => <GroupedBetCard key={g.ticker} group={g} onCancelled={onLoad} isPoly={isPoly} now={now} />)}
             </div>
           </div>
         )}
@@ -1450,7 +1467,7 @@ function PlatformBetsSection({
           <div>
             <p className="text-xs font-semibold text-muted-foreground mb-2">Settled ({settledGroups.length})</p>
             <div className="space-y-2">
-              {settledGroups.map(g => <GroupedBetCard key={g.ticker} group={g} isPoly={isPoly} />)}
+              {settledGroups.map(g => <GroupedBetCard key={g.ticker} group={g} isPoly={isPoly} now={now} />)}
             </div>
           </div>
         )}
@@ -1459,7 +1476,7 @@ function PlatformBetsSection({
           <div>
             <p className="text-xs font-semibold text-muted-foreground/40 mb-2">Cancelled ({cancelledGroups.length})</p>
             <div className="space-y-2">
-              {cancelledGroups.map(g => <GroupedBetCard key={g.ticker} group={g} isPoly={isPoly} />)}
+              {cancelledGroups.map(g => <GroupedBetCard key={g.ticker} group={g} isPoly={isPoly} now={now} />)}
             </div>
           </div>
         )}
@@ -1526,10 +1543,49 @@ function AttemptedBetsSection({ bets }: { bets: any[] }) {
   );
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function useNow(ms = 30_000) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
+}
+
+function timeLeft(closeTime: string | null, now: number): { label: string; urgent: boolean; days: number } {
+  if (!closeTime) return { label: "", urgent: false, days: 999 };
+  const diff = new Date(closeTime).getTime() - now;
+  if (diff <= 0) return { label: "Closed", urgent: true, days: 0 };
+  const days  = Math.floor(diff / 86_400_000);
+  const hrs   = Math.floor((diff % 86_400_000) / 3_600_000);
+  const mins  = Math.floor((diff % 3_600_000)  / 60_000);
+  const label = days > 0 ? `${days}d ${hrs}h` : hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+  return { label, urgent: days < 2, days };
+}
+
+function potentialWin(bet: any): number {
+  const contracts = parseFloat(bet.contracts) || 0;
+  const price     = parseFloat(bet.price)     || 0;
+  if (contracts <= 0 || price <= 0) return 0;
+  return parseFloat((contracts * (1 - price)).toFixed(2));
+}
+
+// ── BetsTab ──────────────────────────────────────────────────────────────────
+
+type BetSort = "newest" | "closes_soon" | "payout" | "odds";
+type BetSide = "all" | "yes" | "no";
+type BetPlatform = "all" | "kalshi" | "polymarket";
+
 function BetsTab() {
-  const [bets, setBets]       = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [subTab, setSubTab]   = useState<"active" | "attempted">("active");
+  const [bets, setBets]         = useState<any[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [subTab, setSubTab]     = useState<"active" | "attempted">("active");
+  const [sort, setSort]         = useState<BetSort>("newest");
+  const [side, setSide]         = useState<BetSide>("all");
+  const [platform, setPlatform] = useState<BetPlatform>("all");
+  const now = useNow();
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1543,33 +1599,103 @@ function BetsTab() {
 
   if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading bets…</p>;
 
-  const activeBets   = bets.filter(b => b.status !== "failed");
+  // Base active bets (non-failed)
+  let activeBets = bets.filter(b => b.status !== "failed");
+
+  // Apply side filter
+  if (side !== "all") activeBets = activeBets.filter(b => b.side === side);
+  // Apply platform filter
+  if (platform !== "all") {
+    activeBets = activeBets.filter(b =>
+      platform === "kalshi" ? (!b.platform || b.platform === "kalshi") : b.platform === "polymarket"
+    );
+  }
+  // Apply sort
+  activeBets = [...activeBets].sort((a, b) => {
+    if (sort === "closes_soon") {
+      const ta = a.close_time ? new Date(a.close_time).getTime() : 9e15;
+      const tb = b.close_time ? new Date(b.close_time).getTime() : 9e15;
+      return ta - tb;
+    }
+    if (sort === "payout") return potentialWin(b) - potentialWin(a);
+    if (sort === "odds")   return parseFloat(a.price || 0) - parseFloat(b.price || 0);
+    return new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime(); // newest
+  });
+
   const kalshiBets   = activeBets.filter(b => !b.platform || b.platform === "kalshi");
   const polyBets     = activeBets.filter(b => b.platform === "polymarket");
   const attemptedCnt = bets.filter(b => b.status === "failed").length;
 
+  const totalAtStake = activeBets
+    .filter(b => ["resting","executed","open"].includes(b.status))
+    .reduce((s: number, b: any) => s + (parseFloat(b.cost) || 0), 0);
+  const totalPotential = activeBets
+    .filter(b => ["resting","executed","open"].includes(b.status))
+    .reduce((s: number, b: any) => s + potentialWin(b), 0);
+
   return (
     <div className="space-y-4">
-      {/* Sub-tab bar */}
-      <div className="flex gap-1">
-        {([
-          { id: "active"    as const, label: "Active Bets" },
-          { id: "attempted" as const, label: `Attempted (${attemptedCnt})`, dim: attemptedCnt === 0 },
-        ] as const).map(t => (
-          <button key={t.id} onClick={() => setSubTab(t.id)}
-            className={cn("text-xs px-3 py-1.5 rounded-md border transition-colors",
-              subTab === t.id
-                ? "border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border")}>
-            {t.label}
-          </button>
-        ))}
+      {/* Stats strip */}
+      {subTab === "active" && totalAtStake > 0 && (
+        <div className="flex gap-4 px-1 text-xs">
+          <span className="text-muted-foreground">At stake: <span className="font-semibold text-foreground">{fmtUSD(totalAtStake)}</span></span>
+          <span className="text-muted-foreground">Potential win: <span className="font-semibold text-emerald-500">{fmtUSD(totalPotential)}</span></span>
+        </div>
+      )}
+
+      {/* Sub-tab + filter bar */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex gap-1">
+          {([
+            { id: "active"    as const, label: "Active" },
+            { id: "attempted" as const, label: `Attempted (${attemptedCnt})` },
+          ] as const).map(t => (
+            <button key={t.id} onClick={() => setSubTab(t.id)}
+              className={cn("text-xs px-3 py-1.5 rounded-md border transition-colors",
+                subTab === t.id
+                  ? "border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border")}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {subTab === "active" && (
+          <div className="flex gap-1.5 flex-wrap ml-auto">
+            {/* Sort */}
+            <select value={sort} onChange={e => setSort(e.target.value as BetSort)}
+              className="text-[10px] px-2 py-1 rounded border border-border bg-background text-muted-foreground">
+              <option value="newest">Sort: Newest</option>
+              <option value="closes_soon">Sort: Closes Soon</option>
+              <option value="payout">Sort: Payout ↓</option>
+              <option value="odds">Sort: Best Odds</option>
+            </select>
+            {/* Side */}
+            <select value={side} onChange={e => setSide(e.target.value as BetSide)}
+              className="text-[10px] px-2 py-1 rounded border border-border bg-background text-muted-foreground">
+              <option value="all">Side: All</option>
+              <option value="yes">YES only</option>
+              <option value="no">NO only</option>
+            </select>
+            {/* Platform */}
+            <select value={platform} onChange={e => setPlatform(e.target.value as BetPlatform)}
+              className="text-[10px] px-2 py-1 rounded border border-border bg-background text-muted-foreground">
+              <option value="all">Platform: All</option>
+              <option value="kalshi">Kalshi only</option>
+              <option value="polymarket">Polymarket only</option>
+            </select>
+          </div>
+        )}
       </div>
 
       {subTab === "active" && (
         <div className="space-y-4">
-          <PlatformBetsSection platform="kalshi"     bets={kalshiBets} onLoad={load} color="purple" />
-          <PlatformBetsSection platform="polymarket" bets={polyBets}   onLoad={load} color="blue" />
+          {platform !== "polymarket" && (
+            <PlatformBetsSection platform="kalshi"     bets={kalshiBets} onLoad={load} color="purple" now={now} />
+          )}
+          {platform !== "kalshi" && (
+            <PlatformBetsSection platform="polymarket" bets={polyBets}   onLoad={load} color="blue" now={now} />
+          )}
         </div>
       )}
 

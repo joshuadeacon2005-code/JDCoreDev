@@ -39,6 +39,65 @@ function kPrice(mkt: any, field: string): number {
 // We used to hard-filter here, which blocked crypto, climate, sports etc.
 // Now every open Kalshi market is eligible for analysis.
 
+// ── ONE-TIME BET MIGRATION ────────────────────────────────────────────────────
+const DEV_BETS_MIGRATION = [
+  {id:"KXMVESPORTSMULTIGAMEEXTENDED-S202636BD52C820F-217A06DC1E1-1775899539054",market_ticker:"KXMVESPORTSMULTIGAMEEXTENDED-S202636BD52C820F-217A06DC1E1",market_title:"24-leg MLB player props parlay",side:"no",contracts:50,price:0.5,cost:25,confidence:0.9,edge:-0.498,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"kalshi",logged_at:"2026-04-11 09:25:39.055+00"},
+  {id:"KXAGICO-COMP-26Q2-1775987162022",market_ticker:"KXAGICO-COMP-26Q2",market_title:"Will any company announce AGI before Jul 1, 2026?",side:"no",contracts:10,price:0.87,cost:8.7,confidence:0.9,edge:-0.08,council_verdict:"BET_NO",status:"canceled",order_id:"b8a741b6-208c-44d3-b143-d096d6cb4ca6",platform:"kalshi",logged_at:"2026-04-12 09:46:02.023+00"},
+  {id:"KXINSURRECTION-29-26MAY-1775987162095",market_ticker:"KXINSURRECTION-29-26MAY",market_title:"Will Trump invoke the Insurrection Act?",side:"yes",contracts:5,price:0.025,cost:0.125,confidence:0.5,edge:0.065,council_verdict:"BET_YES",status:"executed",order_id:"7d50ce7c-4cf9-4f47-b496-973dbaefcbcf",platform:"kalshi",logged_at:"2026-04-12 09:46:02.096+00"},
+  {id:"KXZELENSKYPUTIN-29-26JUL-1775987162209",market_ticker:"KXZELENSKYPUTIN-29-26JUL",market_title:"Zelenskyy and Putin meet before Jul 1, 2026?",side:"no",contracts:4,price:0.88,cost:3.52,confidence:0.7,edge:-0.05,council_verdict:"BET_NO",status:"executed",order_id:"8a8b2d45-3f2b-4bfd-8e40-1e57e64ecdb6",platform:"kalshi",logged_at:"2026-04-12 09:46:02.209+00"},
+  {id:"KXDEREMEROUT-26-MAY01-1776145553384",market_ticker:"KXDEREMEROUT-26-MAY01",market_title:"Chavez-DeRemer leaves Labor Secretary before May 2026",side:"no",contracts:7,price:0.73,cost:5.11,confidence:0.7,edge:-0.09,council_verdict:"BET_NO",status:"resting",order_id:"05fd546f-b522-4eb4-a2c4-aa9545446fc7",platform:"kalshi",logged_at:"2026-04-14 05:45:53.384+00"},
+  {id:"KXDEREMERANNOUNCEOUT-26APR-MAY01-1776145553686",market_ticker:"KXDEREMERANNOUNCEOUT-26APR-MAY01",market_title:"Chavez-DeRemer announces departure before May 2026",side:"no",contracts:8,price:0.76,cost:6.08,confidence:0.7,edge:-0.12,council_verdict:"BET_NO",status:"resting",order_id:"598aab46-508a-41f3-8679-513cfc73938b",platform:"kalshi",logged_at:"2026-04-14 05:45:53.686+00"},
+  {id:"KXKASHANNOUNCEOUT-26APR-MAY01-1776145553791",market_ticker:"KXKASHANNOUNCEOUT-26APR-MAY01",market_title:"Kash Patel announce departure as FBI Director before May 2026",side:"no",contracts:5,price:0.84,cost:4.2,confidence:0.7,edge:-0.07,council_verdict:"BET_NO",status:"resting",order_id:"7bcd4d01-0540-49a3-a4eb-22ca1e2c802f",platform:"kalshi",logged_at:"2026-04-14 05:45:53.791+00"},
+  {id:"KXDEREMEROUT-26-MAY01-1776145583753",market_ticker:"KXDEREMEROUT-26-MAY01",market_title:"Will Chavez-DeRemer leave as Labor Secretary before May 2026?",side:"no",contracts:8,price:0.73,cost:5.84,confidence:0.7,edge:-0.11,council_verdict:"BET_NO",status:"resting",order_id:"715a6ba9-17ba-4b3e-afa1-c3608a6bbdbf",platform:"kalshi",logged_at:"2026-04-14 05:46:23.754+00"},
+  {id:"KXDEREMERANNOUNCEOUT-26APR-MAY01-1776145583822",market_ticker:"KXDEREMERANNOUNCEOUT-26APR-MAY01",market_title:"Will Chavez-DeRemer announce departure as Labor Secretary before May 2026?",side:"no",contracts:8,price:0.76,cost:6.08,confidence:0.7,edge:-0.12,council_verdict:"BET_NO",status:"resting",order_id:"1f3907a2-aa63-4bdc-be47-c1057a1d40fe",platform:"kalshi",logged_at:"2026-04-14 05:46:23.822+00"},
+  {id:"KXKASHANNOUNCEOUT-26APR-MAY01-1776145583879",market_ticker:"KXKASHANNOUNCEOUT-26APR-MAY01",market_title:"Will Kash Patel announce departure as FBI Director before May 2026?",side:"no",contracts:10,price:0.84,cost:8.4,confidence:0.9,edge:-0.09,council_verdict:"BET_NO",status:"resting",order_id:"82c54c7b-16f9-495a-a88f-1669131e2fe5",platform:"kalshi",logged_at:"2026-04-14 05:46:23.879+00"},
+  {id:"KXKASHOUT-26APR-MAY01-1776153758316",market_ticker:"KXKASHOUT-26APR-MAY01",market_title:"Kash Patel leaves FBI Director before May 2026",side:"no",contracts:5,price:0.86,cost:4.3,confidence:0.7,edge:-0.06,council_verdict:"BET_NO",status:"resting",order_id:"e8ca4ad7-4ddc-46bd-a036-44c3f29677b6",platform:"kalshi",logged_at:"2026-04-14 08:02:38.316+00"},
+  {id:"poly-will-bitcoin-reach-80k-in-april-2026-1776182755420",market_ticker:"will-bitcoin-reach-80k-in-april-2026",market_title:"Bitcoin reach $80K in April",side:"no",contracts:5,price:0.6,cost:3,confidence:0.7,edge:-0.08,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-14 16:05:55.420+00"},
+  {id:"poly-iran-x-israelus-conflict-ends-by-april-30-766-662-668-546-1776182755541",market_ticker:"iran-x-israelus-conflict-ends-by-april-30-766-662-668-546",market_title:"Iran x Israel/US conflict ends by Apr 30",side:"no",contracts:5,price:0.19,cost:0.95,confidence:0.7,edge:-0.09,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-14 16:05:55.541+00"},
+  {id:"KXLUTNICKANNOUNCEOUT-26APR-MAY01-1776218562977",market_ticker:"KXLUTNICKANNOUNCEOUT-26APR-MAY01",market_title:"Will Lutnick announce departure as Commerce Secretary before May 2026?",side:"no",contracts:5,price:0.87,cost:4.35,confidence:0.7,edge:-0.05,council_verdict:"BET_NO",status:"resting",order_id:"d84ccbb4-38aa-4e57-be3a-f95a69d47068",platform:"kalshi",logged_at:"2026-04-15 02:02:42.978+00"},
+  {id:"KXGABBARDANNOUNCEOUT-26APR-MAY01-1776225779955",market_ticker:"KXGABBARDANNOUNCEOUT-26APR-MAY01",market_title:"Gabbard announce departure as DNI before May 1, 2026",side:"no",contracts:6,price:0.9,cost:5.4,confidence:0.9,edge:-0.06,council_verdict:"BET_NO",status:"resting",order_id:"8a737fe8-9d7b-403b-8b09-3bb22e1fff54",platform:"kalshi",logged_at:"2026-04-15 04:02:59.955+00"},
+  {id:"poly-us-x-iran-permanent-peace-deal-by-april-22-2026-1776225780096",market_ticker:"us-x-iran-permanent-peace-deal-by-april-22-2026",market_title:"US-Iran peace deal by Apr 22",side:"no",contracts:15,price:0.755,cost:11.325,confidence:0.9,edge:-0.195,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-15 04:03:00.097+00"},
+  {id:"poly-military-action-against-iran-ends-by-april-17-2026-1776232983941",market_ticker:"military-action-against-iran-ends-by-april-17-2026",market_title:"Military action against Iran ends by April 17",side:"no",contracts:10,price:0.0005,cost:0.005,confidence:0.7,edge:-0.0795,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-15 06:03:03.941+00"},
+  {id:"poly-will-wti-crude-oil-wti-hit-high-110-in-april-1776240194245",market_ticker:"will-wti-crude-oil-wti-hit-high-110-in-april",market_title:"WTI hit $110 in April",side:"no",contracts:15,price:0.765,cost:11.475,confidence:0.9,edge:-0.205,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-15 08:03:14.246+00"},
+  {id:"poly-strait-of-hormuz-traffic-returns-to-normal-by-april-30-1776247372681",market_ticker:"strait-of-hormuz-traffic-returns-to-normal-by-april-30",market_title:"Strait of Hormuz normal by end of April",side:"yes",contracts:5,price:0.245,cost:1.225,confidence:0.5,edge:0.105,council_verdict:"BET_YES",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-15 10:02:52.681+00"},
+  {id:"poly-us-iran-nuclear-deal-by-april-30-1776254584990",market_ticker:"us-iran-nuclear-deal-by-april-30",market_title:"US-Iran nuclear deal by April 30",side:"no",contracts:12,price:0.685,cost:8.22,confidence:0.7,edge:-0.135,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-15 12:03:04.991+00"},
+  {id:"poly-us-x-iran-permanent-peace-deal-by-april-30-2026-1776261784837",market_ticker:"us-x-iran-permanent-peace-deal-by-april-30-2026",market_title:"US x Iran permanent peace deal by Apr 30",side:"no",contracts:15,price:0.625,cost:9.375,confidence:0.9,edge:-0.315,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-15 14:03:04.837+00"},
+  {id:"poly-iran-agrees-to-end-enrichment-of-uranium-by-april-30-1776261784967",market_ticker:"iran-agrees-to-end-enrichment-of-uranium-by-april-30",market_title:"Iran agrees to end uranium enrichment by Apr 30",side:"no",contracts:15,price:0.6955,cost:10.4325,confidence:0.9,edge:-0.2445,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-15 14:03:04.967+00"},
+  {id:"poly-will-bitcoin-reach-80k-in-april-2026-1776319373154",market_ticker:"will-bitcoin-reach-80k-in-april-2026",market_title:"Bitcoin reach $80K in April",side:"yes",contracts:5,price:0.365,cost:1.825,confidence:0.5,edge:0.155,council_verdict:"BET_YES",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-16 06:02:53.154+00"},
+  {id:"KXLUTNICKOUT-26MAY01-1776333779063",market_ticker:"KXLUTNICKOUT-26MAY01",market_title:"Will Howard Lutnick leave Commerce Secretary before May?",side:"yes",contracts:4,price:0.089,cost:0.356,confidence:0.5,edge:0.051,council_verdict:"BET_YES",status:"resting",order_id:"54b6f0b2-9fa0-4221-b94a-f78393d49526",platform:"kalshi",logged_at:"2026-04-16 10:02:59.064+00"},
+  {id:"poly-us-x-iran-permanent-peace-deal-by-april-22-2026-1776333779198",market_ticker:"us-x-iran-permanent-peace-deal-by-april-22-2026",market_title:"US-Iran peace deal by April 22",side:"no",contracts:12,price:0.825,cost:9.9,confidence:0.9,edge:-0.125,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-16 10:02:59.199+00"},
+  {id:"poly-iran-x-israelus-conflict-ends-by-april-30-766-662-668-546-1776391392047",market_ticker:"iran-x-israelus-conflict-ends-by-april-30-766-662-668-546",market_title:"Iran x Israel/US conflict ends by April 30",side:"no",contracts:10,price:0.11,cost:1.1,confidence:0.7,edge:-0.17,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-17 02:09:12.048+00"},
+  {id:"poly-trump-announces-end-of-military-operations-against-iran-by-april-30th-753-882-164-769-641-926-1776398578232",market_ticker:"trump-announces-end-of-military-operations-against-iran-by-april-30th-753-882-164-769-641-926",market_title:"Trump ends military operations against Iran by Apr 30",side:"no",contracts:10,price:0.3235,cost:3.235,confidence:0.7,edge:-0.3635,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-17 04:02:58.232+00"},
+  {id:"poly-us-x-iran-permanent-peace-deal-by-april-30-2026-1776398578506",market_ticker:"us-x-iran-permanent-peace-deal-by-april-30-2026",market_title:"US x Iran peace deal by April 30",side:"no",contracts:12,price:0.565,cost:6.78,confidence:0.9,edge:-0.365,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-17 04:02:58.506+00"},
+  {id:"poly-will-wti-crude-oil-wti-hit-high-120-in-april-1776398578828",market_ticker:"will-wti-crude-oil-wti-hit-high-120-in-april",market_title:"WTI hit $120 in April",side:"no",contracts:15,price:0.83,cost:12.45,confidence:0.9,edge:-0.08,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-17 04:02:58.828+00"},
+  {id:"poly-will-finland-win-eurovision-2026-1776405769638",market_ticker:"will-finland-win-eurovision-2026",market_title:"Finland win Eurovision 2026",side:"no",contracts:12,price:0.72,cost:8.64,confidence:0.7,edge:-0.27,council_verdict:"BET_NO",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-17 06:02:49.638+00"},
+  {id:"poly-will-bitcoin-reach-80k-in-april-2026-1776412985307",market_ticker:"will-bitcoin-reach-80k-in-april-2026",market_title:"Bitcoin reach $80K in April",side:"yes",contracts:5,price:0.28,cost:1.4,confidence:0.5,edge:0.22,council_verdict:"BET_YES",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-17 08:09:45.308+00"},
+  {id:"poly-strait-of-hormuz-traffic-returns-to-normal-by-april-30-1776420182628",market_ticker:"strait-of-hormuz-traffic-returns-to-normal-by-april-30",market_title:"Strait of Hormuz traffic returns to normal by April 30",side:"yes",contracts:5,price:0.24,cost:1.2,confidence:0.5,edge:0.11,council_verdict:"BET_YES",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-17 10:03:02.628+00"},
+  {id:"KXGABBARDOUT-26-MAY01-1776585770921",market_ticker:"KXGABBARDOUT-26-MAY01",market_title:"Tulsi Gabbard leaves DNI before May 1, 2026",side:"yes",contracts:4,price:0.06,cost:0.24,confidence:0.5,edge:0.061,council_verdict:"BET_YES",status:"resting",order_id:null,platform:"kalshi",logged_at:"2026-04-19 08:02:50.922+00"},
+  {id:"poly-will-bitcoin-reach-80k-in-april-2026-1776592974960",market_ticker:"will-bitcoin-reach-80k-in-april-2026",market_title:"Bitcoin reach $80K in April",side:"yes",contracts:10,price:0.325,cost:3.25,confidence:0.7,edge:0.125,council_verdict:"BET_YES",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-19 10:02:54.961+00"},
+];
+
+async function importDevBetsOnce() {
+  try {
+    let imported = 0;
+    for (const b of DEV_BETS_MIGRATION) {
+      const r = await pool.query(
+        `INSERT INTO predictor_bets
+           (id, market_ticker, market_title, side, contracts, price, cost, confidence, edge,
+            council_verdict, status, order_id, platform, logged_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ON CONFLICT (id) DO NOTHING`,
+        [b.id, b.market_ticker, b.market_title, b.side, b.contracts, b.price, b.cost,
+         b.confidence, b.edge, b.council_verdict, b.status, b.order_id ?? null, b.platform, b.logged_at]
+      );
+      if (r.rowCount && r.rowCount > 0) imported++;
+    }
+    if (imported > 0) console.log(`[predictor] Imported ${imported} dev bet(s) into this database`);
+  } catch (e: any) {
+    console.warn(`[predictor] importDevBetsOnce skipped: ${e.message}`);
+  }
+}
+
 // ── DB tables ────────────────────────────────────────────────────────────────
 
 async function initPredictorTables() {
@@ -112,6 +171,10 @@ async function initPredictorTables() {
   // Add outcome tracking columns
   await pool.query(`ALTER TABLE predictor_bets ADD COLUMN IF NOT EXISTS outcome TEXT`);
   await pool.query(`ALTER TABLE predictor_bets ADD COLUMN IF NOT EXISTS cost_usd REAL`);
+  await pool.query(`ALTER TABLE predictor_bets ADD COLUMN IF NOT EXISTS close_time TIMESTAMPTZ`);
+
+  // One-time migration: import dev bets that don't exist here yet
+  await importDevBetsOnce();
 
   // Default settings
   const defaults: [string, string][] = [
@@ -1357,8 +1420,8 @@ async function executeBet(
   const initStatus = result?.error ? "failed" : "resting";
 
   await pool.query(
-    `INSERT INTO predictor_bets (id, market_ticker, market_title, side, contracts, price, cost, confidence, edge, council_verdict, council_transcript, status, order_id, platform)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    `INSERT INTO predictor_bets (id, market_ticker, market_title, side, contracts, price, cost, confidence, edge, council_verdict, council_transcript, status, order_id, platform, close_time)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
     [
       betId,
       market.ticker,
@@ -1374,6 +1437,7 @@ async function executeBet(
       initStatus,
       orderId,
       "kalshi",
+      market.close || null,
     ]
   );
 
@@ -2252,22 +2316,41 @@ predictorRouter.post("/sync-orders", async (_req, res) => {
       const contracts        = order.remaining_count ?? order.count ?? 0;
       const costUSD          = (contracts * actualPriceCents) / 100;
 
-      // Fetch market title for a readable label
+      // Fetch market title and close_time for a readable label
       let marketTitle = order.ticker;
+      let closeTime: string | null = null;
       try {
         const mkt = (await kalshiPublicReq(`/markets/${order.ticker}`))?.market;
         if (mkt?.title) marketTitle = mkt.title;
+        if (mkt?.close_time || mkt?.expiration_time) closeTime = mkt.close_time || mkt.expiration_time;
       } catch {}
 
       await pool.query(
-        `INSERT INTO predictor_bets (id, market_ticker, market_title, side, contracts, price, cost, status, order_id, logged_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+        `INSERT INTO predictor_bets (id, market_ticker, market_title, side, contracts, price, cost, status, order_id, close_time, logged_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
          ON CONFLICT (id) DO NOTHING`,
-        [betId, order.ticker, marketTitle, side, contracts, priceDecimal, costUSD, order.status || "resting", oid]
+        [betId, order.ticker, marketTitle, side, contracts, priceDecimal, costUSD, order.status || "resting", oid, closeTime]
       );
       summary.imported++;
       dbOrderIds.add(oid);
     }
+
+    // 6. Backfill close_time for active bets that are missing it
+    try {
+      const noClose = await pool.query(
+        `SELECT id, market_ticker FROM predictor_bets
+         WHERE close_time IS NULL AND status NOT IN ('cancelled','canceled','failed','settled')`
+      );
+      for (const bet of noClose.rows) {
+        try {
+          const mkt = (await kalshiPublicReq(`/markets/${bet.market_ticker}`))?.market;
+          const ct = mkt?.close_time || mkt?.expiration_time || null;
+          if (ct) {
+            await pool.query(`UPDATE predictor_bets SET close_time = $1 WHERE id = $2`, [ct, bet.id]);
+          }
+        } catch {}
+      }
+    } catch {}
 
     res.json({ ...summary, message: `Sync complete — ${summary.updated} updated, ${summary.imported} imported, ${summary.filled} filled` });
   } catch (e: any) {
