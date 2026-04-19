@@ -2264,16 +2264,46 @@ export default function PredictionsPage() {
                         ))}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <p className="text-[10px] text-muted-foreground">Min edge:</p>
-                      <input
-                        type="number" min="5" max="40" step="1"
-                        value={Math.round(parseFloat(settings.crypto_min_edge || "0.12") * 100)}
-                        onChange={e => updateSetting("crypto_min_edge", (parseInt(e.target.value) / 100).toString())}
-                        className="w-14 text-[10px] border border-border rounded px-1.5 py-0.5 bg-background text-foreground"
-                        data-testid="input-crypto-min-edge"
-                      />
-                      <span className="text-[10px] text-muted-foreground">pp</span>
+                    <div className="grid grid-cols-3 gap-1.5 mb-2">
+                      <div>
+                        <p className="text-[9px] text-muted-foreground mb-0.5">Min edge</p>
+                        <div className="flex items-center gap-0.5">
+                          <input
+                            type="number" min="5" max="40" step="1"
+                            value={Math.round(parseFloat(settings.crypto_min_edge || "0.12") * 100)}
+                            onChange={e => updateSetting("crypto_min_edge", (parseInt(e.target.value) / 100).toString())}
+                            className="w-full text-[10px] border border-border rounded px-1.5 py-0.5 bg-background text-foreground"
+                            data-testid="input-crypto-min-edge"
+                          />
+                          <span className="text-[9px] text-muted-foreground">pp</span>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted-foreground mb-0.5">Max bet</p>
+                        <div className="flex items-center gap-0.5">
+                          <span className="text-[9px] text-muted-foreground">$</span>
+                          <input
+                            type="number" min="1" max="100" step="1"
+                            value={parseInt(settings.crypto_max_bet_usd || "10")}
+                            onChange={e => updateSetting("crypto_max_bet_usd", e.target.value)}
+                            className="w-full text-[10px] border border-border rounded px-1.5 py-0.5 bg-background text-foreground"
+                            data-testid="input-crypto-max-bet"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted-foreground mb-0.5">Kelly %</p>
+                        <div className="flex items-center gap-0.5">
+                          <input
+                            type="number" min="5" max="50" step="5"
+                            value={Math.round(parseFloat(settings.crypto_kelly_fraction || "0.15") * 100)}
+                            onChange={e => updateSetting("crypto_kelly_fraction", (parseInt(e.target.value) / 100).toString())}
+                            className="w-full text-[10px] border border-border rounded px-1.5 py-0.5 bg-background text-foreground"
+                            data-testid="input-crypto-kelly"
+                          />
+                          <span className="text-[9px] text-muted-foreground">%</span>
+                        </div>
+                      </div>
                     </div>
                     <Button size="sm" variant="outline" onClick={runCryptoScan}
                       disabled={cryptoRunning || running}

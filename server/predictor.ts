@@ -121,9 +121,11 @@ async function initPredictorTables() {
     ["mode",                    "demo"],
     ["time_horizon_days",       "30"],
     ["poly_enabled",            "true"],
-    ["crypto_scan_enabled",     "false"],
-    ["crypto_min_edge",         "0.12"],
+    ["crypto_scan_enabled",       "false"],
+    ["crypto_min_edge",           "0.12"],
     ["crypto_short_horizon_days", "7"],
+    ["crypto_max_bet_usd",        "10"],
+    ["crypto_kelly_fraction",     "0.15"],
   ];
   for (const [k, v] of defaults) {
     await pool.query(
@@ -789,27 +791,36 @@ async function runCryptoPipeline(
     return { candidates, councils: [], bets: [] };
   }
 
-  const cryptoMinEdge = parseFloat((await getSetting("crypto_min_edge")) || "0.12");
+  const cryptoMinEdge     = parseFloat((await getSetting("crypto_min_edge"))     || "0.12");
+  const cryptoMaxBetUsd   = parseFloat((await getSetting("crypto_max_bet_usd"))   || "10");
+  const cryptoKelly       = parseFloat((await getSetting("crypto_kelly_fraction")) || "0.15");
 
   onStage(2, "running", `Deep-researching ${candidates.length} crypto market(s)…`);
   onStage(3, "running", "Crypto council assembling…");
 
   const results = await Promise.all(
     candidates.map(async (market: any) => {
-      const brief = await deepResearch(market, () => {});
-      const council = await runCouncilDebate(market, brief, () => {});
-      return { market, council };
+      // Inject kelly fraction into market so council sizing prompt picks it up
+      const enriched = { ...market, _kelly_override: cryptoKelly };
+      const brief = await deepResearch(enriched, () => {});
+      const council = await runCouncilDebate(enriched, brief, () => {});
+      return { market: enriched, council };
     })
   );
 
   onStage(2, "done", `Research complete for ${candidates.length} crypto market(s)`);
   onStage(3, "done", "Crypto council debates done");
-  onStage(4, "running", `Evaluating crypto bets (min edge: ${(cryptoMinEdge * 100).toFixed(0)}pp)…`);
+  onStage(4, "running", `Evaluating crypto bets (min edge: ${(cryptoMinEdge * 100).toFixed(0)}pp, max bet: $${cryptoMaxBetUsd})…`);
 
   const allBets: any[] = [];
   for (const { market, council } of results) {
     if (council.verdict !== "PASS" && council.edge >= cryptoMinEdge) {
-      const bet = await executeBet(market, council, (msg) => onStage(4, "running", `[Crypto] ${msg}`));
+      const bet = await executeBet(
+        market,
+        council,
+        (msg) => onStage(4, "running", `[Crypto] ${msg}`),
+        { maxBetUsd: cryptoMaxBetUsd, minEdge: cryptoMinEdge }
+      );
       if (bet && !bet.error) allBets.push(bet);
     }
   }
@@ -1152,10 +1163,11 @@ Return ONLY JSON:
 async function executeBet(
   market: any,
   council: any,
-  onStage: (msg: string) => void
+  onStage: (msg: string) => void,
+  opts?: { maxBetUsd?: number; minEdge?: number }
 ): Promise<any> {
-  const minEdge = parseFloat((await getSetting("min_edge")) || "0.05");
-  const maxBet = parseFloat((await getSetting("max_bet_usd")) || "25");
+  const minEdge = opts?.minEdge ?? parseFloat((await getSetting("min_edge")) || "0.05");
+  const maxBet  = opts?.maxBetUsd ?? parseFloat((await getSetting("max_bet_usd")) || "25");
 
   // PASS: council decided no edge, or absolute floor of 5pp not met
   if (council.verdict === "PASS") {
