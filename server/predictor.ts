@@ -491,9 +491,10 @@ async function executePolyBet(
     onStage(`Skipping Poly ${market.ticker} — council PASS`);
     return null;
   }
-  if (council.edge < minEdge) {
-    console.warn(`[poly] Skipping bet: edge ${council.edge} < minEdge ${minEdge}`, { market: market.ticker, side: council.verdict });
-    onStage(`Skipping Poly ${market.ticker} — edge ${(council.edge * 100).toFixed(1)}pp below threshold ${(minEdge * 100).toFixed(0)}pp`);
+  const polyAbsEdge = Math.abs(council.edge || 0);
+  if (polyAbsEdge < minEdge) {
+    console.warn(`[poly] Skipping bet: edge ${polyAbsEdge} < minEdge ${minEdge}`, { market: market.ticker, side: council.verdict });
+    onStage(`Skipping Poly ${market.ticker} — edge ${(polyAbsEdge * 100).toFixed(1)}pp below threshold ${(minEdge * 100).toFixed(0)}pp`);
     return { skipped: true, reason: "below_min_edge" };
   }
 
@@ -814,7 +815,7 @@ async function runCryptoPipeline(
 
   const allBets: any[] = [];
   for (const { market, council } of results) {
-    if (council.verdict !== "PASS" && council.edge >= cryptoMinEdge) {
+    if (council.verdict !== "PASS" && Math.abs(council.edge || 0) >= cryptoMinEdge) {
       const bet = await executeBet(
         market,
         council,
@@ -1108,14 +1109,19 @@ Blind spots: ${JSON.stringify(devil?.blind_spots || [])}
 
 YOUR TASK:
 1. Synthesize all perspectives into YOUR OWN final probability estimate (don't just average — use your judgment)
-2. Calculate the edge vs the market price (your_probability - market_price)
-3. MAKE A DECISION — default to betting when edge ≥ 8pp. Only PASS if the edge is genuinely <5pp OR there is a specific reason the market will move against you before you can profit
-4. When betting, use fractional Kelly sizing (kelly_fraction × bankroll). Suggest 3-15 contracts. Never suggest 0.
-5. Err on the side of action. A small bet with real edge beats sitting out.
+2. Calculate the ABSOLUTE edge: |your_final_probability - market_price| — always a POSITIVE number, regardless of direction
+3. Determine verdict: BET_YES if market underprices YES (your_probability > market_price), BET_NO if market overprices YES (your_probability < market_price), PASS if edge < 5pp
+4. MAKE A DECISION — default to betting when edge ≥ 8pp. Only PASS if the edge is genuinely <5pp OR there is a specific reason the market will move against you before you can profit
+5. When betting, use fractional Kelly sizing (kelly_fraction × bankroll). Suggest 3-15 contracts. Never suggest 0.
+6. Err on the side of action. A small bet with real edge beats sitting out.
 
 PASS is only appropriate when:
-- Your final_probability is within 5pp of the market price (no real edge)
+- The absolute edge |your_probability - market_price| is within 5pp (no real edge)
 - There is specific knowledge that the outcome is already effectively decided against your position
+
+IMPORTANT: "edge" in your JSON must ALWAYS be a positive number (the magnitude of mispricing, not signed).
+- BET_YES example: market=0.40, you=0.62 → edge=0.22 (positive)
+- BET_NO example: market=0.60, you=0.38 → edge=0.22 (positive, not -0.22)
 
 Return ONLY JSON:
 {
@@ -1174,13 +1180,14 @@ async function executeBet(
     onStage(`Skipping ${market.ticker} — council PASS (edge ${(council.edge * 100).toFixed(1)}pp)`);
     return null;
   }
-  if (council.edge < 0.05) {
-    onStage(`Skipping ${market.ticker} — edge ${(council.edge * 100).toFixed(1)}pp below hard floor of 5pp`);
+  const absEdge = Math.abs(council.edge || 0);
+  if (absEdge < 0.05) {
+    onStage(`Skipping ${market.ticker} — edge ${(absEdge * 100).toFixed(1)}pp below hard floor of 5pp`);
     return { skipped: true, reason: "below_min_edge" };
   }
-  if (council.edge < minEdge) {
-    console.warn(`[kalshi] Skipping bet: edge ${council.edge} < minEdge ${minEdge}`, { market: market.ticker, side: council.verdict });
-    onStage(`Skipping ${market.ticker} — edge ${(council.edge * 100).toFixed(1)}pp below configured threshold ${(minEdge * 100).toFixed(0)}pp (adjust in Settings)`);
+  if (absEdge < minEdge) {
+    console.warn(`[kalshi] Skipping bet: edge ${absEdge} < minEdge ${minEdge}`, { market: market.ticker, side: council.verdict });
+    onStage(`Skipping ${market.ticker} — edge ${(absEdge * 100).toFixed(1)}pp below configured threshold ${(minEdge * 100).toFixed(0)}pp (adjust in Settings)`);
     return { skipped: true, reason: "below_min_edge" };
   }
 
