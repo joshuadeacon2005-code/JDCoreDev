@@ -1589,7 +1589,9 @@ predictorRouter.get("/portfolio", async (_req, res) => {
       }
     }
 
-    const pricedPositionTickers = new Set(positions.filter((p: any) => p.cost_usd > 0).map((p: any) => p.ticker));
+    // positionTickers = ALL live Kalshi positions (used to avoid double-counting in secondary fetch)
+    const positionTickers         = new Set(positions.map((p: any) => p.ticker));
+    const pricedPositionTickers   = new Set(positions.filter((p: any) => p.cost_usd > 0).map((p: any) => p.ticker));
     const totalAtStakeUSD         = positions.reduce((s, p) => s + (p.cost_usd || 0), 0);
     const totalMaxPayoutUSD       = positions.reduce((s, p) => s + (p.max_payout_usd || 0), 0);
     const totalPotentialProfitUSD = positions.reduce((s, p) => s + (p.potential_profit_usd || 0), 0);
@@ -1638,7 +1640,10 @@ predictorRouter.get("/portfolio", async (_req, res) => {
       for (const order of openOrders) {
         if (!order.ticker) continue;
         if (positionTickers.has(order.ticker)) continue;
-        if (pendingMap.has(order.ticker)) continue; // DB already has this — trust DB values
+        // Skip only if DB already has a non-zero cost entry for this ticker
+        // (if DB cost is 0, let live Kalshi data override it)
+        const existingEntry = pendingMap.get(order.ticker);
+        if (existingEntry && (existingEntry.cost_usd || 0) > 0) continue;
         // New order not in DB — derive values from Kalshi order fields
         const yesPriceCents    = order.yes_price ?? 0;
         const side             = order.side === "no" ? "no" : "yes";
