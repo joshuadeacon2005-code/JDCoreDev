@@ -333,7 +333,22 @@ function getPolyCredentials() {
 async function getPolyClobClient(): Promise<ClobClient | null> {
   const { privateKey, apiKey, apiSecret, passphrase, funder } = getPolyCredentials();
   if (!privateKey) return null;
-  const pk = privateKey.startsWith("0x") ? privateKey : "0x" + privateKey;
+
+  // Strict format validation — reject UUIDs, bare hex, or anything non-EOA
+  if (!/^0x[a-fA-F0-9]{64}$/.test(privateKey)) {
+    throw new Error(
+      "[poly] POLY_PRIVATE_KEY is not a valid EOA private key (must be 0x + 64 hex chars). " +
+      "Export the real key from MetaMask and update the secret. Live trading refused."
+    );
+  }
+  if (funder && !/^0x[a-fA-F0-9]{40}$/.test(funder)) {
+    throw new Error(
+      "[poly] POLY_FUNDER is not a valid EOA address (must be 0x + 40 hex chars). " +
+      "Update the secret to your MetaMask wallet address. Live trading refused."
+    );
+  }
+
+  const pk = privateKey;
   const wallet = new ethers.Wallet(pk);
   const creds = (apiKey && apiSecret && passphrase)
     ? { key: apiKey, secret: apiSecret, passphrase }
@@ -471,9 +486,10 @@ async function executePolyBet(
     onStage(`Skipping Poly ${market.ticker} — council PASS`);
     return null;
   }
-  if (Math.abs(council.edge) < minEdge) {
-    onStage(`Skipping Poly ${market.ticker} — edge too low`);
-    return null;
+  if (council.edge < minEdge) {
+    console.warn(`[poly] Skipping bet: edge ${council.edge} < minEdge ${minEdge}`, { market: market.ticker, side: council.verdict });
+    onStage(`Skipping Poly ${market.ticker} — edge ${(council.edge * 100).toFixed(1)}pp below threshold ${(minEdge * 100).toFixed(0)}pp`);
+    return { skipped: true, reason: "below_min_edge" };
   }
 
   const clobClient = await getPolyClobClient();
@@ -935,13 +951,14 @@ async function executeBet(
     onStage(`Skipping ${market.ticker} — council PASS (edge ${(council.edge * 100).toFixed(1)}pp)`);
     return null;
   }
-  if (Math.abs(council.edge) < 0.05) {
+  if (council.edge < 0.05) {
     onStage(`Skipping ${market.ticker} — edge ${(council.edge * 100).toFixed(1)}pp below hard floor of 5pp`);
-    return null;
+    return { skipped: true, reason: "below_min_edge" };
   }
-  if (Math.abs(council.edge) < minEdge) {
+  if (council.edge < minEdge) {
+    console.warn(`[kalshi] Skipping bet: edge ${council.edge} < minEdge ${minEdge}`, { market: market.ticker, side: council.verdict });
     onStage(`Skipping ${market.ticker} — edge ${(council.edge * 100).toFixed(1)}pp below configured threshold ${(minEdge * 100).toFixed(0)}pp (adjust in Settings)`);
-    return null;
+    return { skipped: true, reason: "below_min_edge" };
   }
 
   const side = council.verdict === "BET_YES" ? "yes" : "no";
@@ -2173,6 +2190,26 @@ predictorRouter.post("/claude", async (req, res) => {
 export async function initPredictor() {
   await initPredictorTables();
   console.log("[predictor] tables ready");
+
+  // ── Startup credential guards ────────────────────────────────────────────
+  const _pk = process.env.POLY_PRIVATE_KEY || "";
+  if (_pk && !/^0x[a-fA-F0-9]{64}$/.test(_pk)) {
+    throw new Error(
+      "[predictor] FATAL: POLY_PRIVATE_KEY is not a valid EOA private key " +
+      "(must be 0x-prefixed 64 hex chars, e.g. from MetaMask export). " +
+      "Current value looks like a UUID or bare hex — update the secret before live trading."
+    );
+  }
+  const _funder = process.env.POLY_FUNDER || "";
+  if (_funder && !/^0x[a-fA-F0-9]{40}$/.test(_funder)) {
+    throw new Error(
+      "[predictor] FATAL: POLY_FUNDER is not a valid EOA address " +
+      "(must be 0x-prefixed 40 hex chars matching your MetaMask wallet). " +
+      "Update the secret before live trading."
+    );
+  }
+  if (_pk) console.log("[predictor] POLY_PRIVATE_KEY format: OK (EOA)");
+  if (_funder) console.log("[predictor] POLY_FUNDER format: OK (EOA address)");
 
   // Cron: scan every 2 hours
   cron.schedule("0 */2 * * *", async () => {
