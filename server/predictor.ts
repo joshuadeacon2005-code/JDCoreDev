@@ -109,6 +109,9 @@ async function initPredictorTables() {
 
   // Add platform column to existing bets table
   await pool.query(`ALTER TABLE predictor_bets ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'kalshi'`);
+  // Add outcome tracking columns
+  await pool.query(`ALTER TABLE predictor_bets ADD COLUMN IF NOT EXISTS outcome TEXT`);
+  await pool.query(`ALTER TABLE predictor_bets ADD COLUMN IF NOT EXISTS cost_usd REAL`);
 
   // Default settings
   const defaults: [string, string][] = [
@@ -126,6 +129,9 @@ async function initPredictorTables() {
     ["crypto_short_horizon_days", "7"],
     ["crypto_max_bet_usd",        "10"],
     ["crypto_kelly_fraction",     "0.15"],
+    ["max_spread",                "0.12"],
+    ["max_correlated_bets",       "2"],
+    ["dynamic_edge",              "true"],
   ];
   for (const [k, v] of defaults) {
     await pool.query(
@@ -617,6 +623,104 @@ async function callClaude(prompt: string, _useSearch = false, maxTokens = 8192):
   return msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
 }
 
+// ── IMPROVEMENT HELPERS ──────────────────────────────────────────────────────
+
+// 1. Real-time news via Google News RSS (no API key needed)
+async function fetchRecentNews(query: string): Promise<string> {
+  try {
+    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return "";
+    const xml = await res.text();
+    const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 6);
+    const headlines = items.map(m => {
+      const title = m[1].match(/<title>([\s\S]*?)<\/title>/)?.[1]
+        ?.replace(/<!\[CDATA\[|\]\]>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').trim() || "";
+      const pubDate = m[1].match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]?.trim() || "";
+      return `• ${title}${pubDate ? ` [${pubDate}]` : ""}`;
+    }).filter(h => h.length > 2);
+    return headlines.length
+      ? `RECENT NEWS (last 48h):\n${headlines.join("\n")}`
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+// 2. Topic cluster detection for correlation limits
+const TOPIC_CLUSTERS: [RegExp, string][] = [
+  [/iran|hormuz|tehran|nuclear.deal|uranium.enrich/i, "iran"],
+  [/russia|ukraine|zelensky|putin|nato|kherson|crimea/i, "russia-ukraine"],
+  [/btc|bitcoin|crypto|ethereum|eth\b|solana|defi/i, "crypto"],
+  [/fed|interest.rate|fomc|powell|inflation|cpi|gdp|recession/i, "fed-economy"],
+  [/trump|maga|republican|democrat|election|congress|senate|house.of.rep/i, "us-politics"],
+  [/china|taiwan|xi.jinping|beijing|pla|south.china.sea/i, "china-taiwan"],
+  [/israel|gaza|hamas|netanyahu|west.bank|hezbollah/i, "israel-gaza"],
+  [/north.korea|kim.jong|pyongyang/i, "north-korea"],
+  [/ai\b|artificial.intel|openai|anthropic|gpt|llm/i, "ai-tech"],
+];
+
+function detectCluster(title: string): string {
+  for (const [pattern, cluster] of TOPIC_CLUSTERS) {
+    if (pattern.test(title)) return cluster;
+  }
+  return "other";
+}
+
+// 3. Resolution tracker — checks Kalshi for settled markets and records outcomes
+async function checkResolutions(): Promise<{ checked: number; resolved: number; errors: number }> {
+  const result = { checked: 0, resolved: 0, errors: 0 };
+  try {
+    const unresolved = await pool.query(
+      `SELECT id, market_ticker, side, contracts, price, cost, cost_usd, platform
+       FROM predictor_bets
+       WHERE outcome IS NULL
+         AND status NOT IN ('cancelled','canceled','failed')
+         AND platform = 'kalshi'`
+    );
+    result.checked = unresolved.rows.length;
+
+    for (const bet of unresolved.rows) {
+      try {
+        const mkt = await kalshiPublicReq(`/markets/${bet.market_ticker}`);
+        const market = mkt?.market;
+        if (!market) continue;
+
+        const status = market.status;
+        if (status !== "finalized" && status !== "settled") continue;
+
+        // Determine result — Kalshi sets result on the market
+        const result_value = market.result; // "yes" or "no"
+        if (!result_value) continue;
+
+        const won = result_value === bet.side;
+        const outcome = won ? "won" : "lost";
+
+        // P&L: if won, profit = contracts * (1 - price) - 0 cost
+        //      if lost, P&L = -cost
+        const costUsd = bet.cost_usd ?? bet.cost ?? 0;
+        const pnl = won
+          ? parseFloat(((bet.contracts ?? 0) * (1 - (bet.price ?? 0))).toFixed(2))
+          : -parseFloat(costUsd.toFixed(2));
+
+        await pool.query(
+          `UPDATE predictor_bets
+           SET outcome = $1, pnl = $2, settled_at = NOW(), status = 'settled'
+           WHERE id = $3`,
+          [outcome, pnl, bet.id]
+        );
+        await insertLog("info", `[resolution] ${bet.market_ticker} → ${outcome} | P&L: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`);
+        result.resolved++;
+      } catch {
+        result.errors++;
+      }
+    }
+  } catch (e: any) {
+    await insertLog("error", `[resolution] ERROR: ${e.message}`);
+  }
+  return result;
+}
+
 // ── CRYPTO SHORT-TERM HELPERS ────────────────────────────────────────────────
 
 function calcSimpleRSI(closes: number[], period = 14): number {
@@ -866,6 +970,7 @@ async function scanMarkets(
   const now = Date.now();
   const maxDays = parseFloat((await getSetting("time_horizon_days")) || "30");
   const maxHours = maxDays * 24;
+  const maxSpread = parseFloat((await getSetting("max_spread")) || "0.12");
   const allMarkets: any[] = [];
   for (const ev of events) {
     for (const m of ev.markets || []) {
@@ -878,6 +983,9 @@ async function scanMarkets(
       const yesBid   = kPrice(m, "yes_bid");
       // Skip illiquid markets with no tradable ask and no last price
       if (yesAsk === 0 && lastPrice === 0 && yesBid === 0) continue;
+      // Skip markets with wide bid-ask spread (illiquid — paying too much slippage)
+      const spread = yesAsk - yesBid;
+      if (yesAsk > 0 && yesBid > 0 && spread > maxSpread) continue;
 
       allMarkets.push({
         ticker:    m.ticker,
@@ -975,6 +1083,10 @@ async function deepResearch(
     ? `\n${(market as any).crypto_context}\n`
     : "";
 
+  // Fetch live news headlines to ground the research in current events
+  const newsHeadlines = await fetchRecentNews(market.title);
+  const newsSection = newsHeadlines ? `\n\n${newsHeadlines}` : "";
+
   const brief = await callClaudeFast(
     `You are an expert prediction market research analyst with deep knowledge of politics, economics, and current events. Your job is to produce a rigorous research brief for a prediction market.
 
@@ -982,7 +1094,7 @@ MARKET: "${market.title}"
 TICKER: ${market.ticker}
 CURRENT YES PRICE: ${market.yes_price} (${(market.yes_price * 100).toFixed(0)}% implied probability by market)
 YOUR INITIAL ESTIMATE: ${market.your_estimate} (${(market.your_estimate * 100).toFixed(0)}%)
-PERCEIVED EDGE: ${((market.your_estimate - market.yes_price) * 100).toFixed(1)}pp${cryptoSection}
+PERCEIVED EDGE: ${((market.your_estimate - market.yes_price) * 100).toFixed(1)}pp${cryptoSection}${newsSection}
 
 Produce a deep research brief covering ALL of the following:
 
@@ -1185,9 +1297,21 @@ async function executeBet(
     onStage(`Skipping ${market.ticker} — edge ${(absEdge * 100).toFixed(1)}pp below hard floor of 5pp`);
     return { skipped: true, reason: "below_min_edge" };
   }
-  if (absEdge < minEdge) {
-    console.warn(`[kalshi] Skipping bet: edge ${absEdge} < minEdge ${minEdge}`, { market: market.ticker, side: council.verdict });
-    onStage(`Skipping ${market.ticker} — edge ${(absEdge * 100).toFixed(1)}pp below configured threshold ${(minEdge * 100).toFixed(0)}pp (adjust in Settings)`);
+  // Dynamic edge threshold: scale based on days-to-close.
+  // Short-term markets pay out faster so a lower edge is acceptable;
+  // long-term markets carry more uncertainty so we demand more edge.
+  const dynamicEdgeEnabled = (await getSetting("dynamic_edge")) !== "false";
+  let effectiveMinEdge = minEdge;
+  if (dynamicEdgeEnabled && market.close) {
+    const daysToClose = (new Date(market.close).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+    if      (daysToClose < 3)  effectiveMinEdge = minEdge * 0.70;
+    else if (daysToClose < 7)  effectiveMinEdge = minEdge * 0.85;
+    else if (daysToClose > 60) effectiveMinEdge = minEdge * 1.30;
+    else if (daysToClose > 30) effectiveMinEdge = minEdge * 1.15;
+  }
+  if (absEdge < effectiveMinEdge) {
+    console.warn(`[kalshi] Skipping bet: edge ${absEdge} < effectiveMinEdge ${effectiveMinEdge}`, { market: market.ticker, side: council.verdict });
+    onStage(`Skipping ${market.ticker} — edge ${(absEdge * 100).toFixed(1)}pp below dynamic threshold ${(effectiveMinEdge * 100).toFixed(0)}pp`);
     return { skipped: true, reason: "below_min_edge" };
   }
 
@@ -1402,14 +1526,37 @@ async function runPredictorPipeline(
     allCouncils.push(...results);
 
     // Execute bets sequentially for this round — route to correct platform
+    // Load correlation settings once per round
+    const maxCorrelated = parseInt((await getSetting("max_correlated_bets")) || "2");
+    // Count open bets per cluster from DB
+    const openBetRows = await pool.query(
+      `SELECT market_title FROM predictor_bets WHERE status NOT IN ('cancelled','canceled','failed','settled')`
+    );
+    const clusterCounts: Record<string, number> = {};
+    for (const row of openBetRows.rows) {
+      const c = detectCluster(row.market_title || "");
+      if (c !== "other") clusterCounts[c] = (clusterCounts[c] || 0) + 1;
+    }
+
     for (const { market, council } of results) {
       if (council.verdict !== "PASS") {
+        // Correlation guard: skip if we already have too many bets in this topic cluster
+        const cluster = detectCluster(market.title || "");
+        if (cluster !== "other" && (clusterCounts[cluster] || 0) >= maxCorrelated) {
+          onStage(4, "running", `Skipping ${market.ticker} — already ${clusterCounts[cluster]} open bet(s) in "${cluster}" cluster (max ${maxCorrelated})`);
+          continue;
+        }
+
         const plat = market.platform || "kalshi";
         onStage(4, "running", `[${plat.toUpperCase()}] Executing bet on ${market.ticker}…`);
         const bet = plat === "polymarket"
           ? await executePolyBet(market, council, (msg) => onStage(4, "running", msg))
           : await executeBet(market, council, (msg) => onStage(4, "running", msg));
-        if (bet && !bet.error) allBets.push(bet);
+        if (bet && !bet.error) {
+          allBets.push(bet);
+          // Update local cluster count so subsequent bets in this batch respect the limit
+          if (cluster !== "other") clusterCounts[cluster] = (clusterCounts[cluster] || 0) + 1;
+        }
       }
     }
 
@@ -1986,6 +2133,16 @@ predictorRouter.post("/run", async (_req, res) => {
   res.end();
 });
 
+// Resolution checker — marks won/lost bets from settled Kalshi markets
+predictorRouter.post("/check-resolutions", async (_req, res) => {
+  try {
+    const result = await checkResolutions();
+    res.json({ ...result, message: `Checked ${result.checked} bets — ${result.resolved} resolved` });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Crypto short-term scan — SSE streaming endpoint
 predictorRouter.post("/run-crypto", async (_req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -2500,6 +2657,29 @@ export async function initPredictor() {
         console.error("[predictor-cron/crypto] Error:", e.message);
         await insertLog("error", `[cron/crypto] ERROR: ${e.message}`);
       }
+    }
+
+    // Always check for resolved markets after pipeline run
+    try {
+      const resResult = await checkResolutions();
+      if (resResult.resolved > 0) {
+        await insertLog("info", `[cron/resolution] ${resResult.resolved} bet(s) resolved from ${resResult.checked} checked`);
+      }
+    } catch (e: any) {
+      await insertLog("error", `[cron/resolution] ERROR: ${e.message}`);
+    }
+  });
+
+  // Resolution check cron — runs every 4h independently (catches markets that resolve outside pipeline windows)
+  cron.schedule("0 */4 * * *", async () => {
+    try {
+      const resResult = await checkResolutions();
+      if (resResult.resolved > 0) {
+        console.log(`[resolution-cron] ${resResult.resolved} bet(s) resolved`);
+        await insertLog("info", `[resolution-cron] ${resResult.resolved} resolved from ${resResult.checked} checked`);
+      }
+    } catch (e: any) {
+      console.error("[resolution-cron] Error:", e.message);
     }
   });
 

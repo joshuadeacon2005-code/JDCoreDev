@@ -159,6 +159,43 @@ function CouncilViewer({ transcript, marketTitle }: { transcript: any; marketTit
   );
 }
 
+// ── Check Resolutions Button ──────────────────────────────────────────────────
+
+function CheckResolutionsButton() {
+  const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [msg, setMsg]     = useState("");
+
+  async function run() {
+    setState("loading");
+    try {
+      const r = await fetch("/api/predictor/check-resolutions", { method: "POST" });
+      const d = await r.json();
+      if (r.ok) { setState("done"); setMsg(d.message || `${d.resolved} resolved`); }
+      else      { setState("error"); setMsg(d.error || "Error"); }
+    } catch (e: any) { setState("error"); setMsg(e.message); }
+    setTimeout(() => setState("idle"), 5000);
+  }
+
+  return (
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-[10px] text-muted-foreground">Check Resolutions</p>
+        <p className="text-[9px] text-muted-foreground/60">
+          {state === "done" ? msg : state === "error" ? msg : "Mark won/lost bets from Kalshi"}
+        </p>
+      </div>
+      <button onClick={run} disabled={state === "loading"}
+        className={cn("text-xs px-2 py-0.5 rounded border transition-colors",
+          state === "done"    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" :
+          state === "error"   ? "border-red-500/30 bg-red-500/10 text-red-500" :
+          state === "loading" ? "border-border text-muted-foreground animate-pulse" :
+                                "border-border text-muted-foreground hover:text-foreground")}>
+        {state === "loading" ? "…" : state === "done" ? "Done" : state === "error" ? "Err" : "Run"}
+      </button>
+    </div>
+  );
+}
+
 // ── Bet Card ──────────────────────────────────────────────────────────────────
 
 function BetCard({ bet, onCancelled }: { bet: any; onCancelled?: () => void }) {
@@ -2424,6 +2461,30 @@ export default function PredictionsPage() {
                       ))}
                     </div>
                   </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Max Spread</p>
+                    <div className="flex gap-1 flex-wrap">
+                      {["0.05", "0.08", "0.12", "0.20"].map(v => (
+                        <button key={v} onClick={() => updateSetting("max_spread", v)}
+                          className={cn("text-[10px] px-2 py-1 rounded border transition-colors",
+                            settings.max_spread === v ? "border-purple-500/30 bg-purple-500/10 text-purple-500" : "border-border text-muted-foreground hover:text-foreground")}>
+                          {(parseFloat(v) * 100).toFixed(0)}pp
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Max Bets / Cluster</p>
+                    <div className="flex gap-1 flex-wrap">
+                      {["1", "2", "3", "5"].map(v => (
+                        <button key={v} onClick={() => updateSetting("max_correlated_bets", v)}
+                          className={cn("text-[10px] px-2 py-1 rounded border transition-colors",
+                            settings.max_correlated_bets === v ? "border-purple-500/30 bg-purple-500/10 text-purple-500" : "border-border text-muted-foreground hover:text-foreground")}>
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <Separator />
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
@@ -2435,6 +2496,17 @@ export default function PredictionsPage() {
                         className={cn("text-xs px-2 py-0.5 rounded border transition-colors",
                           settings.cron_enabled === "true" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "border-border text-muted-foreground")}>
                         {settings.cron_enabled === "true" ? "ON" : "OFF"}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">Dynamic Edge</p>
+                        <p className="text-[9px] text-muted-foreground/60">Scales threshold by days-to-close</p>
+                      </div>
+                      <button onClick={() => updateSetting("dynamic_edge", settings.dynamic_edge === "true" ? "false" : "true")}
+                        className={cn("text-xs px-2 py-0.5 rounded border transition-colors",
+                          settings.dynamic_edge === "true" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "border-border text-muted-foreground")}>
+                        {settings.dynamic_edge === "true" ? "ON" : "OFF"}
                       </button>
                     </div>
                   </div>
@@ -2453,6 +2525,8 @@ export default function PredictionsPage() {
                       ))}
                     </div>
                   </div>
+                  <Separator />
+                  <CheckResolutionsButton />
                 </CardContent>
               </Card>
             </div>
