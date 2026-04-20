@@ -86,7 +86,14 @@ async function importDevBetsOnce() {
            (id, market_ticker, market_title, side, contracts, price, cost, confidence, edge,
             council_verdict, status, order_id, platform, logged_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-         ON CONFLICT (id) DO NOTHING`,
+         ON CONFLICT (id) DO UPDATE SET
+           contracts     = CASE WHEN predictor_bets.contracts = 0 THEN EXCLUDED.contracts ELSE predictor_bets.contracts END,
+           price         = CASE WHEN predictor_bets.price     = 0 THEN EXCLUDED.price     ELSE predictor_bets.price     END,
+           cost          = CASE WHEN predictor_bets.cost      = 0 THEN EXCLUDED.cost      ELSE predictor_bets.cost      END,
+           market_title  = COALESCE(NULLIF(predictor_bets.market_title, ''), EXCLUDED.market_title),
+           confidence    = COALESCE(predictor_bets.confidence, EXCLUDED.confidence),
+           edge          = COALESCE(predictor_bets.edge, EXCLUDED.edge),
+           council_verdict = COALESCE(predictor_bets.council_verdict, EXCLUDED.council_verdict)`,
         [b.id, b.market_ticker, b.market_title, b.side, b.contracts, b.price, b.cost,
          b.confidence, b.edge, b.council_verdict, b.status, b.order_id ?? null, b.platform, b.logged_at]
       );
@@ -2262,10 +2269,10 @@ predictorRouter.post("/sync-orders", async (_req, res) => {
 
     // 3. Get all orders from Kalshi (resting + recently cancelled/filled via order status)
     const allDbBets = await pool.query(
-      "SELECT id, order_id, market_ticker, status FROM predictor_bets WHERE order_id IS NOT NULL"
+      "SELECT id, order_id, market_ticker, status, contracts, price, cost FROM predictor_bets WHERE order_id IS NOT NULL"
     );
 
-    // 4. Update statuses for each DB bet by checking live Kalshi order status
+    // 4. Update statuses (and fix zero contracts/cost/price) by checking live Kalshi order status
     for (const bet of allDbBets.rows) {
       if (!bet.order_id) continue;
       try {
@@ -2274,7 +2281,35 @@ predictorRouter.post("/sync-orders", async (_req, res) => {
         if (!order) continue;
 
         const liveStatus = order.status; // resting, cancelled, filled, etc.
-        if (liveStatus && liveStatus !== bet.status) {
+        const statusChanged = liveStatus && liveStatus !== bet.status;
+
+        // Recalculate contracts/price/cost from live order if DB has zero values
+        const dbContracts = parseFloat(bet.contracts) || 0;
+        const dbCost      = parseFloat(bet.cost)      || 0;
+        const yesPriceCents    = order.yes_price ?? 0;
+        const side             = order.side === "no" ? "no" : "yes";
+        const actualPriceCents = side === "no" ? (100 - yesPriceCents) : yesPriceCents;
+        // For "executed" (in-book) orders, remaining_count may be 0 — fall back to count
+        const liveContracts    = (order.remaining_count != null && order.remaining_count > 0)
+          ? order.remaining_count : (order.count ?? 0);
+        const livePrice        = actualPriceCents / 100;
+        const liveCost         = (liveContracts * actualPriceCents) / 100;
+        const needsAmountFix   = (dbContracts === 0 || dbCost === 0) && liveContracts > 0;
+
+        if (statusChanged && needsAmountFix) {
+          await pool.query(
+            "UPDATE predictor_bets SET status=$1, contracts=$2, price=$3, cost=$4 WHERE order_id=$5",
+            [liveStatus, liveContracts, livePrice, liveCost, bet.order_id]
+          );
+          summary.updated++;
+          if (liveStatus === "filled") summary.filled++;
+        } else if (needsAmountFix) {
+          await pool.query(
+            "UPDATE predictor_bets SET contracts=$1, price=$2, cost=$3 WHERE order_id=$4",
+            [liveContracts, livePrice, liveCost, bet.order_id]
+          );
+          summary.updated++;
+        } else if (statusChanged) {
           await pool.query(
             "UPDATE predictor_bets SET status=$1 WHERE order_id=$2",
             [liveStatus, bet.order_id]
@@ -2313,7 +2348,8 @@ predictorRouter.post("/sync-orders", async (_req, res) => {
       const yesPriceCents    = order.yes_price ?? 0;
       const actualPriceCents = side === "no" ? (100 - yesPriceCents) : yesPriceCents;
       const priceDecimal     = actualPriceCents / 100;
-      const contracts        = order.remaining_count ?? order.count ?? 0;
+      const contracts        = (order.remaining_count != null && order.remaining_count > 0)
+        ? order.remaining_count : (order.count ?? 0);
       const costUSD          = (contracts * actualPriceCents) / 100;
 
       // Fetch market title and close_time for a readable label
