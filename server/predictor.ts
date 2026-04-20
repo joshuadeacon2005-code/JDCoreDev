@@ -186,6 +186,8 @@ async function initPredictorTables() {
   // Default settings
   const defaults: [string, string][] = [
     ["cron_enabled",            "false"],
+    ["cron_interval_hours",     "2"],
+    ["cron_last_run",           ""],
     ["min_edge",                "0.05"],
     ["max_bet_usd",             "25"],
     ["poly_max_bet_usd",        "20"],
@@ -2746,10 +2748,18 @@ export async function initPredictor() {
   if (_pk) console.log("[predictor] POLY_PRIVATE_KEY format: OK (EOA)");
   if (_funder) console.log("[predictor] POLY_FUNDER format: OK (EOA address)");
 
-  // Cron: scan every 2 hours
-  cron.schedule("0 */2 * * *", async () => {
+  // Tick every hour; interval controlled by cron_interval_hours setting
+  cron.schedule("0 * * * *", async () => {
     const enabled = await getSetting("cron_enabled");
     if (enabled !== "true") return;
+
+    const intervalHours = parseFloat((await getSetting("cron_interval_hours")) || "2");
+    const lastRaw = await getSetting("cron_last_run");
+    if (lastRaw) {
+      const elapsedHours = (Date.now() - new Date(lastRaw).getTime()) / 3600000;
+      if (elapsedHours < intervalHours) return;
+    }
+    await setSetting("cron_last_run", new Date().toISOString());
 
     console.log("[predictor-cron] Running scan…");
     await insertLog("info", "[cron] Scheduled prediction scan");

@@ -132,6 +132,7 @@ async function initArbTables() {
     ["auto_execute", "false"],
     ["kalshi_mode", "demo"],
     ["scan_interval_min", "5"],
+    ["cron_last_run", ""],
   ];
   for (const [k, v] of defaults) {
     await pool.query(
@@ -1268,10 +1269,18 @@ export async function initArbitrage() {
   await initArbTables();
   console.log("[arbitrage] tables ready");
 
-  // Fast scan every 5 minutes for arb opportunities
-  cron.schedule("*/5 * * * *", async () => {
+  // Tick every minute; interval is controlled by scan_interval_min setting
+  cron.schedule("* * * * *", async () => {
     const enabled = await getSetting("cron_enabled");
     if (enabled !== "true") return;
+
+    const intervalMin = parseFloat((await getSetting("scan_interval_min")) || "5");
+    const lastRaw = await getSetting("cron_last_run");
+    if (lastRaw) {
+      const elapsed = (Date.now() - new Date(lastRaw).getTime()) / 60000;
+      if (elapsed < intervalMin) return;
+    }
+    await setSetting("cron_last_run", new Date().toISOString());
 
     console.log("[arb-cron] Running scan…");
     await insertLog("info", "[cron] Arbitrage scan triggered");
@@ -1287,5 +1296,5 @@ export async function initArbitrage() {
     }
   });
 
-  console.log("[arbitrage] cron scheduler ready — cadence: 5m");
+  console.log("[arbitrage] cron scheduler ready — interval controlled by scan_interval_min");
 }

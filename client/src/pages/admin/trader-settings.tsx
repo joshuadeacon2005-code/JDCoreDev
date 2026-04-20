@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -26,6 +26,22 @@ const UNIVERSES: any = {
   high:   ["MSTR","COIN","HOOD","IONQ","SMCI","PLTR","RKLB","CLSK","MARA","TSLA","AMD","SOXL","TQQQ","ARKK"],
   crypto: ["BTCUSD","ETHUSD","SOLUSD","AVAXUSD","LINKUSD","DOTUSD","ADAUSD","MATICUSD"],
 };
+
+function ModeIntervalInput({ modeKey, value, onSave }: { modeKey: string; value: string; onSave: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  const ref = useRef(value);
+  useEffect(() => { setV(value); ref.current = value; }, [value]);
+  const unit = modeKey === "portfolio" || modeKey === "crypto" ? "min (daily=1440)" : "min";
+  return (
+    <div className="flex items-center gap-2 pl-12">
+      <span className="text-[10px] text-muted-foreground flex-1">Interval</span>
+      <input type="number" min="1" value={v} onChange={e => setV(e.target.value)}
+        className="w-20 text-right text-[10px] font-mono bg-muted/60 border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-primary" />
+      <span className="text-[10px] text-muted-foreground">{unit}</span>
+      <Button size="sm" variant="ghost" className="h-5 text-[10px] px-2" onClick={() => { onSave(v); ref.current = v; }}>Save</Button>
+    </div>
+  );
+}
 
 export default function TraderSettings() {
   const [health,      setHealth]      = useState<any>(null);
@@ -149,24 +165,27 @@ export default function TraderSettings() {
                   const lastRun = settings[`cron_last_run_${k}`];
                   const lastLabel = lastRun ? fmtHKT(lastRun, {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) + ' HKT' : 'Never';
                   return (
-                    <div key={k} className={cn("flex items-center gap-3 px-3 py-2.5 rounded-md border transition-colors",
+                    <div key={k} className={cn("flex flex-col gap-2 px-3 py-2.5 rounded-md border transition-colors",
                       on ? "border-emerald-500/20 bg-emerald-500/5" : "border-border bg-muted/20")}>
-                      <button onClick={()=>updateSetting(`cron_${k}_enabled`, on?'false':'true')} disabled={saving}
-                        className={cn("relative w-9 h-5 rounded-full border flex-shrink-0 transition-colors",
-                          on ? "bg-emerald-500 border-emerald-500" : "bg-muted border-border")}>
-                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all",
-                          on ? "left-4" : "left-0.5")}/>
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium">{v.label}</p>
-                        <p className="text-[10px] text-muted-foreground">{v.cadence} · Last run: {lastLabel}</p>
+                      <div className="flex items-center gap-3">
+                        <button onClick={()=>updateSetting(`cron_${k}_enabled`, on?'false':'true')} disabled={saving}
+                          className={cn("relative w-9 h-5 rounded-full border flex-shrink-0 transition-colors",
+                            on ? "bg-emerald-500 border-emerald-500" : "bg-muted border-border")}>
+                          <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all",
+                            on ? "left-4" : "left-0.5")}/>
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium">{v.label}</p>
+                          <p className="text-[10px] text-muted-foreground">Last run: {lastLabel}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {cronMsg[k]&&<p className={cn("text-[10px]", cronMsg[k].startsWith("Error") ? "text-red-500" : "text-emerald-600 dark:text-emerald-400")}>{cronMsg[k]}</p>}
+                          <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={()=>triggerManualRun(k)} disabled={cronRunning===k}>
+                            <Play className="h-3 w-3 mr-1"/>{cronRunning===k?"…":"Run"}
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {cronMsg[k]&&<p className={cn("text-[10px]", cronMsg[k].startsWith("Error") ? "text-red-500" : "text-emerald-600 dark:text-emerald-400")}>{cronMsg[k]}</p>}
-                        <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={()=>triggerManualRun(k)} disabled={cronRunning===k}>
-                          <Play className="h-3 w-3 mr-1"/>{cronRunning===k?"…":"Run"}
-                        </Button>
-                      </div>
+                      <ModeIntervalInput modeKey={k} value={settings[`cron_interval_${k}`] || String(({day:15,swing:240,portfolio:1440,crypto:1440} as any)[k] || 15)} onSave={mins=>updateSetting(`cron_interval_${k}`, mins)} />
                     </div>
                   );
                 })}

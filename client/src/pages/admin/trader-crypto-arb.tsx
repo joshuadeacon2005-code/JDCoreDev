@@ -486,7 +486,8 @@ function SettingsTab({ settings, onUpdate }: { settings: any; onUpdate: (key: st
           <CardTitle className="text-sm">Engine Settings</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-2">
-          <ToggleRow label="Cron Enabled" desc="Run scans automatically every 3 minutes" settingKey="cron_enabled" />
+          <ToggleRow label="Cron Enabled" desc="Run scans on a recurring schedule" settingKey="cron_enabled" />
+          <NumRow label="Scan Interval" desc="Minutes between automatic scans" settingKey="scan_interval_min" suffix="min" />
           <ToggleRow label="Auto Execute" desc="Automatically execute approved opportunities" settingKey="auto_execute" />
           <ToggleRow label="Hedge Enabled" desc="Place offsetting spot trades on Alpaca" settingKey="hedge_enabled" />
         </CardContent>

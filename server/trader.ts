@@ -84,6 +84,10 @@ async function initTraderTables() {
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_enabled', 'false') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_risk', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_RISK || 'medium']);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_mode', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_MODE || 'day']);
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_day', '15') ON CONFLICT (key) DO NOTHING`);
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_swing', '240') ON CONFLICT (key) DO NOTHING`);
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_portfolio', '1440') ON CONFLICT (key) DO NOTHING`);
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_crypto', '1440') ON CONFLICT (key) DO NOTHING`);
 }
 
 async function getSetting(key: string): Promise<string | null> {
@@ -1469,19 +1473,21 @@ function isMarketHours(): boolean {
 }
 
 async function shouldRunNow(mode: string): Promise<boolean> {
+  const dbInterval = await getSetting(`cron_interval_${mode}`);
+  const interval = dbInterval ? parseFloat(dbInterval) : (MODE_INTERVAL_MINUTES[mode] ?? 15);
+
   if (mode === 'crypto') {
     // 24/7 — just check the time interval
     const lastRaw = await getSetting(`cron_last_run_${mode}`);
     if (!lastRaw) return true;
     const mins = (Date.now() - new Date(lastRaw).getTime()) / 60000;
-    return mins >= MODE_INTERVAL_MINUTES.crypto;
+    return mins >= interval;
   }
 
   // Stock modes: only run during market hours
   if (!isMarketHours()) return false;
 
-  const interval = MODE_INTERVAL_MINUTES[mode] ?? 15;
-  const lastRaw  = await getSetting(`cron_last_run_${mode}`);
+  const lastRaw = await getSetting(`cron_last_run_${mode}`);
   if (!lastRaw) return true;
   const mins = (Date.now() - new Date(lastRaw).getTime()) / 60000;
   return mins >= interval;

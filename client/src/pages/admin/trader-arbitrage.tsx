@@ -17,6 +17,25 @@ import { fmtHKT } from "@/lib/hkt";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+function ArbIntervalInput({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => { setV(value); }, [value]);
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-xs text-muted-foreground">Scan interval</span>
+      <div className="flex items-center gap-1.5">
+        <input type="number" min="1" value={v} onChange={e => setV(e.target.value)}
+          className="w-16 text-right text-xs font-mono bg-muted/50 border border-border rounded px-2 py-1 focus:outline-none focus:border-primary" />
+        <span className="text-[10px] text-muted-foreground">min</span>
+        <button onClick={() => onSave(v)}
+          className="text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground transition-colors">
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const fmtUSD = (n: any) => typeof n === "number" ? "$" + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
 const fmtPct = (n: any) => typeof n !== "number" ? "—" : (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
 const clrPnl = (n: any) => n > 0 ? "text-emerald-600 dark:text-emerald-400" : n < 0 ? "text-red-500" : "text-muted-foreground";
@@ -490,7 +509,7 @@ export default function ArbitragePage() {
                     </button>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">Auto-scan (5m)</span>
+                    <span className="text-xs text-muted-foreground">Auto-scan</span>
                     <button onClick={() => updateSetting("cron_enabled", settings.cron_enabled === "true" ? "false" : "true")}
                       className={cn("text-xs px-3 py-1 rounded-md border transition-colors",
                         settings.cron_enabled === "true"
@@ -499,6 +518,7 @@ export default function ArbitragePage() {
                       {settings.cron_enabled === "true" ? "ON" : "OFF"}
                     </button>
                   </div>
+                  <ArbIntervalInput value={settings.scan_interval_min || "5"} onSave={v => updateSetting("scan_interval_min", v)} />
                 </CardContent>
               </Card>
             </div>

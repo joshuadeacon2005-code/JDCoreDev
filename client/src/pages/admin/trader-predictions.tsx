@@ -1986,7 +1986,8 @@ function SettingsTab({ settings, onUpdate }: { settings: any; onUpdate: (k: stri
           <CardTitle className="text-sm">Trading Mode & Schedule</CardTitle>
         </CardHeader>
         <CardContent className="pb-4 space-y-3">
-          <ToggleRow k="cron_enabled" label="Auto-Scan (every 2 hours)" desc="Automatically scan Kalshi + Polymarket and place bets when edge is found" />
+          <ToggleRow k="cron_enabled" label="Auto-Scan" desc="Automatically scan Kalshi + Polymarket and place bets when edge is found" />
+          <FieldRow k="cron_interval_hours" label="Scan Interval (hours)" desc="How often the cron runs — minimum 1, default 2" type="number" placeholder="2" />
           <Separator />
           <ChoiceRow k="mode" label="Kalshi Mode"
             choices={["demo", "live"]}
