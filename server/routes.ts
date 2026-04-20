@@ -515,6 +515,71 @@ export async function registerRoutes(
         ]
       );
 
+      // ── Bridge to Lead Engine audit system ────────────────────────────────
+      // After saving to the leads table, also upsert into lead_audits + lead_drafts
+      // so the lead appears in the Lead Engine dashboard immediately.
+      try {
+        // Extract a clean hostname from the website URL for use as the unique domain key
+        let auditDomain: string;
+        if (lead.website) {
+          try {
+            const url = lead.website.startsWith("http") ? lead.website : `https://${lead.website}`;
+            auditDomain = new URL(url).hostname.replace(/^www\./, "");
+          } catch {
+            auditDomain = lead.website;
+          }
+        } else {
+          auditDomain = `${lead.business_name.toLowerCase().replace(/[^a-z0-9]/g, "-")}.cowork`;
+        }
+
+        // Upsert audit — ON CONFLICT (domain) DO UPDATE handles dedup automatically
+        await storage.upsertLeadAudit({
+          name: lead.business_name,
+          domain: auditDomain,
+          location: lead.location || null,
+          industry: lead.industry || null,
+          auditUrl: null,
+          htmlContent: null,
+          channel: "cowork-engine",
+          status: "draft",
+        });
+
+        // Create or update draft if outreach content is provided
+        if (lead.draft_email_subject && lead.draft_email_body) {
+          const existingDraft = await pool.query(
+            `SELECT id FROM lead_drafts WHERE domain = $1 LIMIT 1`,
+            [auditDomain]
+          );
+          if (existingDraft.rows.length > 0) {
+            await storage.updateLeadDraft(existingDraft.rows[0].id, {
+              subject: lead.draft_email_subject,
+              body: lead.draft_email_body,
+              domain: auditDomain,
+              auditUrl: null,
+            });
+          } else {
+            await storage.createLeadDraft({
+              company: lead.business_name,
+              domain: auditDomain,
+              email: lead.email || null,
+              instagram: lead.instagram || null,
+              whatsapp: null,
+              auditUrl: null,
+              subject: lead.draft_email_subject,
+              body: lead.draft_email_body,
+              sent: false,
+              sentAt: null,
+            });
+          }
+        }
+
+        console.log(`[leads/import] bridged to Lead Engine: ${lead.business_name} (${auditDomain})`);
+      } catch (bridgeErr: any) {
+        // Bridge failure is non-fatal — the lead was still saved to the leads table
+        console.error("[leads/import] Lead Engine bridge error:", bridgeErr.message);
+      }
+      // ── End Lead Engine bridge ─────────────────────────────────────────────
+
       return res.json({ ok: true, id, business_name: lead.business_name });
     } catch (err: any) {
       console.error("[leads/import] error:", err.message);

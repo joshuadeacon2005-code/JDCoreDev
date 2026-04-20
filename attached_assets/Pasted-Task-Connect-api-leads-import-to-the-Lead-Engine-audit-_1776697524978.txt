@@ -1,0 +1,34 @@
+Task: Connect /api/leads/import to the Lead Engine audit system
+Right now, POST /api/leads/import stores leads into a separate leads table, but the Lead Engine dashboard (/admin/lead-engine) reads from the audits system. Leads imported via the API don't show up in the Lead Engine at all.
+What needs to happen:
+When a lead is successfully imported via /api/leads/import, it should ALSO create a corresponding entry in the Lead Engine's audit/outreach system so it appears in the Active Audits list with "Draft" status and shows up in the Drafts tab with the email ready to send.
+Mapping from the import payload to the Lead Engine audit:
+
+business_name → audit name/company
+website → audit domain/website
+location → location
+industry → industry
+draft_email_subject → outreach email subject
+draft_email_body → outreach email body
+draft_dm → store as DM draft if the system supports it
+email → recipient email (pre-fill if available)
+instagram → instagram handle
+overall_score + scores → use to generate or reference audit scoring
+missing_features → include in audit data
+ai_opportunities → include in audit data
+competitor_intel → include in audit notes
+notes → notes field
+Status should be "Draft"
+Channel should be "cowork-engine" (to distinguish from manual audits)
+
+Important details:
+
+The Lead Engine API is protected by the x-engine-secret header (ENGINE_SECRET env var), not the leads auth_key. The import route uses auth_key in the JSON body. Both auth mechanisms should remain as they are — just have the leads import handler internally call the same function/service that creates Lead Engine audits.
+If the Lead Engine normally generates an HTML audit page (the "Preview" / "Online" links I see in the dashboard), either generate a basic one from the imported data or skip it and mark the audit as not having a public page yet.
+Deduplication: if a lead with the same website domain already exists in the Lead Engine audits, update it rather than creating a duplicate.
+The existing /api/leads table can stay as-is for historical storage — this is about also writing to the Lead Engine's data store.
+
+Test: After making the change, this curl should create an audit visible in the Lead Engine dashboard:
+bashcurl -X POST https://jdcoredev.com/api/leads/import \
+  -H "Content-Type: application/json" \
+  -d '{"auth_key":"jdcd-leads-1776161970","lead":{"business_name":"Test Import Bridge","industry":"Test","location":"Central, Hong Kong","priority":"MEDIUM","website":"https://example-test-bridge.com","overall_score":3,"draft_email_subject":"Test subject","draft_email_body":"Test email body","notes":"Testing import-to-lead-engine bridge"}}'
