@@ -39,3 +39,8 @@ build = ["npm", "run", "build"]
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+ENGINE_SECRET = "jdcd-engine-ai72shfgexau"
