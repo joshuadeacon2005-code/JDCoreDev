@@ -5,10 +5,10 @@ import { NavBar } from "@/components/ui/tubelight-navbar";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { GlowingEffect } from "@/components/ui/glowing-effect";
-import { 
+import {
   Home, Settings, Briefcase, Mail, Palette, Type, Sparkles, Paintbrush,
   ShoppingCart, CreditCard, BarChart3, Package, Calendar, Bell, Users,
-  TrendingUp, Database, Shield, Scan, Truck
+  TrendingUp, Database, Shield, Scan, Truck, Wand2, Layers, Box,
 } from "lucide-react";
 import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
@@ -17,6 +17,34 @@ const navItems = [
   { name: 'Services', url: '/services', icon: Settings },
   { name: 'Work', url: '/work', icon: Briefcase },
   { name: 'Contact', url: '/contact', icon: Mail }
+];
+
+const creativeProjects = [
+  {
+    title: "CosmoPlushCraft3D",
+    titleAccent: "AI Visualiser",
+    label: "Creative AI",
+    description: "A web app for plush toy designers and manufacturers that turns 2D character drawings into photorealistic 3D product renders. Upload a sketch → get a full front, back, and side-view spec sheet with accurate fabric textures from a 19-material library.",
+    highlights: [
+      { icon: Wand2,  title: "Sketch to 3D Render",    desc: "Photorealistic plush from a 2D drawing in seconds" },
+      { icon: Layers, title: "19-Material Fabric Library", desc: "Bunny fur, corduroy, fleece — exact texture reproduction" },
+      { icon: Box,    title: "Full Spec Sheet Output",  desc: "Front, back, and side views for manufacturing" },
+    ],
+    tags: ["Generative AI", "Image Pipeline", "Product Design", "B2B SaaS"],
+    preview: {
+      initials: "CP",
+      name: "CosmoPlushCraft3D",
+      subtitle: "AI Plush Visualiser",
+      metrics: [
+        { label: "Views Generated", value: "3",    color: "text-primary"    },
+        { label: "Fabrics",         value: "19",   color: "text-accent"     },
+        { label: "Turnaround",      value: "<60s", color: "text-foreground" },
+      ],
+    },
+    cta: "View Project",
+    href: "https://cosmoplushcraft3d.com",
+    featured: true,
+  },
 ];
 
 const projects = [
@@ -137,7 +165,7 @@ const projects = [
   },
 ];
 
-function FeaturedShowcase({ project }: { project: typeof projects[0] }) {
+function FeaturedShowcase({ project }: { project: (typeof projects[0]) & { href?: string } }) {
   return (
     <div className="mb-12 relative rounded-lg overflow-visible">
       <GlowingEffect
@@ -189,14 +217,19 @@ function FeaturedShowcase({ project }: { project: typeof projects[0] }) {
               ))}
             </div>
 
-            <Link href="/contact">
-              <Button 
-                className="border border-primary text-primary bg-transparent hover:bg-primary hover:text-primary-foreground px-6 py-5 uppercase tracking-widest text-[10px] font-bold rounded-sm transition-all duration-300"
-                data-testid="button-project-featured"
-              >
-                {project.cta}
-              </Button>
-            </Link>
+            {project.href ? (
+              <a href={project.href} target="_blank" rel="noopener noreferrer">
+                <Button className="border border-primary text-primary bg-transparent hover:bg-primary hover:text-primary-foreground px-6 py-5 uppercase tracking-widest text-[10px] font-bold rounded-sm transition-all duration-300" data-testid="button-project-featured">
+                  {project.cta}
+                </Button>
+              </a>
+            ) : (
+              <Link href="/contact">
+                <Button className="border border-primary text-primary bg-transparent hover:bg-primary hover:text-primary-foreground px-6 py-5 uppercase tracking-widest text-[10px] font-bold rounded-sm transition-all duration-300" data-testid="button-project-featured">
+                  {project.cta}
+                </Button>
+              </Link>
+            )}
           </div>
           
           <div className="relative hidden md:block">
@@ -310,8 +343,27 @@ export default function WorkPage() {
                 Our <span className="text-primary">Work</span>
               </h1>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                A selection of projects we've built for clients across various industries
+                Systems that run businesses and tools that people interact with — built across two tracks.
               </p>
+            </div>
+
+            {/* Creative AI track */}
+            <div className="mb-10">
+              <div className="flex items-center gap-3 mb-6">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <span className="text-xs font-black uppercase tracking-[0.25em] text-primary">Creative AI Tools</span>
+                <div className="flex-1 h-px bg-primary/20" />
+              </div>
+              {creativeProjects.map((project) => (
+                <FeaturedShowcase key={project.title} project={project} />
+              ))}
+            </div>
+
+            {/* Systems & Platforms track */}
+            <div className="flex items-center gap-3 mb-6">
+              <Sparkles className="h-4 w-4 text-accent" />
+              <span className="text-xs font-black uppercase tracking-[0.25em] text-accent">Systems & Platforms</span>
+              <div className="flex-1 h-px bg-accent/20" />
             </div>
 
             {/* Featured Therapist Template */}
