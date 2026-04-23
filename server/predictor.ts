@@ -586,6 +586,16 @@ async function executePolyBet(
   const tokenId  = isBuyYes ? market.yes_token_id : market.no_token_id;
   const price    = isBuyYes ? market.yes_price : (1 - market.yes_price);
 
+  // NO-price ceiling: same rule as Kalshi — skip NO bets where the NO contract costs >80¢.
+  // At that price the YES side is <20¢ and the correct play is a cheap YES, not expensive NO.
+  if (!isBuyYes && price > 0.80) {
+    onStage(
+      `Skipping Poly ${market.ticker} — NO price ${(price * 100).toFixed(0)}¢ too expensive ` +
+      `(YES is only ${(market.yes_price * 100).toFixed(0)}¢; prefer a YES bet on cheap contracts)`
+    );
+    return { skipped: true, reason: "no_price_ceiling" };
+  }
+
   if (!tokenId) {
     onStage(`Skipping Poly ${market.ticker} — no token ID`);
     return { error: true, message: "Missing token ID" };
@@ -1307,6 +1317,11 @@ IMPORTANT: "edge" in your JSON must ALWAYS be a positive number (the magnitude o
 - BET_YES example: market=0.40, you=0.62 → edge=0.22 (positive)
 - BET_NO example: market=0.60, you=0.38 → edge=0.22 (positive, not -0.22)
 
+CRITICAL — NO-BET PRICE RULE: Do NOT choose BET_NO when the market YES price is below 0.20 (20%).
+When YES is already cheap (< 20¢), the NO contracts cost > 80¢ each — terrible risk/reward.
+If you think the true probability is even lower (e.g., market=10%, you=4%), the correct answer is PASS or BET_YES (if you think the crowd is underpricing YES).
+Only choose BET_NO when market YES price is between 0.20 and 0.80 — those are the markets with genuine NO-side value.
+
 Return ONLY JSON:
 {
   "final_probability": 0.72,
@@ -1340,7 +1355,7 @@ Return ONLY JSON:
     verdict: risk?.verdict || "PASS",
     confidence: risk?.confidence || "low",
     final_probability: risk?.final_probability || market.your_estimate,
-    edge: risk?.edge || 0,
+    edge: Math.abs(risk?.edge || 0),   // always positive — BET_NO edge sign bug fix
     kelly_fraction: risk?.kelly_fraction || 0,
     suggested_contracts: risk?.suggested_contracts || 0,
     max_risk_usd: risk?.max_risk_usd || 0,
@@ -1389,6 +1404,17 @@ async function executeBet(
 
   const side = council.verdict === "BET_YES" ? "yes" : "no";
   const price = side === "yes" ? market.yes_price : 1 - market.yes_price;
+
+  // NO-price ceiling: if the NO contract costs >80¢, upside is <25% and risk/reward is poor.
+  // This also prevents contradictory bets where the predictor separately bet YES on the cheap
+  // side of the same real-world event.  At NO price > 80¢ we always pass.
+  if (side === "no" && price > 0.80) {
+    onStage(
+      `Skipping ${market.ticker} — NO price ${(price * 100).toFixed(0)}¢ is too expensive ` +
+      `(YES side is only ${(market.yes_price * 100).toFixed(0)}¢; prefer a YES bet on cheap contracts, not NO at a premium)`
+    );
+    return { skipped: true, reason: "no_price_ceiling" };
+  }
 
   // Sanity check: price must be a valid Kalshi cent value (1–99 cents)
   const priceCentsCheck = Math.round(price * 100);
