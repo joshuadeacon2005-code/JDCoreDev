@@ -3649,10 +3649,12 @@ JD CoreDev System`,
 
       let aggTotalMinutes = 0;
       let aggTotalCostCents = 0;
+      let aggExternalCostCents = 0;
       let aggBudgetCents = 0;
       let aggBudgetMinutes = 0;
       let hasCostBudget = false;
       let hasTimeBudget = false;
+      const OVERAGE_RATE_CENTS_PER_HOUR = 3000; // $30/hr
 
       console.log(`[Maintenance Data] Fetching for projectIds=${JSON.stringify(allClientProjectIds)}, range=${resolvedStartDate} to ${resolvedEndDate}, clientId=${clientId || 'none'}`);
 
@@ -3667,6 +3669,7 @@ JD CoreDev System`,
         const logsWithCosts = [];
         let totalMinutes = 0;
         let totalCostCents = 0;
+        let externalCostCents = 0;
 
         for (const log of logs) {
           const subCosts = await storage.getMaintenanceLogCosts(log.id);
@@ -3675,6 +3678,7 @@ JD CoreDev System`,
 
           totalMinutes += log.minutesSpent;
           totalCostCents += logTotalCost;
+          externalCostCents += subCostTotal;
 
           logsWithCosts.push({
             id: log.id,
@@ -3701,52 +3705,55 @@ JD CoreDev System`,
 
         aggTotalMinutes += totalMinutes;
         aggTotalCostCents += totalCostCents;
+        aggExternalCostCents += externalCostCents;
 
-        const overageCents = budgetCents !== null && totalCostCents > budgetCents
-          ? totalCostCents - budgetCents
+        // Time-based overage minus pass-through external costs, floored at 0.
+        // Rationale: client is billed for the developer's time over budget at
+        // the agreed hourly rate; external costs are already invoiced /
+        // absorbed and reduce the time-overage liability so the same dollar
+        // isn't billed twice.
+        const overtimeMins = budgetMins !== null && totalMinutes > budgetMins
+          ? totalMinutes - budgetMins
           : 0;
+        const timeOverageCents = Math.round((overtimeMins * OVERAGE_RATE_CENTS_PER_HOUR) / 60);
+        const overageCents = Math.max(0, timeOverageCents - externalCostCents);
 
         perProject[projectId] = {
           projectName: project.name,
           logs: logsWithCosts,
           totalMinutes,
           totalCostCents,
+          externalCostCents,
           budgetCents,
           budgetMinutes: budgetMins,
           overageCents,
         };
       }
 
-      const OVERTIME_RATE_CENTS_PER_MINUTE = Math.round((5000) / 60);
+      const aggOvertimeMinutes = hasTimeBudget && aggTotalMinutes > aggBudgetMinutes
+        ? aggTotalMinutes - aggBudgetMinutes
+        : 0;
+      const timeOverageCents = Math.round(
+        (aggOvertimeMinutes * OVERAGE_RATE_CENTS_PER_HOUR) / 60,
+      );
+      const finalOverageCents = Math.max(0, timeOverageCents - aggExternalCostCents);
       const costOverageCents = hasCostBudget && aggTotalCostCents > aggBudgetCents
         ? aggTotalCostCents - aggBudgetCents
         : 0;
-      const overtimeMinutes = hasTimeBudget && aggTotalMinutes > aggBudgetMinutes
-        ? aggTotalMinutes - aggBudgetMinutes
-        : 0;
-      const timeOverageCents = overtimeMinutes * OVERTIME_RATE_CENTS_PER_MINUTE;
-
-      let finalOverageCents = 0;
-      if (costOverageCents > 0 && timeOverageCents > 0) {
-        finalOverageCents = Math.min(costOverageCents, timeOverageCents);
-      } else if (costOverageCents > 0) {
-        finalOverageCents = costOverageCents;
-      } else if (timeOverageCents > 0) {
-        finalOverageCents = timeOverageCents;
-      }
 
       res.json({
         projects: perProject,
         aggregated: {
           totalMinutes: aggTotalMinutes,
           totalCostCents: aggTotalCostCents,
+          externalCostCents: aggExternalCostCents,
           totalBudgetCents: hasCostBudget ? aggBudgetCents : null,
           totalBudgetMinutes: hasTimeBudget ? aggBudgetMinutes : null,
           costOverageCents,
-          overtimeMinutes,
+          overtimeMinutes: aggOvertimeMinutes,
           timeOverageCents,
           finalOverageCents,
-          overtimeRatePerHour: 50,
+          overtimeRatePerHour: OVERAGE_RATE_CENTS_PER_HOUR / 100,
         },
       });
     } catch (error) {
@@ -3797,30 +3804,42 @@ JD CoreDev System`,
         return res.status(400).json({ error: "Selected projects have no hosting fees configured" });
       }
 
-      // Calculate maintenance overage per project, billed against the *current
-      // billing cycle* (project_hosting_terms.current_cycle_start_date) rather
-      // than the calendar month — the user resets the cycle manually after
-      // payment, so the bill should reflect everything since that reset.
+      // Time-based maintenance overage, computed against the *current billing
+      // cycle* (project_hosting_terms.current_cycle_start_date) which the user
+      // resets manually after each payment. Charged at $30/hr above the time
+      // budget, reduced by any external pass-through dev costs already
+      // recorded in the cycle so the same dollar isn't billed twice. Floors
+      // at 0 so a refund/credit doesn't accidentally turn into a discount.
+      const HOSTING_OVERAGE_RATE_CENTS_PER_HOUR = 3000; // $30/hr
       let totalOverageCents = 0;
-      const projectOverages: Record<number, { amount: number; cycleStart: string }> = {};
+      const projectOverages: Record<
+        number,
+        { amount: number; cycleStart: string; overtimeMinutes: number; externalCents: number }
+      > = {};
       const cycleEnd = invoiceDate || new Date().toISOString().split("T")[0];
       for (const project of selectedProjects) {
         const terms = await storage.getProjectHostingTerms(project.id);
-        const budgetCents = terms?.maintenanceBudgetCents ?? null;
-        if (budgetCents === null) continue;
+        const budgetMinutes = terms?.maintenanceBudgetMinutes ?? null;
+        if (budgetMinutes === null) continue;
         const cycleStart =
           terms?.currentCycleStartDate ||
           (billingYear && billingMonth
             ? `${billingYear}-${String(billingMonth).padStart(2, "0")}-01`
             : cycleEnd);
-        const summary = await storage.getMaintenanceLogSummaryByDateRange(
-          project.id,
-          cycleStart,
-          cycleEnd,
+        const logs = await storage.getMaintenanceLogsByDateRange(project.id, cycleStart, cycleEnd);
+        const totalMinutes = logs.reduce((sum, log) => sum + log.minutesSpent, 0);
+        let externalCents = 0;
+        for (const log of logs) {
+          const subCosts = await storage.getMaintenanceLogCosts(log.id);
+          externalCents += subCosts.reduce((sum, c) => sum + c.costCents, 0);
+        }
+        const overtimeMinutes = Math.max(0, totalMinutes - budgetMinutes);
+        const timeOverageCents = Math.round(
+          (overtimeMinutes * HOSTING_OVERAGE_RATE_CENTS_PER_HOUR) / 60,
         );
-        if (summary.totalCostCents > budgetCents) {
-          const overage = summary.totalCostCents - budgetCents;
-          projectOverages[project.id] = { amount: overage, cycleStart };
+        const overage = Math.max(0, timeOverageCents - externalCents);
+        if (overage > 0) {
+          projectOverages[project.id] = { amount: overage, cycleStart, overtimeMinutes, externalCents };
           totalOverageCents += overage;
         }
       }
@@ -3857,12 +3876,16 @@ JD CoreDev System`,
         // Add overage line item if applicable
         const overage = projectOverages[project.id];
         if (overage && overage.amount > 0) {
+          const hours = (overage.overtimeMinutes / 60).toFixed(2);
+          const externalNote = overage.externalCents > 0
+            ? ` less $${(overage.externalCents / 100).toFixed(2)} external dev costs`
+            : "";
           await storage.createHostingInvoiceLineItem({
             invoiceId: invoice.id,
             projectId: project.id,
             projectName: project.name,
             amountCents: overage.amount,
-            description: `Maintenance Overage (cycle since ${overage.cycleStart})`,
+            description: `Maintenance Overage — ${hours}h over budget @ $30/hr${externalNote} (cycle since ${overage.cycleStart})`,
           });
         }
       }
