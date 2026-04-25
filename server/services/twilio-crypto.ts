@@ -1,53 +1,32 @@
-// Twilio service for crypto notifications
-// Uses Replit's Twilio connector integration
-
 import twilio from 'twilio';
 
-let connectionSettings: any;
+function readTwilioEnv() {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const apiKey = process.env.TWILIO_API_KEY;
+  const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const phoneNumber = process.env.TWILIO_PHONE_NUMBER;
 
-async function getCredentials() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY 
-    ? 'repl ' + process.env.REPL_IDENTITY 
-    : process.env.WEB_REPL_RENEWAL 
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-    : null;
-
-  if (!xReplitToken) {
-    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
+  if (!accountSid || !phoneNumber) {
+    throw new Error('Twilio env not set: TWILIO_ACCOUNT_SID and TWILIO_PHONE_NUMBER are required');
+  }
+  if (!(apiKey && apiKeySecret) && !authToken) {
+    throw new Error('Twilio env not set: provide either TWILIO_API_KEY+TWILIO_API_KEY_SECRET or TWILIO_AUTH_TOKEN');
   }
 
-  connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=twilio',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
-      }
-    }
-  ).then(res => res.json()).then(data => data.items?.[0]);
-
-  if (!connectionSettings || (!connectionSettings.settings.account_sid || !connectionSettings.settings.api_key || !connectionSettings.settings.api_key_secret)) {
-    throw new Error('Twilio not connected');
-  }
-  return {
-    accountSid: connectionSettings.settings.account_sid,
-    apiKey: connectionSettings.settings.api_key,
-    apiKeySecret: connectionSettings.settings.api_key_secret,
-    phoneNumber: connectionSettings.settings.phone_number
-  };
+  return { accountSid, apiKey, apiKeySecret, authToken, phoneNumber };
 }
 
 export async function getTwilioClient() {
-  const { accountSid, apiKey, apiKeySecret } = await getCredentials();
-  return twilio(apiKey, apiKeySecret, {
-    accountSid: accountSid
-  });
+  const { accountSid, apiKey, apiKeySecret, authToken } = readTwilioEnv();
+  if (apiKey && apiKeySecret) {
+    return twilio(apiKey, apiKeySecret, { accountSid });
+  }
+  return twilio(accountSid, authToken!);
 }
 
 export async function getTwilioFromPhoneNumber() {
-  const { phoneNumber } = await getCredentials();
-  return phoneNumber;
+  return readTwilioEnv().phoneNumber;
 }
 
 function isQuietHours(quietHoursStart: string | null, quietHoursEnd: string | null): boolean {

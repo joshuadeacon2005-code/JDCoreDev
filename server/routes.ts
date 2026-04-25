@@ -30,7 +30,7 @@ import { predictorRouter, initPredictor } from "./predictor";
 import { arbitrageRouter, initArbitrage } from "./arbitrage";
 import { cryptoArbRouter, initCryptoArb } from "./crypto-arb";
 import { z } from "zod";
-import { ObjectStorageService, ObjectNotFoundError } from "./replit_integrations/object_storage";
+import { ObjectStorageService, ObjectNotFoundError, verifyUploadToken } from "./replit_integrations/object_storage";
 import { sendEmail, formatContactInquiryEmail } from "./email";
 import { searchCoins, getCoinPrices, getCoinDetails, getCoinMarketChart } from "./services/coingecko";
 import { searchJupiterTokens, getJupiterTokenInfo, getJupiterTokenPrices } from "./services/jupiter";
@@ -1916,17 +1916,17 @@ JD CoreDev System`,
   app.post("/api/uploads/request-url", requireAuth, uploadLimiter, async (req, res, next) => {
     try {
       const { name, size, contentType } = req.body;
-      
+
       if (!name) {
         return res.status(400).json({ error: "Missing required field: name" });
       }
-      
+
       // Get presigned URL from cloud storage
       const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-      
+
       // Extract object path from the presigned URL for later reference
       const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
-      
+
       res.json({
         uploadURL,
         objectPath,
@@ -1934,6 +1934,34 @@ JD CoreDev System`,
       });
     } catch (error) {
       console.error("Error generating upload URL:", error);
+      next(error);
+    }
+  });
+
+  // Receive uploads streamed against the signed URL minted by /api/uploads/request-url.
+  app.put("/api/uploads/put/:token", uploadLimiter, async (req, res, next) => {
+    try {
+      const objectId = verifyUploadToken(req.params.token);
+      if (!objectId) {
+        return res.status(403).json({ error: "Invalid or expired upload token" });
+      }
+      const contentType = (req.headers["content-type"] || "").toString().split(";")[0].trim() || undefined;
+
+      // If a body parser already consumed the request (e.g. JSON content-type),
+      // the verify hook on express.json saved the raw bytes onto req.rawBody.
+      // Otherwise we stream the live request directly to disk.
+      let result;
+      if ((req as any).rawBody && Buffer.isBuffer((req as any).rawBody)) {
+        const { Readable } = await import("stream");
+        const buf: Buffer = (req as any).rawBody;
+        const stream = Readable.from(buf);
+        result = await objectStorageService.writeUploadedObject(objectId, stream, contentType);
+      } else {
+        result = await objectStorageService.writeUploadedObject(objectId, req, contentType);
+      }
+      return res.json(result);
+    } catch (error) {
+      console.error("Error receiving upload:", error);
       next(error);
     }
   });

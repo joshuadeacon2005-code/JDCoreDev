@@ -1,2 +1,2 @@
 #!/bin/sh
-NODE_ENV=production node dist/index.js
+NODE_ENV=production node dist/index.cjs

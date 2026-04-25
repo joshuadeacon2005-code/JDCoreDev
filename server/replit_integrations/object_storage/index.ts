@@ -1,21 +1,22 @@
 export {
   ObjectStorageService,
   ObjectNotFoundError,
-  objectStorageClient,
+  LocalFile,
+  verifyUploadToken,
 } from "./objectStorage";
 
 export type {
   ObjectAclPolicy,
   ObjectAccessGroup,
-  ObjectAccessGroupType,
   ObjectAclRule,
 } from "./objectAcl";
 
 export {
+  ObjectAccessGroupType,
+  ObjectPermission,
   canAccessObject,
   getObjectAclPolicy,
   setObjectAclPolicy,
 } from "./objectAcl";
 
 export { registerObjectStorageRoutes } from "./routes";
-
