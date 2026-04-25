@@ -88,6 +88,15 @@ const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,
   message: { message: "Upload limit reached. Please try again later." },
+  // One-shot bypass for the Replit-bucket migration: requests carrying a
+  // matching X-Migration-Bypass header skip the limit. Unset the env var
+  // after migration to disable.
+  skip: (req) => {
+    const bypass = process.env.UPLOAD_LIMIT_BYPASS_TOKEN;
+    if (!bypass) return false;
+    const provided = req.headers["x-migration-bypass"];
+    return typeof provided === "string" && provided === bypass;
+  },
 });
 
 const idParamSchema = z.coerce.number().int().positive();
