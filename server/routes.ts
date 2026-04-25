@@ -3797,21 +3797,31 @@ JD CoreDev System`,
         return res.status(400).json({ error: "Selected projects have no hosting fees configured" });
       }
 
-      // Calculate maintenance overages if billing year/month provided
+      // Calculate maintenance overage per project, billed against the *current
+      // billing cycle* (project_hosting_terms.current_cycle_start_date) rather
+      // than the calendar month — the user resets the cycle manually after
+      // payment, so the bill should reflect everything since that reset.
       let totalOverageCents = 0;
-      const projectOverages: Record<number, number> = {};
-      if (billingYear && billingMonth) {
-        for (const project of selectedProjects) {
-          const terms = await storage.getProjectHostingTerms(project.id);
-          const budgetCents = terms?.maintenanceBudgetCents ?? null;
-          if (budgetCents !== null) {
-            const summary = await storage.getMaintenanceLogSummary(project.id, billingYear, billingMonth);
-            if (summary.totalCostCents > budgetCents) {
-              const overage = summary.totalCostCents - budgetCents;
-              projectOverages[project.id] = overage;
-              totalOverageCents += overage;
-            }
-          }
+      const projectOverages: Record<number, { amount: number; cycleStart: string }> = {};
+      const cycleEnd = invoiceDate || new Date().toISOString().split("T")[0];
+      for (const project of selectedProjects) {
+        const terms = await storage.getProjectHostingTerms(project.id);
+        const budgetCents = terms?.maintenanceBudgetCents ?? null;
+        if (budgetCents === null) continue;
+        const cycleStart =
+          terms?.currentCycleStartDate ||
+          (billingYear && billingMonth
+            ? `${billingYear}-${String(billingMonth).padStart(2, "0")}-01`
+            : cycleEnd);
+        const summary = await storage.getMaintenanceLogSummaryByDateRange(
+          project.id,
+          cycleStart,
+          cycleEnd,
+        );
+        if (summary.totalCostCents > budgetCents) {
+          const overage = summary.totalCostCents - budgetCents;
+          projectOverages[project.id] = { amount: overage, cycleStart };
+          totalOverageCents += overage;
         }
       }
 
@@ -3846,13 +3856,13 @@ JD CoreDev System`,
 
         // Add overage line item if applicable
         const overage = projectOverages[project.id];
-        if (overage && overage > 0) {
+        if (overage && overage.amount > 0) {
           await storage.createHostingInvoiceLineItem({
             invoiceId: invoice.id,
             projectId: project.id,
             projectName: project.name,
-            amountCents: overage,
-            description: "Maintenance Budget Overage (External Costs)",
+            amountCents: overage.amount,
+            description: `Maintenance Overage (cycle since ${overage.cycleStart})`,
           });
         }
       }
