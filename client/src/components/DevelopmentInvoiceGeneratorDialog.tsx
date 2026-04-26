@@ -6,6 +6,7 @@ import { jsPDF } from "jspdf";
 import { format, addDays } from "date-fns";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+import { currencySymbol } from "@shared/currency";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -61,6 +62,8 @@ function generateDevelopmentInvoicePDF(
   developmentLogs?: MaintenanceLogWithCosts[]
 ) {
   const doc = new jsPDF();
+  const currency = client.invoiceCurrency || paymentSettings?.defaultCurrency || "USD";
+  const sym = currencySymbol(currency);
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
@@ -213,7 +216,7 @@ function generateDevelopmentInvoicePDF(
   });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.text(`USD $${amountUSD.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
+  doc.text(`${currency} ${sym}${amountUSD.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
   
   y += 7;
   doc.setTextColor(100, 100, 100);
@@ -249,7 +252,7 @@ function generateDevelopmentInvoicePDF(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.rect(pageWidth - margin - 95, y - 5, 95, 20, 'F');
-  doc.text(`TOTAL DUE: USD $${amountUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
+  doc.text(`TOTAL DUE: ${currency} ${sym}${amountUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.text(`(approx. HKD $${amountHKD.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 90, y + 12);
@@ -498,6 +501,8 @@ function generateReceiptPDF(
   developmentLogs?: MaintenanceLogWithCosts[]
 ) {
   const doc = new jsPDF();
+  const currency = client.invoiceCurrency || "USD";
+  const sym = currencySymbol(currency);
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
@@ -624,7 +629,7 @@ function generateReceiptPDF(
   });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.text(`USD $${amountUSD.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
+  doc.text(`${currency} ${sym}${amountUSD.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
 
   y += 7;
   doc.setTextColor(100, 100, 100);
@@ -651,7 +656,7 @@ function generateReceiptPDF(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.rect(pageWidth - margin - 95, y - 5, 95, 20, 'F');
-  doc.text(`PAID: USD $${amountUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
+  doc.text(`PAID: ${currency} ${sym}${amountUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.text("Payment received — thank you", pageWidth - margin - 90, y + 12);
@@ -1111,11 +1116,13 @@ export function DevelopmentInvoiceGeneratorDialog({
                       </div>
                       <div className="text-right">
                         <p className="text-lg font-semibold font-mono">
-                          USD ${(selectedMilestone.amountCents / 100).toLocaleString()}
+                          {selectedClient?.invoiceCurrency || "USD"} {currencySymbol(selectedClient?.invoiceCurrency || "USD")}{(selectedMilestone.amountCents / 100).toLocaleString()}
                         </p>
-                        <p className="text-sm text-muted-foreground">
-                          ≈ HKD ${((selectedMilestone.amountCents / 100) * DEFAULT_USD_TO_HKD_RATE).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        </p>
+                        {(!selectedClient?.invoiceCurrency || selectedClient.invoiceCurrency === "USD") && (
+                          <p className="text-sm text-muted-foreground">
+                            ≈ HKD ${((selectedMilestone.amountCents / 100) * DEFAULT_USD_TO_HKD_RATE).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </CardContent>

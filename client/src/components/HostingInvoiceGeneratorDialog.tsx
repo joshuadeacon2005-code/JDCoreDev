@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Card, CardContent } from "@/components/ui/card";
+import { currencySymbol } from "@shared/currency";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -142,6 +143,8 @@ function generateHostingInvoicePDF(
   aggregatedData?: AggregatedMaintenanceData
 ) {
   const doc = new jsPDF();
+  const currency = client.invoiceCurrency || paymentSettings?.defaultCurrency || "USD";
+  const sym = currencySymbol(currency);
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
@@ -302,7 +305,7 @@ function generateHostingInvoicePDF(
     }
     doc.setFont("helvetica", "normal");
     doc.text("Monthly Hosting & Support", margin + 75, y);
-    doc.text(`USD $${fee.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
+    doc.text(`${currency} ${sym}${fee.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
     
     y += 5;
     doc.setTextColor(100, 100, 100);
@@ -497,7 +500,7 @@ function generateHostingInvoicePDF(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.rect(pageWidth - margin - 95, y - 5, 95, 20, 'F');
-  doc.text(`TOTAL DUE: USD $${totalUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
+  doc.text(`TOTAL DUE: ${currency} ${sym}${totalUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.text(`(approx. HKD $${totalHKD.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 90, y + 12);
@@ -949,11 +952,13 @@ export function HostingInvoiceGeneratorDialog({
                             {selectedProjectIds.length} project{selectedProjectIds.length !== 1 ? 's' : ''} selected
                           </p>
                           <p className="text-lg font-semibold font-mono">
-                            USD ${(totalAmount / 100).toLocaleString()}/month
+                            {selectedClient?.invoiceCurrency || "USD"} {currencySymbol(selectedClient?.invoiceCurrency || "USD")}{(totalAmount / 100).toLocaleString()}/month
                           </p>
                         </div>
                         <div className="text-right text-sm text-muted-foreground">
-                          <p>≈ HKD ${((totalAmount / 100) * DEFAULT_USD_TO_HKD_RATE).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                          {(!selectedClient?.invoiceCurrency || selectedClient.invoiceCurrency === "USD") && (
+                            <p>≈ HKD ${((totalAmount / 100) * DEFAULT_USD_TO_HKD_RATE).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
