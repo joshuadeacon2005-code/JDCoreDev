@@ -99,12 +99,16 @@ function generateDevelopmentInvoicePDF(
     ? parseFloat(paymentSettings.usdToHkdRate)
     : DEFAULT_USD_TO_HKD_RATE;
 
-  // FX for the client's secondary display currency. HKD specifically can
-  // be configured via paymentSettings; everything else uses the static
-  // map in shared/currency.ts.
-  const localFxRate = localCurrency === "HKD"
-    ? usdToHkdRate
-    : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);
+  // FX for the client's secondary display currency. Look-up order:
+  // paymentSettings.fxRates[CODE] → paymentSettings.usdToHkdRate (legacy)
+  // → DEFAULT_USD_FX_RATES static fallback.
+  const fxOverride = (paymentSettings?.fxRates as Record<string, number> | null | undefined)?.[localCurrency];
+  const localFxRate =
+    fxOverride && fxOverride > 0
+      ? fxOverride
+      : localCurrency === "HKD"
+      ? usdToHkdRate
+      : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);
 
   const amountUSD = milestone.amountCents / 100;
   const amountLocal = amountUSD * localFxRate;

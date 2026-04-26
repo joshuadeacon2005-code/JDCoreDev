@@ -564,6 +564,10 @@ export const paymentSettings = pgTable("payment_settings", {
   paymentNotes: text("payment_notes"),
   defaultCurrency: text("default_currency").notNull().default("USD"),
   usdToHkdRate: decimal("usd_to_hkd_rate", { precision: 10, scale: 4 }).notNull().default("7.8000"),
+  // Per-currency overrides for the static FX rates in shared/currency.ts.
+  // Map of ISO 4217 code → USD-to-X rate. Anything missing here falls
+  // back to the static defaults. Used by all invoice / receipt PDFs.
+  fxRates: jsonb("fx_rates").$type<Record<string, number>>().default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -181,12 +181,19 @@ function generateHostingInvoicePDF(
     ? parseFloat(paymentSettings.usdToHkdRate)
     : DEFAULT_USD_TO_HKD_RATE;
 
-  // FX rate for the client's secondary display currency. HKD uses the
-  // configurable paymentSettings rate; everything else falls back to the
-  // static map in shared/currency.ts.
-  const localFxRate = localCurrency === "HKD"
-    ? usdToHkdRate
-    : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);
+  // FX rate for the client's secondary display currency. Look-up order:
+  //   1. paymentSettings.fxRates[CODE] — user-editable on the Payment
+  //      Settings page, lets the user keep rates current.
+  //   2. paymentSettings.usdToHkdRate (legacy single-currency override
+  //      that pre-dated the JSON column).
+  //   3. DEFAULT_USD_FX_RATES from shared/currency.ts (static fallback).
+  const fxOverride = (paymentSettings?.fxRates as Record<string, number> | null | undefined)?.[localCurrency];
+  const localFxRate =
+    fxOverride && fxOverride > 0
+      ? fxOverride
+      : localCurrency === "HKD"
+      ? usdToHkdRate
+      : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);
 
   const hostingFeeCents = selectedProjects.reduce((sum, p) =>
     sum + (p.hostingTerms?.monthlyFeeCents || 0), 0

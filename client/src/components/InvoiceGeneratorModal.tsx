@@ -56,7 +56,10 @@ function generateInvoicePDF(
   const localCurrency = (project.client.invoiceCurrency || "USD").toUpperCase();
   const showLocal = localCurrency !== "USD";
   const localSym = currencySymbol(localCurrency);
-  const localFxRate = localCurrency === "HKD"
+  const fxOverride = (paymentSettings?.fxRates as Record<string, number> | null | undefined)?.[localCurrency];
+  const localFxRate = fxOverride && fxOverride > 0
+    ? fxOverride
+    : localCurrency === "HKD"
     ? (paymentSettings?.usdToHkdRate ? parseFloat(paymentSettings.usdToHkdRate) : USD_TO_HKD_RATE)
     : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);
   const localOf = (cents: number) => (cents / 100) * localFxRate;

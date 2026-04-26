@@ -13,6 +13,7 @@ import { DollarSign, Building2, CreditCard, Wallet, Bitcoin, FileText, Save, Loa
 import { useForm } from "react-hook-form";
 import { useEffect } from "react";
 import type { PaymentSettings } from "@shared/schema";
+import { SUPPORTED_INVOICE_CURRENCIES, DEFAULT_USD_FX_RATES } from "@shared/currency";
 
 interface PaymentSettingsForm {
   bankName: string;
@@ -37,6 +38,9 @@ interface PaymentSettingsForm {
   paymentNotes: string;
   defaultCurrency: string;
   usdToHkdRate: string;
+  // Per-currency USD-to-X rates. Keys are ISO 4217 codes; values are
+  // rendered as strings in the form, parsed back to numbers on submit.
+  fxRates: Record<string, string>;
 }
 
 export default function AdminPaymentSettings() {
@@ -70,6 +74,7 @@ export default function AdminPaymentSettings() {
       paymentNotes: "",
       defaultCurrency: "USD",
       usdToHkdRate: "7.8000",
+      fxRates: {},
     },
   });
 
@@ -98,13 +103,29 @@ export default function AdminPaymentSettings() {
         paymentNotes: settings.paymentNotes || "",
         defaultCurrency: settings.defaultCurrency || "USD",
         usdToHkdRate: settings.usdToHkdRate || "7.8000",
+        fxRates: Object.fromEntries(
+          SUPPORTED_INVOICE_CURRENCIES
+            .filter((c) => c.code !== "USD")
+            .map((c) => {
+              const stored = (settings.fxRates as Record<string, number> | null | undefined)?.[c.code];
+              return [c.code, stored != null ? String(stored) : ""];
+            }),
+        ),
       });
     }
   }, [settings, form]);
 
   const updateMutation = useMutation({
     mutationFn: async (data: PaymentSettingsForm) => {
-      const res = await apiRequest("PATCH", "/api/admin/payment-settings", data);
+      // Strip empty strings from fxRates and parse to numbers; null on
+      // missing entries so PDFs fall back to the static defaults.
+      const fxParsed: Record<string, number> = {};
+      for (const [code, raw] of Object.entries(data.fxRates ?? {})) {
+        const v = parseFloat(raw);
+        if (Number.isFinite(v) && v > 0) fxParsed[code] = v;
+      }
+      const payload = { ...data, fxRates: fxParsed };
+      const res = await apiRequest("PATCH", "/api/admin/payment-settings", payload);
       return res.json();
     },
     onSuccess: () => {
@@ -447,20 +468,49 @@ export default function AdminPaymentSettings() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="usdToHkdRate">USD to HKD Exchange Rate</Label>
-                <Input 
-                  id="usdToHkdRate" 
+                <Input
+                  id="usdToHkdRate"
                   type="number"
                   step="0.0001"
-                  {...form.register("usdToHkdRate")} 
+                  {...form.register("usdToHkdRate")}
                   placeholder="7.8000"
                   data-testid="input-exchange-rate"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Used to display approximate HKD amounts on invoices
+                  Used for HKD on invoices when no per-currency override below.
                 </p>
               </div>
             </div>
-            <div className="space-y-2">
+
+            {/* Per-currency FX overrides — used by every invoice/receipt
+                PDF when the client's invoiceCurrency matches a row here. */}
+            <div className="space-y-2 pt-4 border-t">
+              <Label className="text-sm">USD → local-currency rates</Label>
+              <p className="text-xs text-muted-foreground">
+                Each row is the multiplier for converting <strong>1&nbsp;USD</strong> into that currency.
+                Empty rows fall back to the static defaults shown as placeholders. PDFs use these to render
+                the "(approx. <em>CODE …</em>)" line beneath the USD primary.
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 pt-1">
+                {SUPPORTED_INVOICE_CURRENCIES.filter((c) => c.code !== "USD").map((c) => (
+                  <div key={c.code} className="space-y-1">
+                    <Label htmlFor={`fxRate-${c.code}`} className="text-xs">
+                      USD → {c.code}
+                    </Label>
+                    <Input
+                      id={`fxRate-${c.code}`}
+                      type="number"
+                      step="0.0001"
+                      placeholder={String(DEFAULT_USD_FX_RATES[c.code] ?? "")}
+                      {...form.register(`fxRates.${c.code}` as const)}
+                      data-testid={`input-fx-rate-${c.code.toLowerCase()}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-4 border-t">
               <Label htmlFor="paymentNotes">Additional Payment Notes</Label>
               <Textarea 
                 id="paymentNotes" 
