@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { FileText, Download } from "lucide-react";
 import type { Project, Client, Milestone, PaymentSettings, MaintenanceLog } from "@shared/schema";
 import { JDCOREDEV_LOGO_BASE64 } from "@/lib/logo-base64";
+import { currencySymbol, DEFAULT_USD_FX_RATES, convertUSDCents } from "@shared/currency";
 
 const invoiceFormSchema = z.object({
   invoiceNumber: z.string().min(1, "Invoice number is required"),
@@ -48,6 +49,17 @@ function generateInvoicePDF(
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
   const contentWidth = pageWidth - margin * 2;
+  // Primary on the invoice is always USD; client's invoiceCurrency drives
+  // the secondary "(approx. CODE …)" line. HKD specifically uses the
+  // configurable paymentSettings.usdToHkdRate; everything else uses the
+  // static rate map in shared/currency.ts.
+  const localCurrency = (project.client.invoiceCurrency || "USD").toUpperCase();
+  const showLocal = localCurrency !== "USD";
+  const localSym = currencySymbol(localCurrency);
+  const localFxRate = localCurrency === "HKD"
+    ? (paymentSettings?.usdToHkdRate ? parseFloat(paymentSettings.usdToHkdRate) : USD_TO_HKD_RATE)
+    : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);
+  const localOf = (cents: number) => (cents / 100) * localFxRate;
   const footerHeight = 35; // Reserve space for footer
   const maxY = pageHeight - footerHeight;
   let y = 20;
@@ -231,14 +243,18 @@ function generateInvoicePDF(
   
   // Show USD amount with HKD equivalent for current milestone
   const usdAmount = currentMilestone.amountCents / 100;
-  const hkdAmount = usdAmount * USD_TO_HKD_RATE;
+  const hkdAmount = usdAmount * USD_TO_HKD_RATE; // legacy, retained for backward refs only
+  const localAmount = localOf(currentMilestone.amountCents);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
   doc.text(`USD $${usdAmount.toLocaleString()}`, pageWidth - margin - 25, y + 5, { align: "right" });
+  // (USD-only line; secondary follows below at +12)
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(100, 100, 100);
-  doc.text(`(approx. HKD $${hkdAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 25, y + 12, { align: "right" });
+  if (showLocal) {
+    doc.text(`(approx. ${localCurrency} ${localSym}${localAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 25, y + 12, { align: "right" });
+  }
   doc.setTextColor(...BRAND_DARK);
   y += 22;
 
@@ -313,7 +329,9 @@ function generateInvoicePDF(
   doc.text(`TOTAL DUE: USD $${usdAmount.toLocaleString()}`, pageWidth - margin - 90, y + 4);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text(`(approx. HKD $${hkdAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 90, y + 12);
+  if (showLocal) {
+    doc.text(`(approx. ${localCurrency} ${localSym}${localAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 90, y + 12);
+  }
 
   // Add dates are estimates disclaimer
   y += 25;
@@ -377,7 +395,10 @@ function generateInvoicePDF(
     doc.setFont("helvetica", "normal");
     doc.text(`Invoice Reference: ${data.invoiceNumber}`, margin, py);
     py += 5;
-    doc.text(`Amount Due: USD $${usdAmount.toLocaleString()} (approx. HKD $${hkdAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, margin, py);
+    const approx = showLocal
+      ? ` (approx. ${localCurrency} ${localSym}${localAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })})`
+      : "";
+    doc.text(`Amount Due: USD $${usdAmount.toLocaleString()}${approx}`, margin, py);
     
     py += 20;
 

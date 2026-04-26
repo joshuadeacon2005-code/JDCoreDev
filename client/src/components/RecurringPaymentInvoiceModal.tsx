@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { jsPDF } from "jspdf";
+import { currencySymbol, DEFAULT_USD_FX_RATES } from "@shared/currency";
 import { format, addDays } from "date-fns";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -82,6 +83,12 @@ function generateHostingInvoicePDF(
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
+  // Primary always USD; client's invoiceCurrency drives a secondary
+  // "(approx. CODE …)" line beside the TOTAL DUE.
+  const localCurrency = (project.client.invoiceCurrency || "USD").toUpperCase();
+  const showLocal = localCurrency !== "USD";
+  const localSym = currencySymbol(localCurrency);
+  const localFxRate = DEFAULT_USD_FX_RATES[localCurrency] ?? 1;
   const margin = 20;
   const contentWidth = pageWidth - margin * 2;
   const footerHeight = 35;
@@ -419,10 +426,24 @@ function generateHostingInvoicePDF(
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
-  const totalText = `TOTAL DUE: $${totalDue.toLocaleString()}`;
+  const totalText = `TOTAL DUE: USD $${totalDue.toLocaleString()}`;
   const totalBoxWidth = Math.max(95, doc.getTextWidth(totalText) + 15);
   doc.rect(pageWidth - margin - totalBoxWidth, y - 5, totalBoxWidth, 16, 'F');
   doc.text(totalText, pageWidth - margin - totalBoxWidth + 5, y + 6);
+  if (showLocal) {
+    doc.setTextColor(...BRAND_DARK);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const localTotal = totalDue * localFxRate;
+    doc.text(
+      `(approx. ${localCurrency} ${localSym}${localTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })})`,
+      pageWidth - margin - totalBoxWidth + 5,
+      y + 14,
+    );
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+  }
 
   y += 25;
   checkPageBreak(15);

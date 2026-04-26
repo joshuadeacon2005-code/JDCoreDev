@@ -2,6 +2,17 @@ import { jsPDF } from "jspdf";
 import { format } from "date-fns";
 import { JDCOREDEV_LOGO_BASE64 } from "@/lib/logo-base64";
 import type { Milestone, Project, Client, HostingInvoice, HostingInvoiceLineItem } from "@shared/schema";
+import { currencySymbol, DEFAULT_USD_FX_RATES } from "@shared/currency";
+
+// "Approx. <code> <sym><value>" using the static rate map. Returns "" if
+// the client's invoiceCurrency is null or USD.
+function localApproxText(usdCents: number, client: Client): string {
+  const code = (client.invoiceCurrency || "USD").toUpperCase();
+  if (code === "USD") return "";
+  const rate = DEFAULT_USD_FX_RATES[code] ?? 1;
+  const value = (usdCents / 100) * rate;
+  return ` (≈ ${code} ${currencySymbol(code)}${value.toLocaleString(undefined, { maximumFractionDigits: 0 })})`;
+}
 
 export type MilestoneForReceipt = Milestone & { project: Project; client: Client };
 export type InvoiceForReceipt = HostingInvoice & { client: Client; lineItems: HostingInvoiceLineItem[] };
@@ -137,7 +148,7 @@ export function generateMilestoneReceiptPDF(milestone: MilestoneForReceipt) {
   doc.setFontSize(13);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...RECEIPT_GREEN);
-  doc.text(`PAID: USD $${(milestone.amountCents / 100).toFixed(2)}`, pageWidth - margin - 4, y + 6, { align: "right" });
+  doc.text(`PAID: USD $${(milestone.amountCents / 100).toFixed(2)}${localApproxText(milestone.amountCents, milestone.client)}`, pageWidth - margin - 4, y + 6, { align: "right" });
   doc.setTextColor(...RECEIPT_DARK);
 
   y += 22;
@@ -235,7 +246,7 @@ export function generateHostingReceiptPDF(invoice: InvoiceForReceipt) {
   doc.setFontSize(13);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...RECEIPT_GREEN);
-  doc.text(`PAID: USD $${(invoice.totalAmountCents / 100).toFixed(2)}`, pageWidth - margin - 4, y + 6, { align: "right" });
+  doc.text(`PAID: USD $${(invoice.totalAmountCents / 100).toFixed(2)}${localApproxText(invoice.totalAmountCents, invoice.client)}`, pageWidth - margin - 4, y + 6, { align: "right" });
   doc.setTextColor(...RECEIPT_DARK);
 
   y += 22;
