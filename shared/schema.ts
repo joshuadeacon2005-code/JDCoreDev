@@ -26,6 +26,16 @@ export const reminderChannelEnum = pgEnum("reminder_channel", ["email", "whatsap
 export const reminderStatusEnum = pgEnum("reminder_status", ["pending", "sent", "failed", "cancelled"]);
 export const hostingTermsStatusEnum = pgEnum("hosting_terms_status", ["none", "draft", "active", "ended"]);
 export const contractTypeEnum = pgEnum("contract_type", ["development", "hosting"]);
+export const partnerStatusEnum = pgEnum("partner_status", ["active", "paused", "terminated"]);
+export const commissionStatusEnum = pgEnum("commission_status", ["due", "paid", "waived", "cancelled"]);
+export const projectCostCategoryEnum = pgEnum("project_cost_category", [
+  "third_party_software",
+  "contractor",
+  "infrastructure",
+  "stock_assets",
+  "vat_passthrough",
+  "other",
+]);
 
 // Users table
 export const users = pgTable("users", {
@@ -36,6 +46,31 @@ export const users = pgTable("users", {
   role: userRoleEnum("role").notNull().default("client"),
   clientId: integer("client_id").references(() => clients.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Referral Partners table — external introducers who originate clients in
+// exchange for commission. Distinct from `clients` (we pay them, not the
+// other way round). Defaults here cascade onto clients/projects unless
+// overridden per-row.
+export const referralPartners = pgTable("referral_partners", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: text("name").notNull(),
+  tradingName: text("trading_name"),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+  // Decimal stored as fraction (0.1250 = 12.5%).
+  defaultCommissionRate: decimal("default_commission_rate", { precision: 6, scale: 5 }).notNull(),
+  // Optional default share applied to recurring revenue when partner stays
+  // actively involved. Null/zero means no recurring share by default.
+  defaultRecurringShareRate: decimal("default_recurring_share_rate", { precision: 6, scale: 5 }),
+  status: partnerStatusEnum("status").notNull().default("active"),
+  partnershipStartDate: date("partnership_start_date"),
+  // Months of "tail" period: direct repeat work from a partner-originated
+  // client within this window still attracts commission.
+  defaultTailMonths: integer("default_tail_months").notNull().default(12),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // Clients table
@@ -60,6 +95,12 @@ export const clients = pgTable("clients", {
   accountsDeptEmail: text("accounts_dept_email"),
   accountsDeptPhone: text("accounts_dept_phone"),
   accountsDeptNotes: text("accounts_dept_notes"),
+  // Optional referral partner who introduced this client. Null = direct
+  // client (existing default — no commission, no behaviour change).
+  referredByPartnerId: integer("referred_by_partner_id").references(() => referralPartners.id, { onDelete: "set null" }),
+  // When true, hosting/maintenance retainers for this client also generate
+  // partner-share commission on each billing cycle.
+  partnerActivelyInvolved: boolean("partner_actively_involved").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -84,7 +125,54 @@ export const projects = pgTable("projects", {
   riskState: riskStateEnum("risk_state").notNull().default("on_track"),
   startDate: date("start_date"),
   endDate: date("end_date"),
+  // Commission tracking. completedAt is set when status flips to "completed"
+  // and is the anchor for the partner's tail-period clock. Override fields
+  // are nullable — null means "use the partner default from clients.referredByPartnerId".
+  completedAt: timestamp("completed_at"),
+  commissionWaived: boolean("commission_waived").notNull().default(false),
+  commissionRateOverride: decimal("commission_rate_override", { precision: 6, scale: 5 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Project Costs — dev/external/contractor expenses subtracted from gross
+// project revenue before commission is calculated. Multiple rows per
+// project, free-form description, optional category for reporting.
+export const projectCosts = pgTable("project_costs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  projectId: integer("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  description: text("description").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("USD"),
+  incurredDate: date("incurred_date"),
+  category: projectCostCategoryEnum("category"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Commission Entries — ledger of accrued commission owed to a partner. One
+// row per commission event (project completion, recurring billing cycle,
+// manual adjustment). status flips due → paid when the user records payment.
+export const commissionEntries = pgTable("commission_entries", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  partnerId: integer("partner_id").notNull().references(() => referralPartners.id, { onDelete: "restrict" }),
+  clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  projectId: integer("project_id").references(() => projects.id, { onDelete: "set null" }),
+  // 'project_completion' | 'recurring_cycle' | 'manual_adjustment'
+  sourceType: text("source_type").notNull(),
+  // For idempotency: external ref to the source row (e.g. project id, hosting_invoice_line_item id).
+  sourceRef: text("source_ref"),
+  grossCents: integer("gross_cents").notNull(),
+  costsCents: integer("costs_cents").notNull().default(0),
+  netCents: integer("net_cents").notNull(),
+  rateApplied: decimal("rate_applied", { precision: 6, scale: 5 }).notNull(),
+  commissionCents: integer("commission_cents").notNull(),
+  currency: text("currency").notNull().default("USD"),
+  status: commissionStatusEnum("status").notNull().default("due"),
+  paidAt: timestamp("paid_at"),
+  paymentDate: date("payment_date"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // Availability Rules table (singleton for admin settings)
@@ -439,13 +527,19 @@ export const hostingInvoiceLineItems = pgTable("hosting_invoice_line_items", {
 // Payment Settings table (singleton for invoice configuration)
 export const paymentSettings = pgTable("payment_settings", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  // Bank Transfer
+  // Bank Transfer (international / SWIFT)
   bankName: text("bank_name"),
   accountHolderName: text("account_holder_name"),
   accountNumber: text("account_number"),
   routingNumber: text("routing_number"),
   swiftCode: text("swift_code"),
   iban: text("iban"),
+  // UK Bank (HSBC / Revolut etc.) — sort code + 8-digit account number.
+  // Rendered as a separate "UK Bank Transfer" block on invoices when set.
+  ukBankName: text("uk_bank_name"),
+  ukAccountHolderName: text("uk_account_holder_name"),
+  ukAccountNumber: text("uk_account_number"),
+  ukSortCode: text("uk_sort_code"),
   // Digital Payments
   paypalEmail: text("paypal_email"),
   venmoUsername: text("venmo_username"),
@@ -997,3 +1091,31 @@ export const leadEngineSettings = pgTable("lead_engine_settings", {
   replyTo: text("reply_to").notNull().default("joshuad@jdcoredev.com"),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Referral partner inserts
+export const insertReferralPartnerSchema = createInsertSchema(referralPartners).omit({ id: true, createdAt: true, updatedAt: true });
+export type ReferralPartner = typeof referralPartners.$inferSelect;
+export type InsertReferralPartner = z.infer<typeof insertReferralPartnerSchema>;
+
+export const insertProjectCostSchema = createInsertSchema(projectCosts).omit({ id: true, createdAt: true });
+export type ProjectCost = typeof projectCosts.$inferSelect;
+export type InsertProjectCost = z.infer<typeof insertProjectCostSchema>;
+
+export const insertCommissionEntrySchema = createInsertSchema(commissionEntries).omit({ id: true, createdAt: true, updatedAt: true });
+export type CommissionEntry = typeof commissionEntries.$inferSelect;
+export type InsertCommissionEntry = z.infer<typeof insertCommissionEntrySchema>;
+
+// Aggregated views used by the partner dashboard.
+export type CommissionEntryWithRefs = CommissionEntry & {
+  partner: ReferralPartner;
+  client: Client;
+  project?: Project | null;
+};
+
+export type ReferralPartnerSummary = ReferralPartner & {
+  activeClientCount: number;
+  activeProjectCount: number;
+  totalAccruedCents: number;
+  totalPaidCents: number;
+  totalDueCents: number;
+};

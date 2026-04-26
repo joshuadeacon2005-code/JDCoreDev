@@ -48,6 +48,7 @@ import {
   Star,
   FlaskConical,
   Zap,
+  Handshake,
 } from "lucide-react";
 import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
@@ -56,6 +57,7 @@ const mainNavItems = [
   { title: "Dashboard",     icon: LayoutDashboard, href: "/admin" },
   { title: "Analytics",     icon: BarChart3,       href: "/admin/analytics" },
   { title: "Clients",       icon: Users,           href: "/admin/clients" },
+  { title: "Partners",      icon: Handshake,       href: "/admin/partners" },
   { title: "Projects",      icon: Briefcase,       href: "/admin/projects" },
   { title: "Invoice Reminders", icon: Mail,        href: "/admin/invoice-reminders" },
   { title: "Crypto Tracker", icon: Bitcoin,        href: "/admin/crypto" },

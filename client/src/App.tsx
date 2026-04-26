@@ -23,6 +23,8 @@ import ShaderDemo from "@/pages/demo";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminClients from "@/pages/admin/clients";
 import AdminClientDetail from "@/pages/admin/client-detail";
+import AdminPartners from "@/pages/admin/partners";
+import AdminPartnerDetail from "@/pages/admin/partner-detail";
 import AdminProjects from "@/pages/admin/projects";
 import AdminProjectDetail from "@/pages/admin/project-detail";
 import AdminMilestones from "@/pages/admin/milestones";
@@ -74,6 +76,8 @@ function Router() {
       <ProtectedRoute path="/admin" component={AdminDashboard} requiredRole="admin" />
       <ProtectedRoute path="/admin/clients" component={AdminClients} requiredRole="admin" />
       <ProtectedRoute path="/admin/clients/:id" component={AdminClientDetail} requiredRole="admin" />
+      <ProtectedRoute path="/admin/partners" component={AdminPartners} requiredRole="admin" />
+      <ProtectedRoute path="/admin/partners/:id" component={AdminPartnerDetail} requiredRole="admin" />
       <ProtectedRoute path="/admin/projects" component={AdminProjects} requiredRole="admin" />
       <ProtectedRoute path="/admin/projects/:id" component={AdminProjectDetail} requiredRole="admin" />
       <ProtectedRoute path="/admin/scheduling" component={AdminScheduling} requiredRole="admin" />

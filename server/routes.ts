@@ -18,7 +18,9 @@ import {
   insertTrackedCoinSchema, insertPriceAlertSchema, insertCryptoNotificationSettingsSchema,
   insertMaintenanceLogCostSchema, insertReplitChargeSchema,
   trackedCoins, priceAlerts, priceHistory, coinNews, cryptoNotificationSettings,
-  type User, type MeetingRequest, clients, projects, projectHostingTerms, maintenanceLogs
+  type User, type MeetingRequest, clients, projects, projectHostingTerms, maintenanceLogs,
+  referralPartners, commissionEntries, projectCosts,
+  type Project, type ReferralPartner,
 } from "@shared/schema";
 import { eq, desc, and, gte } from "drizzle-orm";
 import crypto from "crypto";
@@ -229,6 +231,74 @@ declare global {
       createdAt: Date;
     }
   }
+}
+
+// ─── Commission calculation ────────────────────────────────────────────────
+// Called when a project flips to status="completed" (and via the manual
+// recalc endpoint). Looks up the partner attribution chain via the project's
+// client, sums paid milestones (gross), subtracts logged project_costs, and
+// writes a commission_entries row at status="due".
+//
+// Idempotent: a unique partial index in the DB ensures only one
+// project_completion entry exists per project. recalc:true updates that
+// row in place; otherwise existing rows are left alone.
+async function generateCommissionForCompletedProject(
+  project: Project,
+  opts: { recalc?: boolean } = {},
+): Promise<unknown | null> {
+  if (project.commissionWaived) return null;
+
+  const client = await storage.getClient(project.clientId);
+  if (!client?.referredByPartnerId) return null;
+
+  const partner = await storage.getReferralPartner(client.referredByPartnerId);
+  if (!partner) return null;
+
+  // Recurring revenue (hosting / retainer projects) is excluded from
+  // commission unless the client has partner_actively_involved=true.
+  const isRecurring =
+    project.status === "hosting" || project.billingModel === "retainer";
+  if (isRecurring && !client.partnerActivelyInvolved) return null;
+
+  const grossCents = await storage.getProjectGrossPaidCents(project.id);
+  const costsCents = await storage.getProjectCostsSum(project.id);
+  const netCents = Math.max(0, grossCents - costsCents);
+
+  const rate = project.commissionRateOverride ?? partner.defaultCommissionRate;
+  const commissionCents = Math.round(netCents * Number(rate));
+
+  const existing = await storage.getCommissionEntryByProject(
+    project.id,
+    "project_completion",
+  );
+
+  if (existing && !opts.recalc) return existing;
+
+  if (existing && opts.recalc) {
+    return storage.updateCommissionEntry(existing.id, {
+      grossCents,
+      costsCents,
+      netCents,
+      rateApplied: String(rate),
+      commissionCents,
+    } as any);
+  }
+
+  return storage.createCommissionEntry({
+    partnerId: partner.id,
+    clientId: client.id,
+    projectId: project.id,
+    sourceType: "project_completion",
+    sourceRef: `project:${project.id}`,
+    grossCents,
+    costsCents,
+    netCents,
+    rateApplied: String(rate),
+    commissionCents,
+    currency: "USD",
+    status: "due",
+    notes: null,
+  } as any);
 }
 
 // Middleware to require authentication
@@ -1019,7 +1089,21 @@ export async function registerRoutes(
     try {
       const projectId = parseInt(req.params.id);
       const oldProject = await storage.getProject(projectId);
-      const updated = await storage.updateProject(projectId, req.body);
+      const incoming: any = { ...req.body };
+
+      // When the project flips to "completed", stamp completedAt so the
+      // partner-tail clock has an explicit anchor distinct from a planned
+      // endDate. Idempotent: only set on the transition into completed.
+      const isCompleting =
+        incoming.status === "completed" &&
+        oldProject &&
+        oldProject.status !== "completed" &&
+        !oldProject.completedAt;
+      if (isCompleting) {
+        incoming.completedAt = new Date();
+      }
+
+      const updated = await storage.updateProject(projectId, incoming);
       if (!updated) {
         return res.status(404).json({ message: "Project not found" });
       }
@@ -1039,10 +1123,197 @@ export async function registerRoutes(
           );
       }
 
+      // Auto-generate commission entry on the transition to completed.
+      if (isCompleting) {
+        try {
+          await generateCommissionForCompletedProject(updated);
+        } catch (e) {
+          console.error(`[commission] failed for project ${projectId}:`, e);
+        }
+      }
+
       res.json(updated);
     } catch (error) {
       next(error);
     }
+  });
+
+  // ─── Referral Partners ────────────────────────────────────────────────
+  app.get("/api/admin/partners", requireAdmin, async (_req, res, next) => {
+    try {
+      res.json(await storage.getReferralPartners());
+    } catch (e) { next(e); }
+  });
+
+  app.get("/api/admin/partners/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const summary = await storage.getReferralPartnerSummary(parseInt(req.params.id));
+      if (!summary) return res.status(404).json({ error: "Partner not found" });
+      res.json(summary);
+    } catch (e) { next(e); }
+  });
+
+  const partnerSchema = z.object({
+    name: z.string().min(1),
+    tradingName: z.string().optional().or(z.literal("")),
+    contactEmail: z.string().email().optional().or(z.literal("")),
+    contactPhone: z.string().optional().or(z.literal("")),
+    defaultCommissionRate: z.union([z.string(), z.number()]).transform((v) => String(v)),
+    defaultRecurringShareRate: z.union([z.string(), z.number()]).optional().nullable().transform((v) => v == null || v === "" ? null : String(v)),
+    status: z.enum(["active", "paused", "terminated"]).default("active"),
+    partnershipStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")),
+    defaultTailMonths: z.coerce.number().int().min(0).default(12),
+    notes: z.string().optional().or(z.literal("")),
+  });
+
+  app.post("/api/admin/partners", requireAdmin, async (req, res, next) => {
+    try {
+      const data = partnerSchema.parse(req.body);
+      const cleaned: any = {
+        ...data,
+        tradingName: data.tradingName || null,
+        contactEmail: data.contactEmail || null,
+        contactPhone: data.contactPhone || null,
+        partnershipStartDate: data.partnershipStartDate || null,
+        notes: data.notes || null,
+      };
+      res.status(201).json(await storage.createReferralPartner(cleaned));
+    } catch (e) { next(e); }
+  });
+
+  app.patch("/api/admin/partners/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const data = partnerSchema.partial().parse(req.body);
+      const cleaned: any = { ...data };
+      // Convert empty strings to null for nullable fields if they were provided.
+      for (const k of ["tradingName", "contactEmail", "contactPhone", "partnershipStartDate", "notes"]) {
+        if (cleaned[k] === "") cleaned[k] = null;
+      }
+      const updated = await storage.updateReferralPartner(parseInt(req.params.id), cleaned);
+      if (!updated) return res.status(404).json({ error: "Partner not found" });
+      res.json(updated);
+    } catch (e) { next(e); }
+  });
+
+  app.get("/api/admin/partners/:id/commissions", requireAdmin, async (req, res, next) => {
+    try {
+      const partnerId = parseInt(req.params.id);
+      const status = typeof req.query.status === "string" ? req.query.status : undefined;
+      const entries = await storage.getCommissionEntries({ partnerId, status });
+      res.json(entries);
+    } catch (e) { next(e); }
+  });
+
+  app.get("/api/admin/partners/:id/clients", requireAdmin, async (req, res, next) => {
+    try {
+      const partnerId = parseInt(req.params.id);
+      const partnerClients = await db.select().from(clients)
+        .where(eq(clients.referredByPartnerId, partnerId))
+        .orderBy(desc(clients.createdAt));
+      res.json(partnerClients);
+    } catch (e) { next(e); }
+  });
+
+  // ─── Project Costs (dev / external costs deducted before commission) ───
+  app.get("/api/admin/projects/:projectId/costs", requireAdmin, async (req, res, next) => {
+    try {
+      res.json(await storage.getProjectCosts(parseInt(req.params.projectId)));
+    } catch (e) { next(e); }
+  });
+
+  const projectCostSchema = z.object({
+    description: z.string().min(1),
+    amountCents: z.coerce.number().int().min(0),
+    currency: z.string().default("USD"),
+    incurredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")),
+    category: z.enum(["third_party_software", "contractor", "infrastructure", "stock_assets", "vat_passthrough", "other"]).optional(),
+    notes: z.string().optional().or(z.literal("")),
+  });
+
+  app.post("/api/admin/projects/:projectId/costs", requireAdmin, async (req, res, next) => {
+    try {
+      const data = projectCostSchema.parse(req.body);
+      const cost = await storage.createProjectCost({
+        projectId: parseInt(req.params.projectId),
+        description: data.description,
+        amountCents: data.amountCents,
+        currency: data.currency,
+        incurredDate: data.incurredDate || null,
+        category: data.category ?? null,
+        notes: data.notes || null,
+      } as any);
+      res.status(201).json(cost);
+    } catch (e) { next(e); }
+  });
+
+  app.patch("/api/admin/project-costs/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const data = projectCostSchema.partial().parse(req.body);
+      const cleaned: any = { ...data };
+      for (const k of ["incurredDate", "notes"]) if (cleaned[k] === "") cleaned[k] = null;
+      const updated = await storage.updateProjectCost(parseInt(req.params.id), cleaned);
+      if (!updated) return res.status(404).json({ error: "Cost not found" });
+      res.json(updated);
+    } catch (e) { next(e); }
+  });
+
+  app.delete("/api/admin/project-costs/:id", requireAdmin, async (req, res, next) => {
+    try {
+      await storage.deleteProjectCost(parseInt(req.params.id));
+      res.status(204).send();
+    } catch (e) { next(e); }
+  });
+
+  // Manual recalc — recreates the commission entry for a completed project
+  // using current paid-milestone total and current project_costs sum. Useful
+  // after editing costs after completion.
+  app.post("/api/admin/projects/:id/recalc-commission", requireAdmin, async (req, res, next) => {
+    try {
+      const project = await storage.getProject(parseInt(req.params.id));
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      if (project.status !== "completed") {
+        return res.status(400).json({ error: "Project is not completed" });
+      }
+      const entry = await generateCommissionForCompletedProject(project, { recalc: true });
+      res.json({ entry });
+    } catch (e) { next(e); }
+  });
+
+  // ─── Commission Entries (mark paid / update notes) ─────────────────────
+  app.get("/api/admin/commissions", requireAdmin, async (req, res, next) => {
+    try {
+      const status = typeof req.query.status === "string" ? req.query.status : undefined;
+      const partnerId = req.query.partnerId ? parseInt(String(req.query.partnerId)) : undefined;
+      res.json(await storage.getCommissionEntries({ status, partnerId }));
+    } catch (e) { next(e); }
+  });
+
+  const commissionUpdateSchema = z.object({
+    status: z.enum(["due", "paid", "waived", "cancelled"]).optional(),
+    paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")),
+    commissionCents: z.coerce.number().int().min(0).optional(),
+    rateApplied: z.union([z.string(), z.number()]).optional().transform((v) => v == null ? undefined : String(v)),
+    netCents: z.coerce.number().int().min(0).optional(),
+    grossCents: z.coerce.number().int().min(0).optional(),
+    costsCents: z.coerce.number().int().min(0).optional(),
+    notes: z.string().optional().or(z.literal("")),
+  });
+
+  app.patch("/api/admin/commissions/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const data = commissionUpdateSchema.parse(req.body);
+      const cleaned: any = { ...data };
+      if (cleaned.notes === "") cleaned.notes = null;
+      if (cleaned.paymentDate === "") cleaned.paymentDate = null;
+      // When status flips to "paid", record paidAt automatically if absent.
+      if (cleaned.status === "paid") {
+        cleaned.paidAt = new Date();
+        if (!cleaned.paymentDate) cleaned.paymentDate = new Date().toISOString().split("T")[0];
+      }
+      const updated = await storage.updateCommissionEntry(parseInt(req.params.id), cleaned);
+      if (!updated) return res.status(404).json({ error: "Commission entry not found" });
+      res.json(updated);
+    } catch (e) { next(e); }
   });
 
   // Availability Rules

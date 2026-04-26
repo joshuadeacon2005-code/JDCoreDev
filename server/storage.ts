@@ -39,7 +39,12 @@ import {
   leadAudits, type LeadAudit, type InsertLeadAudit,
   leadDrafts, type LeadDraft, type InsertLeadDraft,
   leadEngineSettings,
+  referralPartners, type ReferralPartner, type InsertReferralPartner,
+  projectCosts, type ProjectCost, type InsertProjectCost,
+  commissionEntries, type CommissionEntry, type InsertCommissionEntry,
+  type ReferralPartnerSummary,
 } from "@shared/schema";
+
 
 export interface IStorage {
   // Users
@@ -1667,6 +1672,153 @@ export class DatabaseStorage implements IStorage {
     } else {
       await db.insert(leadEngineSettings).values(data);
     }
+  }
+
+  // ─── Referral Partners ──────────────────────────────────────────────────
+  async getReferralPartners(): Promise<ReferralPartner[]> {
+    return db.select().from(referralPartners).orderBy(desc(referralPartners.createdAt));
+  }
+
+  async getReferralPartner(id: number): Promise<ReferralPartner | undefined> {
+    const [row] = await db.select().from(referralPartners).where(eq(referralPartners.id, id));
+    return row;
+  }
+
+  async createReferralPartner(data: InsertReferralPartner): Promise<ReferralPartner> {
+    const [row] = await db.insert(referralPartners).values(data).returning();
+    return row;
+  }
+
+  async updateReferralPartner(id: number, data: Partial<InsertReferralPartner>): Promise<ReferralPartner | undefined> {
+    const [row] = await db.update(referralPartners)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(referralPartners.id, id))
+      .returning();
+    return row;
+  }
+
+  async getReferralPartnerSummary(id: number): Promise<ReferralPartnerSummary | undefined> {
+    const partner = await this.getReferralPartner(id);
+    if (!partner) return undefined;
+
+    // Active clients attributed to partner.
+    const [{ activeClientCount }] = await db
+      .select({ activeClientCount: sql<number>`count(*)::int` })
+      .from(clients)
+      .where(and(eq(clients.referredByPartnerId, id), ne(clients.status, "past")));
+
+    // Active projects under those clients (excluding completed projects).
+    const [{ activeProjectCount }] = await db
+      .select({ activeProjectCount: sql<number>`count(*)::int` })
+      .from(projects)
+      .innerJoin(clients, eq(clients.id, projects.clientId))
+      .where(
+        and(
+          eq(clients.referredByPartnerId, id),
+          ne(projects.status, "completed"),
+        ),
+      );
+
+    // Lifetime totals.
+    const [accruedRow] = await db
+      .select({ total: sql<number>`coalesce(sum(${commissionEntries.commissionCents}), 0)::bigint` })
+      .from(commissionEntries)
+      .where(and(eq(commissionEntries.partnerId, id), ne(commissionEntries.status, "cancelled")));
+
+    const [paidRow] = await db
+      .select({ total: sql<number>`coalesce(sum(${commissionEntries.commissionCents}), 0)::bigint` })
+      .from(commissionEntries)
+      .where(and(eq(commissionEntries.partnerId, id), eq(commissionEntries.status, "paid")));
+
+    const [dueRow] = await db
+      .select({ total: sql<number>`coalesce(sum(${commissionEntries.commissionCents}), 0)::bigint` })
+      .from(commissionEntries)
+      .where(and(eq(commissionEntries.partnerId, id), eq(commissionEntries.status, "due")));
+
+    return {
+      ...partner,
+      activeClientCount: Number(activeClientCount ?? 0),
+      activeProjectCount: Number(activeProjectCount ?? 0),
+      totalAccruedCents: Number(accruedRow.total ?? 0),
+      totalPaidCents: Number(paidRow.total ?? 0),
+      totalDueCents: Number(dueRow.total ?? 0),
+    };
+  }
+
+  // ─── Project Costs ──────────────────────────────────────────────────────
+  async getProjectCosts(projectId: number): Promise<ProjectCost[]> {
+    return db.select().from(projectCosts)
+      .where(eq(projectCosts.projectId, projectId))
+      .orderBy(desc(projectCosts.incurredDate), desc(projectCosts.id));
+  }
+
+  async createProjectCost(data: InsertProjectCost): Promise<ProjectCost> {
+    const [row] = await db.insert(projectCosts).values(data).returning();
+    return row;
+  }
+
+  async updateProjectCost(id: number, data: Partial<InsertProjectCost>): Promise<ProjectCost | undefined> {
+    const [row] = await db.update(projectCosts).set(data).where(eq(projectCosts.id, id)).returning();
+    return row;
+  }
+
+  async deleteProjectCost(id: number): Promise<void> {
+    await db.delete(projectCosts).where(eq(projectCosts.id, id));
+  }
+
+  async getProjectCostsSum(projectId: number): Promise<number> {
+    const [row] = await db
+      .select({ total: sql<number>`coalesce(sum(${projectCosts.amountCents}), 0)::bigint` })
+      .from(projectCosts)
+      .where(eq(projectCosts.projectId, projectId));
+    return Number(row?.total ?? 0);
+  }
+
+  // ─── Commission Entries ─────────────────────────────────────────────────
+  async getCommissionEntries(filter?: { partnerId?: number; clientId?: number; projectId?: number; status?: string; }): Promise<CommissionEntry[]> {
+    const conds = [];
+    if (filter?.partnerId !== undefined) conds.push(eq(commissionEntries.partnerId, filter.partnerId));
+    if (filter?.clientId !== undefined) conds.push(eq(commissionEntries.clientId, filter.clientId));
+    if (filter?.projectId !== undefined) conds.push(eq(commissionEntries.projectId, filter.projectId));
+    if (filter?.status !== undefined) conds.push(eq(commissionEntries.status, filter.status as any));
+    const q = db.select().from(commissionEntries);
+    if (conds.length > 0) {
+      return q.where(and(...conds)).orderBy(desc(commissionEntries.createdAt));
+    }
+    return q.orderBy(desc(commissionEntries.createdAt));
+  }
+
+  async getCommissionEntry(id: number): Promise<CommissionEntry | undefined> {
+    const [row] = await db.select().from(commissionEntries).where(eq(commissionEntries.id, id));
+    return row;
+  }
+
+  async getCommissionEntryByProject(projectId: number, sourceType: string): Promise<CommissionEntry | undefined> {
+    const [row] = await db.select().from(commissionEntries)
+      .where(and(eq(commissionEntries.projectId, projectId), eq(commissionEntries.sourceType, sourceType)));
+    return row;
+  }
+
+  async createCommissionEntry(data: InsertCommissionEntry): Promise<CommissionEntry> {
+    const [row] = await db.insert(commissionEntries).values(data).returning();
+    return row;
+  }
+
+  async updateCommissionEntry(id: number, data: Partial<InsertCommissionEntry>): Promise<CommissionEntry | undefined> {
+    const [row] = await db.update(commissionEntries)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(commissionEntries.id, id))
+      .returning();
+    return row;
+  }
+
+  async getProjectGrossPaidCents(projectId: number): Promise<number> {
+    // Gross commissionable revenue = sum of milestones marked "paid" on this project.
+    const [row] = await db
+      .select({ total: sql<number>`coalesce(sum(${milestones.amountCents}), 0)::bigint` })
+      .from(milestones)
+      .where(and(eq(milestones.projectId, projectId), eq(milestones.status, "paid")));
+    return Number(row?.total ?? 0);
   }
 }
 

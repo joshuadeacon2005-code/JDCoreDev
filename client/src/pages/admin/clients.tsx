@@ -16,9 +16,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Plus, Users, Loader2, Mail, Phone, Building2 } from "lucide-react";
+import { Plus, Users, Loader2, Mail, Phone, Building2, Handshake } from "lucide-react";
 import { format } from "date-fns";
-import type { Client } from "@shared/schema";
+import type { Client, ReferralPartner } from "@shared/schema";
 
 const clientSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -32,6 +32,7 @@ const clientSchema = z.object({
   industry: z.string().optional(),
   notes: z.string().optional(),
   status: z.enum(["lead", "active", "past"]),
+  referredByPartnerId: z.string().optional(), // "" or partner id; converted to null/number on submit
 });
 
 type ClientFormData = z.infer<typeof clientSchema>;
@@ -44,6 +45,12 @@ export default function AdminClients() {
     queryKey: ["/api/admin/clients"],
   });
 
+  const { data: partners } = useQuery<ReferralPartner[]>({
+    queryKey: ["/api/admin/partners"],
+  });
+  const partnerById = (id: number | null | undefined) =>
+    id == null ? undefined : partners?.find((p) => p.id === id);
+
   const form = useForm<ClientFormData>({
     resolver: zodResolver(clientSchema),
     defaultValues: { 
@@ -55,15 +62,21 @@ export default function AdminClients() {
       city: "", 
       state: "", 
       zipCode: "", 
-      industry: "", 
-      notes: "", 
-      status: "lead" 
+      industry: "",
+      notes: "",
+      status: "lead",
+      referredByPartnerId: "",
     },
   });
 
   const createMutation = useMutation({
     mutationFn: async (data: ClientFormData) => {
-      const res = await apiRequest("POST", "/api/admin/clients", data);
+      const payload: any = { ...data };
+      payload.referredByPartnerId =
+        data.referredByPartnerId && data.referredByPartnerId !== ""
+          ? Number(data.referredByPartnerId)
+          : null;
+      const res = await apiRequest("POST", "/api/admin/clients", payload);
       return res.json();
     },
     onSuccess: () => {
@@ -194,6 +207,23 @@ export default function AdminClients() {
                     />
                   </div>
                   <div className="space-y-2 col-span-2">
+                    <Label htmlFor="referredByPartnerId">Referred by partner (optional)</Label>
+                    <Select
+                      value={form.watch("referredByPartnerId") ?? ""}
+                      onValueChange={(v) => form.setValue("referredByPartnerId", v === "__none__" ? "" : v)}
+                    >
+                      <SelectTrigger data-testid="select-client-partner"><SelectValue placeholder="Direct client (no partner)" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Direct client (no partner)</SelectItem>
+                        {partners?.map((p) => (
+                          <SelectItem key={p.id} value={String(p.id)}>
+                            {p.name}{p.tradingName ? ` — ${p.tradingName}` : ""} ({(Number(p.defaultCommissionRate) * 100).toFixed(2)}%)
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 col-span-2">
                     <Label htmlFor="notes">Notes</Label>
                     <Textarea
                       id="notes"
@@ -267,6 +297,14 @@ export default function AdminClients() {
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Building2 className="h-3 w-3" />
                       <span>{client.industry}</span>
+                    </div>
+                  )}
+                  {client.referredByPartnerId && (
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400">
+                        <Handshake className="h-3 w-3" />
+                        {partnerById(client.referredByPartnerId)?.name ?? "Partner"}
+                      </span>
                     </div>
                   )}
                   <p className="text-xs text-muted-foreground pt-1">

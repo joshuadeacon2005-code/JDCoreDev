@@ -43,7 +43,8 @@ import { z } from "zod";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { HostingInvoiceGeneratorDialog } from "@/components/HostingInvoiceGeneratorDialog";
-import type { Client, Project, Contact, Milestone, ProjectHostingTerms } from "@shared/schema";
+import type { Client, Project, Contact, Milestone, ProjectHostingTerms, ReferralPartner } from "@shared/schema";
+import { Handshake } from "lucide-react";
 
 type ProjectWithMilestones = Project & { milestones: Milestone[] };
 
@@ -325,6 +326,7 @@ export default function AdminClientDetail() {
                 {client.name}
               </p>
             )}
+            {client.referredByPartnerId && <ClientPartnerPill partnerId={client.referredByPartnerId} />}
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
@@ -1248,5 +1250,21 @@ export default function AdminClientDetail() {
         </Dialog>
       </div>
     </AdminLayout>
+  );
+}
+
+function ClientPartnerPill({ partnerId }: { partnerId: number }) {
+  const { data: partner } = useQuery<ReferralPartner>({
+    queryKey: [`/api/admin/partners/${partnerId}`],
+    enabled: !!partnerId,
+  });
+  if (!partner) return null;
+  return (
+    <Link href={`/admin/partners/${partner.id}`}>
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 text-xs hover:bg-teal-500/20 cursor-pointer">
+        <Handshake className="h-3 w-3" />
+        Referred by {partner.name}{partner.tradingName ? ` (${partner.tradingName})` : ""}
+      </span>
+    </Link>
   );
 }

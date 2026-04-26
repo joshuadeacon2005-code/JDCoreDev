@@ -19,6 +19,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ObjectUploader } from "@/components/ObjectUploader";
+import { ProjectCostsPanel } from "@/components/ProjectCostsPanel";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Progress } from "@/components/ui/progress";
@@ -1677,10 +1678,18 @@ function MilestoneProgressCard({ milestones }: { milestones: Milestone[] }) {
 }
 
 function OverviewTab({ project, projectId }: { project: ProjectDetailData; projectId: number }) {
+  const paidCents = project.milestones.filter((m) => m.status === "paid").reduce((s, m) => s + m.amountCents, 0);
   return (
     <div className="space-y-6">
       <MilestoneProgressCard milestones={project.milestones} />
-      
+
+      <ProjectCostsPanel
+        projectId={projectId}
+        project={project}
+        client={project.client}
+        paidCents={paidCents}
+      />
+
       <div className="grid md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
