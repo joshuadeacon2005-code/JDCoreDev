@@ -3992,16 +3992,13 @@ JD CoreDev System`,
         aggTotalCostCents += totalCostCents;
         aggExternalCostCents += externalCostCents;
 
-        // Time-based overage minus pass-through external costs, floored at 0.
-        // Rationale: client is billed for the developer's time over budget at
-        // the agreed hourly rate; external costs are already invoiced /
-        // absorbed and reduce the time-overage liability so the same dollar
-        // isn't billed twice.
+        // Time-based overage at the agreed hourly rate. External pass-through
+        // dev costs are billed to the client separately and do not offset
+        // this — the overage represents JD's own time over budget.
         const overtimeMins = budgetMins !== null && totalMinutes > budgetMins
           ? totalMinutes - budgetMins
           : 0;
-        const timeOverageCents = Math.round((overtimeMins * OVERAGE_RATE_CENTS_PER_HOUR) / 60);
-        const overageCents = Math.max(0, timeOverageCents - externalCostCents);
+        const overageCents = Math.round((overtimeMins * OVERAGE_RATE_CENTS_PER_HOUR) / 60);
 
         perProject[projectId] = {
           projectName: project.name,
@@ -4021,7 +4018,7 @@ JD CoreDev System`,
       const timeOverageCents = Math.round(
         (aggOvertimeMinutes * OVERAGE_RATE_CENTS_PER_HOUR) / 60,
       );
-      const finalOverageCents = Math.max(0, timeOverageCents - aggExternalCostCents);
+      const finalOverageCents = timeOverageCents;
       const costOverageCents = hasCostBudget && aggTotalCostCents > aggBudgetCents
         ? aggTotalCostCents - aggBudgetCents
         : 0;
@@ -4092,14 +4089,14 @@ JD CoreDev System`,
       // Time-based maintenance overage, computed against the *current billing
       // cycle* (project_hosting_terms.current_cycle_start_date) which the user
       // resets manually after each payment. Charged at $30/hr above the time
-      // budget, reduced by any external pass-through dev costs already
-      // recorded in the cycle so the same dollar isn't billed twice. Floors
-      // at 0 so a refund/credit doesn't accidentally turn into a discount.
+      // budget — this represents JD's own time. External pass-through dev
+      // costs are billed to the client through their own line items and do
+      // not offset this overage.
       const HOSTING_OVERAGE_RATE_CENTS_PER_HOUR = 3000; // $30/hr
       let totalOverageCents = 0;
       const projectOverages: Record<
         number,
-        { amount: number; cycleStart: string; overtimeMinutes: number; externalCents: number }
+        { amount: number; cycleStart: string; overtimeMinutes: number }
       > = {};
       const cycleEnd = invoiceDate || new Date().toISOString().split("T")[0];
       for (const project of selectedProjects) {
@@ -4113,18 +4110,12 @@ JD CoreDev System`,
             : cycleEnd);
         const logs = await storage.getMaintenanceLogsByDateRange(project.id, cycleStart, cycleEnd);
         const totalMinutes = logs.reduce((sum, log) => sum + log.minutesSpent, 0);
-        let externalCents = 0;
-        for (const log of logs) {
-          const subCosts = await storage.getMaintenanceLogCosts(log.id);
-          externalCents += subCosts.reduce((sum, c) => sum + c.costCents, 0);
-        }
         const overtimeMinutes = Math.max(0, totalMinutes - budgetMinutes);
-        const timeOverageCents = Math.round(
+        const overage = Math.round(
           (overtimeMinutes * HOSTING_OVERAGE_RATE_CENTS_PER_HOUR) / 60,
         );
-        const overage = Math.max(0, timeOverageCents - externalCents);
         if (overage > 0) {
-          projectOverages[project.id] = { amount: overage, cycleStart, overtimeMinutes, externalCents };
+          projectOverages[project.id] = { amount: overage, cycleStart, overtimeMinutes };
           totalOverageCents += overage;
         }
       }
@@ -4164,15 +4155,12 @@ JD CoreDev System`,
         const overage = projectOverages[project.id];
         if (overage && overage.amount > 0) {
           const hours = (overage.overtimeMinutes / 60).toFixed(2);
-          const externalNote = overage.externalCents > 0
-            ? ` less $${(overage.externalCents / 100).toFixed(2)} external dev costs`
-            : "";
           await storage.createHostingInvoiceLineItem({
             invoiceId: invoice.id,
             projectId: project.id,
             projectName: project.name,
             amountCents: overage.amount,
-            description: `Maintenance Overage — ${hours}h over budget @ $30/hr${externalNote} (cycle since ${overage.cycleStart})`,
+            description: `Maintenance Overage — ${hours}h over budget @ $30/hr (cycle since ${overage.cycleStart})`,
           });
         }
       }
