@@ -436,19 +436,20 @@ function generateHostingInvoicePDF(
         doc.text(`$${(projData.totalCostCents / 100).toFixed(2)}`, pageWidth - margin - 5, y, { align: "right" });
         y += 5;
 
-        if (projData.budgetCents !== null) {
+        if (projData.budgetMinutes !== null) {
           doc.setFont("helvetica", "normal");
           doc.setFontSize(7.5);
           doc.setTextColor(100, 100, 100);
-          const budgetUSD = (projData.budgetCents / 100).toFixed(2);
-          doc.text(`Monthly Budget: $${budgetUSD}`, margin + 5, y);
+          doc.text(`Time Budget: ${formatMinutes(projData.budgetMinutes)}`, margin + 5, y);
           y += 4;
 
+          const overtimeMins = Math.max(0, projData.totalMinutes - projData.budgetMinutes);
           if (projData.overageCents > 0) {
             doc.setFont("helvetica", "bold");
             doc.setTextColor(180, 50, 50);
+            const hours = (overtimeMins / 60).toFixed(2);
             const overageUSD = (projData.overageCents / 100).toFixed(2);
-            doc.text(`Budget Overage: $${overageUSD}`, margin + 5, y);
+            doc.text(`Time Overage: ${hours}h @ $30/hr = $${overageUSD}`, margin + 5, y);
             y += 4;
           } else {
             doc.setTextColor(50, 150, 50);
@@ -457,11 +458,12 @@ function generateHostingInvoicePDF(
           }
         }
 
-        if (projData.budgetMinutes !== null) {
+        if (projData.budgetCents !== null) {
           doc.setFont("helvetica", "normal");
           doc.setFontSize(7.5);
           doc.setTextColor(100, 100, 100);
-          doc.text(`Time Allocation: ${formatMinutes(projData.budgetMinutes)}`, margin + 5, y);
+          const budgetUSD = (projData.budgetCents / 100).toFixed(2);
+          doc.text(`Cost Budget (informational): $${budgetUSD}`, margin + 5, y);
           y += 4;
         }
 
@@ -470,42 +472,35 @@ function generateHostingInvoicePDF(
 
       checkPageBreak(35);
       doc.setFillColor(245, 245, 245);
-      const summaryBoxHeight = aggregatedData && totalOverageCents > 0 ? 32 : 18;
+      const summaryBoxHeight = aggregatedData && totalOverageCents > 0 ? 26 : 18;
       doc.rect(margin, y, contentWidth, summaryBoxHeight, 'F');
       doc.setTextColor(...BRAND_DARK);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(9);
-      doc.text(`EXTERNAL COSTS SUMMARY (All Client Projects)`, margin + 5, y + 6);
+      doc.text(`MAINTENANCE & SUPPORT SUMMARY (All Client Projects)`, margin + 5, y + 6);
       doc.text(`Total Time: ${formatMinutes(grandTotalMinutes)}`, margin + 5, y + 13);
       doc.text(`Total External Costs: $${(grandTotalCostCents / 100).toFixed(2)}`, pageWidth / 2, y + 6);
       if (aggregatedData) {
-        if (aggregatedData.totalBudgetCents !== null) {
+        if (aggregatedData.totalBudgetMinutes !== null) {
           doc.setFont("helvetica", "normal");
           doc.setFontSize(7.5);
           doc.setTextColor(100, 100, 100);
-          doc.text(`Combined Cost Budget: $${(aggregatedData.totalBudgetCents / 100).toFixed(2)}`, pageWidth / 2, y + 13);
-        }
-        if (aggregatedData.totalBudgetMinutes !== null) {
-          doc.text(`Combined Time Budget: ${formatMinutes(aggregatedData.totalBudgetMinutes)}`, margin + 5, y + 19);
+          doc.text(`Combined Time Budget: ${formatMinutes(aggregatedData.totalBudgetMinutes)}`, pageWidth / 2, y + 13);
         }
         if (totalOverageCents > 0) {
           doc.setFont("helvetica", "bold");
           doc.setFontSize(8);
           doc.setTextColor(180, 50, 50);
-          const costOvLabel = aggregatedData.costOverageCents > 0
-            ? `Cost Overage: $${(aggregatedData.costOverageCents / 100).toFixed(2)}`
-            : "Cost: Within budget";
-          const timeOvLabel = aggregatedData.overtimeMinutes > 0
-            ? `Time Overage: ${formatMinutes(aggregatedData.overtimeMinutes)} @ $${aggregatedData.overtimeRatePerHour}/hr = $${(aggregatedData.timeOverageCents / 100).toFixed(2)}`
-            : "Time: Within budget";
-          doc.text(costOvLabel, pageWidth / 2, y + 19);
-          doc.text(timeOvLabel, margin + 5, y + 25);
-          doc.setTextColor(200, 50, 50);
-          doc.text(`Overage Added (lesser of cost/time): $${(totalOverageCents / 100).toFixed(2)}`, pageWidth / 2, y + 25);
+          const overHours = (aggregatedData.overtimeMinutes / 60).toFixed(2);
+          doc.text(
+            `Time Overage: ${overHours}h @ $${aggregatedData.overtimeRatePerHour}/hr = $${(totalOverageCents / 100).toFixed(2)}`,
+            margin + 5,
+            y + 20,
+          );
         }
       } else if (grandTotalOverageCents > 0) {
         doc.setTextColor(180, 50, 50);
-        doc.text(`Budget Overage Added to Invoice: $${(grandTotalOverageCents / 100).toFixed(2)}`, pageWidth / 2, y + 13);
+        doc.text(`Time Overage Added to Invoice: $${(grandTotalOverageCents / 100).toFixed(2)}`, pageWidth / 2, y + 13);
       }
       y += summaryBoxHeight + 7;
     }
@@ -809,6 +804,10 @@ export function HostingInvoiceGeneratorDialog({
           clientId: selectedClientId,
           startDate: bpStartStr,
           endDate: bpEndStr,
+          // Mirror the hosting-invoice creation logic: pull logs from each
+          // project's currentCycleStartDate when set, so the PDF reflects the
+          // exact same cycle the server will bill against.
+          useCycleStart: true,
         });
         const apiResponse: MaintenanceApiResponse = await maintenanceRes.json();
         maintenanceData = apiResponse.projects;

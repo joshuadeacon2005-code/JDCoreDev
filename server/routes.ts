@@ -3878,8 +3878,9 @@ JD CoreDev System`,
         startDate: z.string().optional(),
         endDate: z.string().optional(),
         clientId: z.number().int().positive().optional(),
+        useCycleStart: z.boolean().optional(),
       });
-      const { projectIds, year, month, startDate, endDate, clientId } = schema.parse(req.body);
+      const { projectIds, year, month, startDate, endDate, clientId, useCycleStart } = schema.parse(req.body);
 
       let resolvedStartDate = startDate;
       let resolvedEndDate = endDate;
@@ -3948,8 +3949,15 @@ JD CoreDev System`,
         if (!project) continue;
 
         const terms = await storage.getProjectHostingTerms(projectId);
-        const logs = await storage.getMaintenanceLogsByDateRange(projectId, resolvedStartDate!, resolvedEndDate!);
-        console.log(`[Maintenance Data] Project ${projectId} (${project.name}): ${logs.length} logs found`);
+        // When useCycleStart is set, mirror the hosting-invoice creation
+        // behavior: pull logs from the project's currentCycleStartDate so the
+        // PDF preview matches what will actually be billed. Falls back to the
+        // supplied range when the cycle date is missing.
+        const projectStartDate = useCycleStart && terms?.currentCycleStartDate
+          ? terms.currentCycleStartDate
+          : resolvedStartDate!;
+        const logs = await storage.getMaintenanceLogsByDateRange(projectId, projectStartDate, resolvedEndDate!);
+        console.log(`[Maintenance Data] Project ${projectId} (${project.name}): ${logs.length} logs found (range ${projectStartDate} to ${resolvedEndDate})`);
 
         const logsWithCosts = [];
         let totalMinutes = 0;
