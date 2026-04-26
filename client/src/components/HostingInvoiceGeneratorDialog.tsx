@@ -336,7 +336,7 @@ function generateHostingInvoicePDF(
     const services = ["Infrastructure & Database", "Security & Updates", "Technical Support"];
     services.forEach((service) => {
       checkPageBreak(6);
-      doc.text(`• ${service}`, margin + 77, y);
+      doc.text(`- ${service}`, margin + 77, y);
       y += 4;
     });
     doc.setTextColor(...BRAND_DARK);
@@ -470,38 +470,65 @@ function generateHostingInvoicePDF(
         y += 6;
       }
 
-      checkPageBreak(35);
+      checkPageBreak(40);
+      // Title gets its own row so it can't collide with the right-hand totals
+      // even when the company has many projects. Then the metrics stack below
+      // in two columns (left: time totals, right: cost totals), with optional
+      // overage line spanning the full width underneath.
+      const hasTimeBudget = !!(aggregatedData && aggregatedData.totalBudgetMinutes !== null);
+      const hasOverage = !!(aggregatedData ? totalOverageCents > 0 : grandTotalOverageCents > 0);
+      const summaryBoxHeight = 14 + 7 + (hasTimeBudget ? 7 : 0) + (hasOverage ? 7 : 0);
       doc.setFillColor(245, 245, 245);
-      const summaryBoxHeight = aggregatedData && totalOverageCents > 0 ? 26 : 18;
       doc.rect(margin, y, contentWidth, summaryBoxHeight, 'F');
+
       doc.setTextColor(...BRAND_DARK);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(9);
-      doc.text(`MAINTENANCE & SUPPORT SUMMARY (All Client Projects)`, margin + 5, y + 6);
-      doc.text(`Total Time: ${formatMinutes(grandTotalMinutes)}`, margin + 5, y + 13);
-      doc.text(`Total External Costs: $${(grandTotalCostCents / 100).toFixed(2)}`, pageWidth / 2, y + 6);
-      if (aggregatedData) {
-        if (aggregatedData.totalBudgetMinutes !== null) {
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(7.5);
-          doc.setTextColor(100, 100, 100);
-          doc.text(`Combined Time Budget: ${formatMinutes(aggregatedData.totalBudgetMinutes)}`, pageWidth / 2, y + 13);
-        }
-        if (totalOverageCents > 0) {
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(8);
-          doc.setTextColor(180, 50, 50);
+      doc.text(`MAINTENANCE & SUPPORT SUMMARY (All Client Projects)`, margin + 5, y + 7);
+
+      let lineY = y + 14;
+      doc.setFontSize(8);
+      doc.text(`Total Time: ${formatMinutes(grandTotalMinutes)}`, margin + 5, lineY);
+      doc.text(
+        `Total External Costs: $${(grandTotalCostCents / 100).toFixed(2)}`,
+        pageWidth - margin - 5,
+        lineY,
+        { align: "right" },
+      );
+      lineY += 7;
+
+      if (hasTimeBudget && aggregatedData) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 100, 100);
+        doc.text(
+          `Combined Time Budget: ${formatMinutes(aggregatedData.totalBudgetMinutes!)}`,
+          margin + 5,
+          lineY,
+        );
+        lineY += 7;
+      }
+
+      if (hasOverage) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(180, 50, 50);
+        if (aggregatedData) {
           const overHours = (aggregatedData.overtimeMinutes / 60).toFixed(2);
           doc.text(
             `Time Overage: ${overHours}h @ $${aggregatedData.overtimeRatePerHour}/hr = $${(totalOverageCents / 100).toFixed(2)}`,
             margin + 5,
-            y + 20,
+            lineY,
+          );
+        } else {
+          doc.text(
+            `Time Overage Added to Invoice: $${(grandTotalOverageCents / 100).toFixed(2)}`,
+            margin + 5,
+            lineY,
           );
         }
-      } else if (grandTotalOverageCents > 0) {
-        doc.setTextColor(180, 50, 50);
-        doc.text(`Time Overage Added to Invoice: $${(grandTotalOverageCents / 100).toFixed(2)}`, pageWidth / 2, y + 13);
       }
+
       y += summaryBoxHeight + 7;
     }
   }
@@ -553,7 +580,7 @@ function generateHostingInvoicePDF(
   ];
   includedItems.forEach((item) => {
     checkPageBreak(5);
-    doc.text(`✓ ${item}`, margin + 5, y);
+    doc.text(`- ${item}`, margin + 5, y);
     y += 4;
   });
 
