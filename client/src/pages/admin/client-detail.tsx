@@ -45,6 +45,7 @@ import { useToast } from "@/hooks/use-toast";
 import { HostingInvoiceGeneratorDialog } from "@/components/HostingInvoiceGeneratorDialog";
 import type { Client, Project, Contact, Milestone, ProjectHostingTerms, ReferralPartner } from "@shared/schema";
 import { Handshake } from "lucide-react";
+import { SUPPORTED_INVOICE_CURRENCIES } from "@shared/currency";
 
 type ProjectWithMilestones = Project & { milestones: Milestone[] };
 
@@ -80,6 +81,8 @@ const clientFormSchema = z.object({
   accountsDeptEmail: z.string().email("Invalid email").optional().or(z.literal("")),
   accountsDeptPhone: z.string().optional().or(z.literal("")),
   accountsDeptNotes: z.string().optional().or(z.literal("")),
+  invoiceCurrency: z.string().optional().or(z.literal("")),
+  referredByPartnerId: z.string().optional().or(z.literal("")),
 });
 
 type ClientFormData = z.infer<typeof clientFormSchema>;
@@ -95,6 +98,11 @@ export default function AdminClientDetail() {
 
   const { data: client, isLoading } = useQuery<ClientDetailData>({
     queryKey: ["/api/admin/clients", clientId],
+  });
+
+  // Loaded for the edit-client form's "Referred by partner" dropdown.
+  const { data: partners } = useQuery<ReferralPartner[]>({
+    queryKey: ["/api/admin/partners"],
   });
 
   type DevProject = {
@@ -229,13 +237,21 @@ export default function AdminClientDetail() {
         accountsDeptEmail: client.accountsDeptEmail || "",
         accountsDeptPhone: client.accountsDeptPhone || "",
         accountsDeptNotes: client.accountsDeptNotes || "",
+        invoiceCurrency: client.invoiceCurrency || "",
+        referredByPartnerId: client.referredByPartnerId ? String(client.referredByPartnerId) : "",
       });
       setIsEditClientDialogOpen(true);
     }
   };
 
   const onClientSubmit = (data: ClientFormData) => {
-    updateClientMutation.mutate(data);
+    const payload: any = { ...data };
+    payload.invoiceCurrency = data.invoiceCurrency && data.invoiceCurrency !== "" ? data.invoiceCurrency : null;
+    payload.referredByPartnerId =
+      data.referredByPartnerId && data.referredByPartnerId !== ""
+        ? Number(data.referredByPartnerId)
+        : null;
+    updateClientMutation.mutate(payload);
   };
 
   const openAddContact = () => {
@@ -1091,6 +1107,44 @@ export default function AdminClientDetail() {
                   {...clientForm.register("notes")}
                   data-testid="input-client-notes"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Referred by partner</Label>
+                  <Select
+                    value={clientForm.watch("referredByPartnerId") || "__none__"}
+                    onValueChange={(v) => clientForm.setValue("referredByPartnerId", v === "__none__" ? "" : v)}
+                  >
+                    <SelectTrigger data-testid="select-edit-client-partner"><SelectValue placeholder="Direct client" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Direct client (no partner)</SelectItem>
+                      {partners?.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.name}{p.tradingName ? ` — ${p.tradingName}` : ""} ({(Number(p.defaultCommissionRate) * 100).toFixed(2)}%)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Invoice currency</Label>
+                  <Select
+                    value={clientForm.watch("invoiceCurrency") || "__default__"}
+                    onValueChange={(v) => clientForm.setValue("invoiceCurrency", v === "__default__" ? "" : v)}
+                  >
+                    <SelectTrigger data-testid="select-edit-client-currency"><SelectValue placeholder="Use system default" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default__">Use system default (USD)</SelectItem>
+                      {SUPPORTED_INVOICE_CURRENCIES.map((c) => (
+                        <SelectItem key={c.code} value={c.code}>{c.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Adds an "≈ &lt;currency&gt;" conversion line on invoices alongside the USD primary.
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-4 pt-4 border-t">
