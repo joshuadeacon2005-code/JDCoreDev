@@ -19,6 +19,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, Users, Loader2, Mail, Phone, Building2, Handshake } from "lucide-react";
 import { format } from "date-fns";
 import type { Client, ReferralPartner } from "@shared/schema";
+import { SUPPORTED_INVOICE_CURRENCIES } from "@shared/currency";
 
 const clientSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -33,6 +34,7 @@ const clientSchema = z.object({
   notes: z.string().optional(),
   status: z.enum(["lead", "active", "past"]),
   referredByPartnerId: z.string().optional(), // "" or partner id; converted to null/number on submit
+  invoiceCurrency: z.string().optional(), // ISO 4217. "" = use global default.
 });
 
 type ClientFormData = z.infer<typeof clientSchema>;
@@ -66,6 +68,7 @@ export default function AdminClients() {
       notes: "",
       status: "lead",
       referredByPartnerId: "",
+      invoiceCurrency: "",
     },
   });
 
@@ -76,6 +79,8 @@ export default function AdminClients() {
         data.referredByPartnerId && data.referredByPartnerId !== ""
           ? Number(data.referredByPartnerId)
           : null;
+      payload.invoiceCurrency =
+        data.invoiceCurrency && data.invoiceCurrency !== "" ? data.invoiceCurrency : null;
       const res = await apiRequest("POST", "/api/admin/clients", payload);
       return res.json();
     },
@@ -219,6 +224,21 @@ export default function AdminClients() {
                           <SelectItem key={p.id} value={String(p.id)}>
                             {p.name}{p.tradingName ? ` — ${p.tradingName}` : ""} ({(Number(p.defaultCommissionRate) * 100).toFixed(2)}%)
                           </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <Label htmlFor="invoiceCurrency">Invoice currency (optional)</Label>
+                    <Select
+                      value={form.watch("invoiceCurrency") ?? ""}
+                      onValueChange={(v) => form.setValue("invoiceCurrency", v === "__default__" ? "" : v)}
+                    >
+                      <SelectTrigger data-testid="select-client-currency"><SelectValue placeholder="Use system default" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__default__">Use system default</SelectItem>
+                        {SUPPORTED_INVOICE_CURRENCIES.map((c) => (
+                          <SelectItem key={c.code} value={c.code}>{c.label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>

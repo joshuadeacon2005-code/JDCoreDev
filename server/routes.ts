@@ -295,7 +295,9 @@ async function generateCommissionForCompletedProject(
     netCents,
     rateApplied: String(rate),
     commissionCents,
-    currency: "USD",
+    // Prefer partner's payout currency, then client's invoice currency,
+    // then USD as a final fallback.
+    currency: partner.payoutCurrency || client.invoiceCurrency || "USD",
     status: "due",
     notes: null,
   } as any);
@@ -1163,6 +1165,7 @@ export async function registerRoutes(
     status: z.enum(["active", "paused", "terminated"]).default("active"),
     partnershipStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")),
     defaultTailMonths: z.coerce.number().int().min(0).default(12),
+    payoutCurrency: z.string().optional().or(z.literal("")),
     notes: z.string().optional().or(z.literal("")),
   });
 
@@ -1175,6 +1178,7 @@ export async function registerRoutes(
         contactEmail: data.contactEmail || null,
         contactPhone: data.contactPhone || null,
         partnershipStartDate: data.partnershipStartDate || null,
+        payoutCurrency: data.payoutCurrency || null,
         notes: data.notes || null,
       };
       res.status(201).json(await storage.createReferralPartner(cleaned));
@@ -1186,7 +1190,7 @@ export async function registerRoutes(
       const data = partnerSchema.partial().parse(req.body);
       const cleaned: any = { ...data };
       // Convert empty strings to null for nullable fields if they were provided.
-      for (const k of ["tradingName", "contactEmail", "contactPhone", "partnershipStartDate", "notes"]) {
+      for (const k of ["tradingName", "contactEmail", "contactPhone", "partnershipStartDate", "payoutCurrency", "notes"]) {
         if (cleaned[k] === "") cleaned[k] = null;
       }
       const updated = await storage.updateReferralPartner(parseInt(req.params.id), cleaned);
@@ -4129,14 +4133,15 @@ JD CoreDev System`,
       // Generate invoice number
       const invoiceNumber = await storage.getNextHostingInvoiceNumber(clientId);
 
-      // Create the invoice
+      // Create the invoice. Currency comes from the client's saved
+      // preference; falls back to USD when null.
       const invoice = await storage.createHostingInvoice({
         invoiceNumber,
         clientId,
         invoiceDate,
         dueDate,
         totalAmountCents,
-        currency: "USD",
+        currency: client.invoiceCurrency || "USD",
         status: "pending",
         billingPeriod,
         notes,

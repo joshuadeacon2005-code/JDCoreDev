@@ -68,6 +68,10 @@ export const referralPartners = pgTable("referral_partners", {
   // Months of "tail" period: direct repeat work from a partner-originated
   // client within this window still attracts commission.
   defaultTailMonths: integer("default_tail_months").notNull().default(12),
+  // Currency the partner prefers to be paid in (ISO 4217). When set, all
+  // new commission entries for this partner use this code regardless of
+  // the source project's currency. Null = inherit from source.
+  payoutCurrency: text("payout_currency"),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -101,6 +105,10 @@ export const clients = pgTable("clients", {
   // When true, hosting/maintenance retainers for this client also generate
   // partner-share commission on each billing cycle.
   partnerActivelyInvolved: boolean("partner_actively_involved").notNull().default(false),
+  // Default currency for invoices billed to this client. Null falls back to
+  // paymentSettings.defaultCurrency. ISO 4217 codes: USD, GBP, EUR, HKD,
+  // AUD, CAD, SGD, JPY, CNY (free-form text — extend as needed).
+  invoiceCurrency: text("invoice_currency"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

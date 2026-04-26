@@ -22,6 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, Handshake, Mail, Phone, Loader2 } from "lucide-react";
 import type { ReferralPartner } from "@shared/schema";
+import { SUPPORTED_INVOICE_CURRENCIES } from "@shared/currency";
 
 const partnerSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -33,6 +34,7 @@ const partnerSchema = z.object({
   status: z.enum(["active", "paused", "terminated"]),
   partnershipStartDate: z.string().optional(),
   defaultTailMonths: z.coerce.number().int().min(0).default(12),
+  payoutCurrency: z.string().optional(),
   notes: z.string().optional(),
 });
 type PartnerFormData = z.infer<typeof partnerSchema>;
@@ -59,7 +61,7 @@ export default function AdminPartners() {
     defaultValues: {
       name: "", tradingName: "", contactEmail: "", contactPhone: "",
       defaultCommissionRatePct: 12.5, defaultRecurringShareRatePct: "",
-      status: "active", partnershipStartDate: "", defaultTailMonths: 12, notes: "",
+      status: "active", partnershipStartDate: "", defaultTailMonths: 12, payoutCurrency: "", notes: "",
     },
   });
 
@@ -78,6 +80,7 @@ export default function AdminPartners() {
         status: data.status,
         partnershipStartDate: data.partnershipStartDate || undefined,
         defaultTailMonths: data.defaultTailMonths,
+        payoutCurrency: data.payoutCurrency || undefined,
         notes: data.notes || undefined,
       };
       const res = await apiRequest("POST", "/api/admin/partners", payload);
@@ -152,9 +155,26 @@ export default function AdminPartners() {
                   <Input type="number" {...form.register("defaultTailMonths")} />
                 </div>
               </div>
-              <div>
-                <Label>Partnership start date</Label>
-                <Input type="date" {...form.register("partnershipStartDate")} />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Partnership start date</Label>
+                  <Input type="date" {...form.register("partnershipStartDate")} />
+                </div>
+                <div>
+                  <Label>Payout currency</Label>
+                  <Select
+                    value={form.watch("payoutCurrency") ?? ""}
+                    onValueChange={(v) => form.setValue("payoutCurrency", v === "__inherit__" ? "" : v)}
+                  >
+                    <SelectTrigger><SelectValue placeholder="Inherit from invoice" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__inherit__">Inherit from invoice</SelectItem>
+                      {SUPPORTED_INVOICE_CURRENCIES.map((c) => (
+                        <SelectItem key={c.code} value={c.code}>{c.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               <div>
                 <Label>Notes</Label>
@@ -201,6 +221,7 @@ export default function AdminPartners() {
                     <span>commission</span>
                     <span>·</span>
                     <span>{p.defaultTailMonths}mo tail</span>
+                    {p.payoutCurrency && <><span>·</span><span className="font-mono text-foreground">{p.payoutCurrency}</span></>}
                   </div>
                   {p.contactEmail && (
                     <div className="flex items-center gap-1.5 text-muted-foreground"><Mail className="h-3.5 w-3.5" />{p.contactEmail}</div>

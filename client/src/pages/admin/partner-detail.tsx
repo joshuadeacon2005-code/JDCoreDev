@@ -19,8 +19,10 @@ import { ArrowLeft, Loader2, CheckCircle2, Clock, Briefcase, Users } from "lucid
 import { format } from "date-fns";
 import type { ReferralPartnerSummary, CommissionEntry, Client } from "@shared/schema";
 
-function fmtUSD(cents: number) {
-  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+import { formatCurrency } from "@shared/currency";
+
+function fmtUSD(cents: number, currency?: string | null) {
+  return formatCurrency(cents, currency || "USD", { includeCode: true });
 }
 
 export default function AdminPartnerDetail() {
@@ -88,6 +90,7 @@ export default function AdminPartnerDetail() {
               <Badge>{summary.status}</Badge>
               <span className="font-mono text-foreground">{(Number(summary.defaultCommissionRate) * 100).toFixed(2)}%</span>
               <span>· {summary.defaultTailMonths}-month tail</span>
+              {summary.payoutCurrency && <span>· paid in <strong className="text-foreground">{summary.payoutCurrency}</strong></span>}
               {summary.contactEmail && <span>· {summary.contactEmail}</span>}
             </div>
           </div>
@@ -97,15 +100,15 @@ export default function AdminPartnerDetail() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Card>
             <CardHeader className="pb-1"><CardTitle className="text-xs uppercase tracking-wider text-muted-foreground">Accrued</CardTitle></CardHeader>
-            <CardContent><div className="text-2xl font-bold">{fmtUSD(summary.totalAccruedCents)}</div></CardContent>
+            <CardContent><div className="text-2xl font-bold">{fmtUSD(summary.totalAccruedCents, summary.payoutCurrency)}</div></CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-1"><CardTitle className="text-xs uppercase tracking-wider text-muted-foreground">Paid</CardTitle></CardHeader>
-            <CardContent><div className="text-2xl font-bold text-emerald-500">{fmtUSD(summary.totalPaidCents)}</div></CardContent>
+            <CardContent><div className="text-2xl font-bold text-emerald-500">{fmtUSD(summary.totalPaidCents, summary.payoutCurrency)}</div></CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-1"><CardTitle className="text-xs uppercase tracking-wider text-muted-foreground">Due</CardTitle></CardHeader>
-            <CardContent><div className="text-2xl font-bold text-yellow-500">{fmtUSD(summary.totalDueCents)}</div></CardContent>
+            <CardContent><div className="text-2xl font-bold text-yellow-500">{fmtUSD(summary.totalDueCents, summary.payoutCurrency)}</div></CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-1"><CardTitle className="text-xs uppercase tracking-wider text-muted-foreground">Active clients</CardTitle></CardHeader>
@@ -169,7 +172,7 @@ export default function AdminPartnerDetail() {
             <div className="space-y-3">
               <div className="text-sm">
                 <div className="text-muted-foreground">Amount</div>
-                <div className="text-2xl font-bold">{fmtUSD(paying.commissionCents)}</div>
+                <div className="text-2xl font-bold">{fmtUSD(paying.commissionCents, paying.currency)}</div>
               </div>
               <div>
                 <Label>Payment date</Label>
@@ -221,11 +224,11 @@ function CommissionList({ entries, onMarkPaid }: { entries: CommissionEntry[]; o
               <tr key={e.id} className="hover:bg-muted/20">
                 <td className="px-4 py-2 whitespace-nowrap text-muted-foreground">{format(new Date(e.createdAt), "yyyy-MM-dd")}</td>
                 <td className="px-4 py-2 whitespace-nowrap">{e.sourceType}{e.projectId ? ` (#${e.projectId})` : ""}</td>
-                <td className="px-4 py-2 text-right font-mono">{fmtUSD(e.grossCents)}</td>
-                <td className="px-4 py-2 text-right font-mono text-muted-foreground">−{fmtUSD(e.costsCents)}</td>
-                <td className="px-4 py-2 text-right font-mono">{fmtUSD(e.netCents)}</td>
+                <td className="px-4 py-2 text-right font-mono">{fmtUSD(e.grossCents, e.currency)}</td>
+                <td className="px-4 py-2 text-right font-mono text-muted-foreground">−{fmtUSD(e.costsCents, e.currency)}</td>
+                <td className="px-4 py-2 text-right font-mono">{fmtUSD(e.netCents, e.currency)}</td>
                 <td className="px-4 py-2 text-right font-mono">{(Number(e.rateApplied) * 100).toFixed(2)}%</td>
-                <td className="px-4 py-2 text-right font-mono font-bold">{fmtUSD(e.commissionCents)}</td>
+                <td className="px-4 py-2 text-right font-mono font-bold">{fmtUSD(e.commissionCents, e.currency)}</td>
                 <td className="px-4 py-2">
                   {e.status === "due" && <Badge className="bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 gap-1"><Clock className="h-3 w-3" />due</Badge>}
                   {e.status === "paid" && <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 gap-1"><CheckCircle2 className="h-3 w-3" />paid {e.paymentDate && `· ${e.paymentDate}`}</Badge>}
