@@ -1,6 +1,37 @@
-// Centralised currency formatting for invoice rendering. Currency codes
-// are free-form text on the DB side (clients.invoiceCurrency) — this map
-// just gives us a symbol per code. Extend as new codes appear.
+// Centralised currency formatting for invoice rendering. All amounts are
+// stored in USD on the database side; clients.invoiceCurrency and
+// partners.payoutCurrency are *secondary display* currencies. PDFs and
+// dashboards print the USD primary and an "≈ {sym}{converted}" line when
+// the local currency differs from USD.
+
+// Approximate USD → local rates. Set high so converted amounts read
+// reasonably; user can tune in payment_settings if precision matters.
+// (paymentSettings.usdToHkdRate is already configurable; other rates can
+// be moved off this static map into the same table later if needed.)
+export const DEFAULT_USD_FX_RATES: Record<string, number> = {
+  USD: 1,
+  GBP: 0.79,
+  EUR: 0.92,
+  HKD: 7.8,
+  AUD: 1.51,
+  CAD: 1.36,
+  SGD: 1.34,
+  NZD: 1.65,
+  JPY: 152,
+  CNY: 7.2,
+  CHF: 0.88,
+  THB: 35.5,
+};
+
+export function convertUSDCents(
+  usdCents: number,
+  targetCurrency: string | null | undefined,
+  rateOverrides?: Record<string, number>,
+): { value: number; symbol: string; code: string } {
+  const code = (targetCurrency || "USD").toUpperCase();
+  const rate = rateOverrides?.[code] ?? DEFAULT_USD_FX_RATES[code] ?? 1;
+  return { value: (usdCents / 100) * rate, symbol: currencySymbol(code), code };
+}
 
 const SYMBOLS: Record<string, string> = {
   USD: "$",

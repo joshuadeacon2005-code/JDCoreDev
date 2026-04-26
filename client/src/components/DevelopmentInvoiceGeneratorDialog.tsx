@@ -6,7 +6,7 @@ import { jsPDF } from "jspdf";
 import { format, addDays } from "date-fns";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
-import { currencySymbol } from "@shared/currency";
+import { currencySymbol, convertUSDCents, DEFAULT_USD_FX_RATES } from "@shared/currency";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,8 +62,11 @@ function generateDevelopmentInvoicePDF(
   developmentLogs?: MaintenanceLogWithCosts[]
 ) {
   const doc = new jsPDF();
-  const currency = client.invoiceCurrency || paymentSettings?.defaultCurrency || "USD";
-  const sym = currencySymbol(currency);
+  // Primary currency on dev invoices is always USD; client.invoiceCurrency
+  // drives the optional secondary "≈" line for conversion.
+  const localCurrency = (client.invoiceCurrency || "USD").toUpperCase();
+  const showLocal = localCurrency !== "USD";
+  const localSym = currencySymbol(localCurrency);
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
@@ -92,12 +95,19 @@ function generateDevelopmentInvoicePDF(
     doc.text("JD CoreDev - Custom Software Development & Consulting", pageWidth / 2, footerY + 5, { align: "center" });
   };
 
-  const usdToHkdRate = paymentSettings?.usdToHkdRate 
-    ? parseFloat(paymentSettings.usdToHkdRate) 
+  const usdToHkdRate = paymentSettings?.usdToHkdRate
+    ? parseFloat(paymentSettings.usdToHkdRate)
     : DEFAULT_USD_TO_HKD_RATE;
 
+  // FX for the client's secondary display currency. HKD specifically can
+  // be configured via paymentSettings; everything else uses the static
+  // map in shared/currency.ts.
+  const localFxRate = localCurrency === "HKD"
+    ? usdToHkdRate
+    : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);
+
   const amountUSD = milestone.amountCents / 100;
-  const amountHKD = amountUSD * usdToHkdRate;
+  const amountLocal = amountUSD * localFxRate;
 
   try {
     doc.addImage(JDCOREDEV_LOGO_BASE64, 'PNG', margin, 8, 60, 16);
@@ -216,7 +226,7 @@ function generateDevelopmentInvoicePDF(
   });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.text(`${currency} ${sym}${amountUSD.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
+  doc.text(`USD $${amountUSD.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
   
   y += 7;
   doc.setTextColor(100, 100, 100);
@@ -252,10 +262,12 @@ function generateDevelopmentInvoicePDF(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.rect(pageWidth - margin - 95, y - 5, 95, 20, 'F');
-  doc.text(`TOTAL DUE: ${currency} ${sym}${amountUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
+  doc.text(`TOTAL DUE: USD $${amountUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text(`(approx. HKD $${amountHKD.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 90, y + 12);
+  if (showLocal) {
+    doc.text(`(approx. ${localCurrency} ${localSym}${amountLocal.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 90, y + 12);
+  }
 
   y += 25;
   // Calculate total payment details height (left column ~35mm + buffer for right column)
@@ -629,7 +641,7 @@ function generateReceiptPDF(
   });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.text(`${currency} ${sym}${amountUSD.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
+  doc.text(`USD $${amountUSD.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
 
   y += 7;
   doc.setTextColor(100, 100, 100);
@@ -656,7 +668,7 @@ function generateReceiptPDF(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.rect(pageWidth - margin - 95, y - 5, 95, 20, 'F');
-  doc.text(`PAID: ${currency} ${sym}${amountUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
+  doc.text(`PAID: USD $${amountUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.text("Payment received — thank you", pageWidth - margin - 90, y + 12);
@@ -1116,13 +1128,16 @@ export function DevelopmentInvoiceGeneratorDialog({
                       </div>
                       <div className="text-right">
                         <p className="text-lg font-semibold font-mono">
-                          {selectedClient?.invoiceCurrency || "USD"} {currencySymbol(selectedClient?.invoiceCurrency || "USD")}{(selectedMilestone.amountCents / 100).toLocaleString()}
+                          USD ${(selectedMilestone.amountCents / 100).toLocaleString()}
                         </p>
-                        {(!selectedClient?.invoiceCurrency || selectedClient.invoiceCurrency === "USD") && (
-                          <p className="text-sm text-muted-foreground">
-                            ≈ HKD ${((selectedMilestone.amountCents / 100) * DEFAULT_USD_TO_HKD_RATE).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                          </p>
-                        )}
+                        {selectedClient?.invoiceCurrency && selectedClient.invoiceCurrency !== "USD" && (() => {
+                          const conv = convertUSDCents(selectedMilestone.amountCents, selectedClient.invoiceCurrency);
+                          return (
+                            <p className="text-sm text-muted-foreground">
+                              ≈ {conv.code} {conv.symbol}{conv.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </p>
+                          );
+                        })()}
                       </div>
                     </div>
                   </CardContent>

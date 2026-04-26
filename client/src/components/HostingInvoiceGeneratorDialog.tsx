@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Card, CardContent } from "@/components/ui/card";
-import { currencySymbol } from "@shared/currency";
+import { currencySymbol, convertUSDCents, DEFAULT_USD_FX_RATES } from "@shared/currency";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -143,8 +143,14 @@ function generateHostingInvoicePDF(
   aggregatedData?: AggregatedMaintenanceData
 ) {
   const doc = new jsPDF();
-  const currency = client.invoiceCurrency || paymentSettings?.defaultCurrency || "USD";
-  const sym = currencySymbol(currency);
+  // All primary amounts on the invoice are USD. The client's "local
+  // currency" (clients.invoiceCurrency) is shown as a secondary "≈"
+  // line for the convenience of clients who think in their own
+  // currency. paymentSettings.usdToHkdRate overrides the static map for
+  // HKD specifically; everything else uses DEFAULT_USD_FX_RATES.
+  const localCurrency = (client.invoiceCurrency || "USD").toUpperCase();
+  const showLocal = localCurrency !== "USD";
+  const localSym = currencySymbol(localCurrency);
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
@@ -171,11 +177,18 @@ function generateHostingInvoicePDF(
     doc.text("JD CoreDev - Custom Software Development & Consulting", pageWidth / 2, footerY + 5, { align: "center" });
   };
 
-  const usdToHkdRate = paymentSettings?.usdToHkdRate 
-    ? parseFloat(paymentSettings.usdToHkdRate) 
+  const usdToHkdRate = paymentSettings?.usdToHkdRate
+    ? parseFloat(paymentSettings.usdToHkdRate)
     : DEFAULT_USD_TO_HKD_RATE;
 
-  const hostingFeeCents = selectedProjects.reduce((sum, p) => 
+  // FX rate for the client's secondary display currency. HKD uses the
+  // configurable paymentSettings rate; everything else falls back to the
+  // static map in shared/currency.ts.
+  const localFxRate = localCurrency === "HKD"
+    ? usdToHkdRate
+    : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);
+
+  const hostingFeeCents = selectedProjects.reduce((sum, p) =>
     sum + (p.hostingTerms?.monthlyFeeCents || 0), 0
   );
 
@@ -183,7 +196,7 @@ function generateHostingInvoicePDF(
 
   const totalCents = hostingFeeCents + totalOverageCents;
   const totalUSD = totalCents / 100;
-  const totalHKD = totalUSD * usdToHkdRate;
+  const totalLocal = totalUSD * localFxRate;
 
   try {
     doc.addImage(JDCOREDEV_LOGO_BASE64, 'PNG', margin, 8, 60, 16);
@@ -305,7 +318,7 @@ function generateHostingInvoicePDF(
     }
     doc.setFont("helvetica", "normal");
     doc.text("Monthly Hosting & Support", margin + 75, y);
-    doc.text(`${currency} ${sym}${fee.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
+    doc.text(`USD $${fee.toLocaleString()}`, pageWidth - margin - 25, y, { align: "right" });
     
     y += 5;
     doc.setTextColor(100, 100, 100);
@@ -500,10 +513,12 @@ function generateHostingInvoicePDF(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.rect(pageWidth - margin - 95, y - 5, 95, 20, 'F');
-  doc.text(`TOTAL DUE: ${currency} ${sym}${totalUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
+  doc.text(`TOTAL DUE: USD $${totalUSD.toLocaleString()}`, pageWidth - margin - 90, y + 4);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text(`(approx. HKD $${totalHKD.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 90, y + 12);
+  if (showLocal) {
+    doc.text(`(approx. ${localCurrency} ${localSym}${totalLocal.toLocaleString(undefined, { maximumFractionDigits: 0 })})`, pageWidth - margin - 90, y + 12);
+  }
 
   if (totalOverageCents > 0) {
     doc.setTextColor(...BRAND_DARK);
@@ -952,13 +967,14 @@ export function HostingInvoiceGeneratorDialog({
                             {selectedProjectIds.length} project{selectedProjectIds.length !== 1 ? 's' : ''} selected
                           </p>
                           <p className="text-lg font-semibold font-mono">
-                            {selectedClient?.invoiceCurrency || "USD"} {currencySymbol(selectedClient?.invoiceCurrency || "USD")}{(totalAmount / 100).toLocaleString()}/month
+                            USD ${(totalAmount / 100).toLocaleString()}/month
                           </p>
                         </div>
                         <div className="text-right text-sm text-muted-foreground">
-                          {(!selectedClient?.invoiceCurrency || selectedClient.invoiceCurrency === "USD") && (
-                            <p>≈ HKD ${((totalAmount / 100) * DEFAULT_USD_TO_HKD_RATE).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
-                          )}
+                          {selectedClient?.invoiceCurrency && selectedClient.invoiceCurrency !== "USD" && (() => {
+                            const conv = convertUSDCents(totalAmount, selectedClient.invoiceCurrency);
+                            return <p>≈ {conv.code} {conv.symbol}{conv.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>;
+                          })()}
                         </div>
                       </CardContent>
                     </Card>

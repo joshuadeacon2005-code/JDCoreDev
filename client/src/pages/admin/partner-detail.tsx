@@ -19,11 +19,22 @@ import { ArrowLeft, Loader2, CheckCircle2, Clock, Briefcase, Users } from "lucid
 import { format } from "date-fns";
 import type { ReferralPartnerSummary, CommissionEntry, Client } from "@shared/schema";
 
-import { formatCurrency } from "@shared/currency";
+import { convertUSDCents, currencySymbol, DEFAULT_USD_FX_RATES } from "@shared/currency";
 
-function fmtUSD(cents: number, currency?: string | null) {
-  return formatCurrency(cents, currency || "USD", { includeCode: true });
+// All commission amounts are stored in USD on disk. The partner's
+// payoutCurrency is a display preference: when set, totals and ledger
+// rows render in that currency with USD shown alongside as a reference.
+function fmtMoney(usdCents: number, payoutCurrency?: string | null): string {
+  const target = (payoutCurrency || "USD").toUpperCase();
+  if (target === "USD") {
+    return `USD $${(usdCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  const conv = convertUSDCents(usdCents, target);
+  return `${conv.code} ${conv.symbol}${conv.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+// Keep the legacy name to avoid touching every call site.
+const fmtUSD = fmtMoney;
 
 export default function AdminPartnerDetail() {
   const { id } = useParams<{ id: string }>();
@@ -129,13 +140,13 @@ export default function AdminPartnerDetail() {
           </TabsList>
 
           <TabsContent value="due">
-            <CommissionList entries={due} onMarkPaid={(e) => { setPaying(e); setPaymentNotes(""); }} />
+            <CommissionList entries={due} payoutCurrency={summary.payoutCurrency} onMarkPaid={(e) => { setPaying(e); setPaymentNotes(""); }} />
           </TabsContent>
           <TabsContent value="paid">
-            <CommissionList entries={paid} />
+            <CommissionList entries={paid} payoutCurrency={summary.payoutCurrency} />
           </TabsContent>
           <TabsContent value="other">
-            <CommissionList entries={other} />
+            <CommissionList entries={other} payoutCurrency={summary.payoutCurrency} />
           </TabsContent>
           <TabsContent value="clients">
             <Card>
@@ -172,7 +183,8 @@ export default function AdminPartnerDetail() {
             <div className="space-y-3">
               <div className="text-sm">
                 <div className="text-muted-foreground">Amount</div>
-                <div className="text-2xl font-bold">{fmtUSD(paying.commissionCents, paying.currency)}</div>
+                <div className="text-2xl font-bold">{fmtUSD(paying.commissionCents, summary.payoutCurrency)}</div>
+                <div className="text-xs text-muted-foreground mt-1">Stored as USD ${(paying.commissionCents / 100).toFixed(2)} on the ledger.</div>
               </div>
               <div>
                 <Label>Payment date</Label>
@@ -196,7 +208,7 @@ export default function AdminPartnerDetail() {
   );
 }
 
-function CommissionList({ entries, onMarkPaid }: { entries: CommissionEntry[]; onMarkPaid?: (e: CommissionEntry) => void }) {
+function CommissionList({ entries, onMarkPaid, payoutCurrency }: { entries: CommissionEntry[]; onMarkPaid?: (e: CommissionEntry) => void; payoutCurrency?: string | null }) {
   if (!entries.length) {
     return (
       <Card><CardContent className="py-10 text-center text-muted-foreground">Nothing here.</CardContent></Card>
@@ -224,11 +236,11 @@ function CommissionList({ entries, onMarkPaid }: { entries: CommissionEntry[]; o
               <tr key={e.id} className="hover:bg-muted/20">
                 <td className="px-4 py-2 whitespace-nowrap text-muted-foreground">{format(new Date(e.createdAt), "yyyy-MM-dd")}</td>
                 <td className="px-4 py-2 whitespace-nowrap">{e.sourceType}{e.projectId ? ` (#${e.projectId})` : ""}</td>
-                <td className="px-4 py-2 text-right font-mono">{fmtUSD(e.grossCents, e.currency)}</td>
-                <td className="px-4 py-2 text-right font-mono text-muted-foreground">−{fmtUSD(e.costsCents, e.currency)}</td>
-                <td className="px-4 py-2 text-right font-mono">{fmtUSD(e.netCents, e.currency)}</td>
+                <td className="px-4 py-2 text-right font-mono">{fmtUSD(e.grossCents, payoutCurrency)}</td>
+                <td className="px-4 py-2 text-right font-mono text-muted-foreground">−{fmtUSD(e.costsCents, payoutCurrency)}</td>
+                <td className="px-4 py-2 text-right font-mono">{fmtUSD(e.netCents, payoutCurrency)}</td>
                 <td className="px-4 py-2 text-right font-mono">{(Number(e.rateApplied) * 100).toFixed(2)}%</td>
-                <td className="px-4 py-2 text-right font-mono font-bold">{fmtUSD(e.commissionCents, e.currency)}</td>
+                <td className="px-4 py-2 text-right font-mono font-bold">{fmtUSD(e.commissionCents, payoutCurrency)}</td>
                 <td className="px-4 py-2">
                   {e.status === "due" && <Badge className="bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 gap-1"><Clock className="h-3 w-3" />due</Badge>}
                   {e.status === "paid" && <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 gap-1"><CheckCircle2 className="h-3 w-3" />paid {e.paymentDate && `· ${e.paymentDate}`}</Badge>}

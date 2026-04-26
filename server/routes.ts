@@ -295,9 +295,10 @@ async function generateCommissionForCompletedProject(
     netCents,
     rateApplied: String(rate),
     commissionCents,
-    // Prefer partner's payout currency, then client's invoice currency,
-    // then USD as a final fallback.
-    currency: partner.payoutCurrency || client.invoiceCurrency || "USD",
+    // All commercial amounts live in USD on disk. Per-client/per-partner
+    // local currency is a *display* concern handled at render time using
+    // the FX rates from shared/currency.ts.
+    currency: "USD",
     status: "due",
     notes: null,
   } as any);
@@ -4133,15 +4134,16 @@ JD CoreDev System`,
       // Generate invoice number
       const invoiceNumber = await storage.getNextHostingInvoiceNumber(clientId);
 
-      // Create the invoice. Currency comes from the client's saved
-      // preference; falls back to USD when null.
+      // All invoice amounts are stored in USD; client.invoiceCurrency is
+      // the *secondary display* currency for the conversion line on the
+      // generated PDF (e.g. "≈ £X.XX" for GBP), not a re-denomination.
       const invoice = await storage.createHostingInvoice({
         invoiceNumber,
         clientId,
         invoiceDate,
         dueDate,
         totalAmountCents,
-        currency: client.invoiceCurrency || "USD",
+        currency: "USD",
         status: "pending",
         billingPeriod,
         notes,
