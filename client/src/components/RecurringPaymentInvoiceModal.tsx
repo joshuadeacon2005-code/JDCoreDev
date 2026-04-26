@@ -357,22 +357,6 @@ function generateHostingInvoicePDF(
       doc.setFont("helvetica", "normal");
       doc.setTextColor(100, 100, 100);
 
-      if (aggregatedData.totalBudgetCents !== null) {
-        doc.text(`Combined Cost Budget: $${(aggregatedData.totalBudgetCents / 100).toFixed(2)}`, margin + 2, y);
-        if (aggregatedData.costOverageCents > 0) {
-          doc.setTextColor(200, 50, 50);
-          doc.setFont("helvetica", "bold");
-          doc.text(`Cost Overage: +$${(aggregatedData.costOverageCents / 100).toFixed(2)}`, margin + 85, y);
-          doc.setFont("helvetica", "normal");
-          doc.setTextColor(100, 100, 100);
-        } else {
-          doc.setTextColor(0, 128, 0);
-          doc.text("Within budget", margin + 85, y);
-          doc.setTextColor(100, 100, 100);
-        }
-        y += 5;
-      }
-
       if (aggregatedData.totalBudgetMinutes !== null) {
         doc.text(`Combined Time Budget: ${formatMins(aggregatedData.totalBudgetMinutes)}`, margin + 2, y);
         if (aggregatedData.overtimeMinutes > 0) {
@@ -389,12 +373,17 @@ function generateHostingInvoicePDF(
         y += 5;
       }
 
+      if (aggregatedData.totalBudgetCents !== null) {
+        doc.text(`Combined Cost Budget (informational): $${(aggregatedData.totalBudgetCents / 100).toFixed(2)}`, margin + 2, y);
+        y += 5;
+      }
+
       if (overageCents > 0) {
         y += 2;
         doc.setFont("helvetica", "bold");
         doc.setFontSize(8);
         doc.setTextColor(200, 50, 50);
-        doc.text(`Overage Added to Invoice (lesser of cost/time): $${(overageCents / 100).toFixed(2)}`, margin + 2, y);
+        doc.text(`Time Overage Added to Invoice: $${(overageCents / 100).toFixed(2)}`, margin + 2, y);
         y += 5;
       }
     }
@@ -568,14 +557,19 @@ export function RecurringPaymentInvoiceModal({ payment, trigger }: RecurringPaym
           clientId,
           startDate: formValues.periodStart,
           endDate: formValues.periodEnd,
+          // Match the hosting-invoice creation window: pull logs from each
+          // project's currentCycleStartDate so the PDF reflects the cycle the
+          // server bills against, not the calendar period.
+          useCycleStart: true,
         });
         const apiResponse: MaintenanceApiResponse = await res.json();
         setAllProjectsData(apiResponse.projects);
         setAggregatedData(apiResponse.aggregated);
         if (apiResponse.aggregated.finalOverageCents > 0) {
+          const overHours = (apiResponse.aggregated.overtimeMinutes / 60).toFixed(2);
           toast({
             title: "Overage Detected",
-            description: `$${(apiResponse.aggregated.finalOverageCents / 100).toFixed(2)} overage (lesser of cost/time) will be added to the invoice.`,
+            description: `${overHours}h over time budget — $${(apiResponse.aggregated.finalOverageCents / 100).toFixed(2)} @ $${apiResponse.aggregated.overtimeRatePerHour}/hr will be added to the invoice.`,
           });
         }
       } catch (e) {
@@ -680,9 +674,9 @@ export function RecurringPaymentInvoiceModal({ payment, trigger }: RecurringPaym
                   </div>
                   {aggregatedData.finalOverageCents > 0 && (
                     <div className="text-destructive font-medium">
-                      Overage: +${(aggregatedData.finalOverageCents / 100).toFixed(2)}
+                      Time Overage: +${(aggregatedData.finalOverageCents / 100).toFixed(2)}
                       <span className="text-muted-foreground font-normal ml-1">
-                        (lesser of cost ${(aggregatedData.costOverageCents / 100).toFixed(2)} / time ${(aggregatedData.timeOverageCents / 100).toFixed(2)})
+                        ({(aggregatedData.overtimeMinutes / 60).toFixed(2)}h @ ${aggregatedData.overtimeRatePerHour}/hr)
                       </span>
                     </div>
                   )}
