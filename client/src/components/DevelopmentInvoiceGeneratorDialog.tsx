@@ -103,9 +103,12 @@ function generateDevelopmentInvoicePDF(
   // paymentSettings.fxRates[CODE] → paymentSettings.usdToHkdRate (legacy)
   // → DEFAULT_USD_FX_RATES static fallback.
   const fxOverride = (paymentSettings?.fxRates as Record<string, number> | null | undefined)?.[localCurrency];
+  const fxAuto = (paymentSettings?.fxRatesAuto as Record<string, number> | null | undefined)?.[localCurrency];
   const localFxRate =
     fxOverride && fxOverride > 0
       ? fxOverride
+      : fxAuto && fxAuto > 0
+      ? fxAuto
       : localCurrency === "HKD"
       ? usdToHkdRate
       : (DEFAULT_USD_FX_RATES[localCurrency] ?? 1);

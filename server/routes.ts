@@ -4794,6 +4794,19 @@ JD CoreDev System`,
     }
   });
 
+  // Manually trigger an FX refresh from Frankfurter (free, ECB-backed).
+  // The result is also written automatically once a day on a server-side
+  // schedule; this endpoint is the "Refresh now" button.
+  app.post("/api/admin/payment-settings/refresh-fx", requireAdmin, async (_req, res, next) => {
+    try {
+      const { refreshFxRatesNow } = await import("./services/fx-refresh");
+      const result = await refreshFxRatesNow();
+      res.status(result.ok ? 200 : 502).json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // ============================================
   // Crypto Tracker API Endpoints
   // ============================================

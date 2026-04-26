@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { DollarSign, Building2, CreditCard, Wallet, Bitcoin, FileText, Save, Loader2 } from "lucide-react";
+import { DollarSign, Building2, CreditCard, Wallet, Bitcoin, FileText, Save, Loader2, RefreshCw } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useEffect } from "react";
 import type { PaymentSettings } from "@shared/schema";
@@ -114,6 +114,22 @@ export default function AdminPaymentSettings() {
       });
     }
   }, [settings, form]);
+
+  const refreshFxMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/payment-settings/refresh-fx", {});
+      return res.json();
+    },
+    onSuccess: (data: { ok: boolean; count?: number; date?: string; error?: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/payment-settings"] });
+      if (data.ok) {
+        toast({ title: "FX rates refreshed", description: `${data.count ?? 0} currencies updated (Frankfurter ${data.date ?? "today"})` });
+      } else {
+        toast({ title: "Refresh failed", description: data.error ?? "unknown error", variant: "destructive" });
+      }
+    },
+    onError: (e: Error) => toast({ title: "Refresh failed", description: e.message, variant: "destructive" }),
+  });
 
   const updateMutation = useMutation({
     mutationFn: async (data: PaymentSettingsForm) => {
@@ -483,30 +499,65 @@ export default function AdminPaymentSettings() {
             </div>
 
             {/* Per-currency FX overrides — used by every invoice/receipt
-                PDF when the client's invoiceCurrency matches a row here. */}
+                PDF when the client's invoiceCurrency matches a row here.
+                Lookup order at render: this manual override → fxRatesAuto
+                (refreshed daily from Frankfurter / ECB) → static default. */}
             <div className="space-y-2 pt-4 border-t">
-              <Label className="text-sm">USD → local-currency rates</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-sm">USD → local-currency rates</Label>
+                <div className="flex items-center gap-2">
+                  {settings?.fxRatesAutoUpdatedAt && (
+                    <span className="text-xs text-muted-foreground">
+                      Auto-updated {new Date(settings.fxRatesAutoUpdatedAt).toLocaleString()}
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => refreshFxMutation.mutate()}
+                    disabled={refreshFxMutation.isPending}
+                    data-testid="button-refresh-fx"
+                  >
+                    {refreshFxMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                    )}
+                    Refresh now
+                  </Button>
+                </div>
+              </div>
               <p className="text-xs text-muted-foreground">
-                Each row is the multiplier for converting <strong>1&nbsp;USD</strong> into that currency.
-                Empty rows fall back to the static defaults shown as placeholders. PDFs use these to render
-                the "(approx. <em>CODE …</em>)" line beneath the USD primary.
+                Multiplier for <strong>1 USD → currency</strong>. Empty rows fall through to the
+                auto-refreshed Frankfurter rate (placeholder); auto rates fall through to the static
+                defaults if Frankfurter doesn't list the code. Manual values typed here override both.
               </p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 pt-1">
-                {SUPPORTED_INVOICE_CURRENCIES.filter((c) => c.code !== "USD").map((c) => (
-                  <div key={c.code} className="space-y-1">
-                    <Label htmlFor={`fxRate-${c.code}`} className="text-xs">
-                      USD → {c.code}
-                    </Label>
-                    <Input
-                      id={`fxRate-${c.code}`}
-                      type="number"
-                      step="0.0001"
-                      placeholder={String(DEFAULT_USD_FX_RATES[c.code] ?? "")}
-                      {...form.register(`fxRates.${c.code}` as const)}
-                      data-testid={`input-fx-rate-${c.code.toLowerCase()}`}
-                    />
-                  </div>
-                ))}
+                {SUPPORTED_INVOICE_CURRENCIES.filter((c) => c.code !== "USD").map((c) => {
+                  const auto = (settings?.fxRatesAuto as Record<string, number> | null | undefined)?.[c.code];
+                  const placeholder = auto != null
+                    ? String(auto)
+                    : String(DEFAULT_USD_FX_RATES[c.code] ?? "");
+                  return (
+                    <div key={c.code} className="space-y-1">
+                      <Label htmlFor={`fxRate-${c.code}`} className="text-xs">
+                        USD → {c.code}
+                        {auto != null && (
+                          <span className="text-muted-foreground ml-1 font-normal">(auto: {auto})</span>
+                        )}
+                      </Label>
+                      <Input
+                        id={`fxRate-${c.code}`}
+                        type="number"
+                        step="0.0001"
+                        placeholder={placeholder}
+                        {...form.register(`fxRates.${c.code}` as const)}
+                        data-testid={`input-fx-rate-${c.code.toLowerCase()}`}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

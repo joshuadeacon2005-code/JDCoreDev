@@ -4,6 +4,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startReminderScheduler } from "./scheduler";
+import { startFxRefreshSchedule } from "./services/fx-refresh";
 import { migrateHostingLogs } from "./migrations/hosting-logs";
 
 process.on('uncaughtException', (err) => {
@@ -154,6 +155,7 @@ app.use((req, res, next) => {
     () => {
       log(`serving on port ${port}`);
       startReminderScheduler();
+      startFxRefreshSchedule();
       migrateHostingLogs();
     },
   );
