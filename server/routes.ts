@@ -3175,7 +3175,15 @@ JD CoreDev System`,
   app.patch("/api/admin/maintenance-logs/:id", requireAdmin, async (req, res, next) => {
     try {
       const logId = parseInt(req.params.id);
-      const updated = await storage.updateMaintenanceLog(logId, req.body);
+      const updateSchema = z.object({
+        logDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "logDate must be YYYY-MM-DD").optional(),
+        minutesSpent: z.number().int().nonnegative().optional(),
+        description: z.string().min(1).optional(),
+        estimatedCostCents: z.number().int().nullable().optional(),
+        category: z.string().nullable().optional(),
+      });
+      const data = updateSchema.parse(req.body);
+      const updated = await storage.updateMaintenanceLog(logId, data);
       if (!updated) {
         return res.status(404).json({ error: "Maintenance log not found" });
       }

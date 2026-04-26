@@ -220,35 +220,54 @@ type MaintenanceLogCost = {
   createdAt: string;
 };
 
-function MaintenanceLogItem({ 
-  log, 
-  isExpanded, 
-  onToggleExpand, 
-  onDelete, 
-  onAddCost, 
+function MaintenanceLogItem({
+  log,
+  isExpanded,
+  onToggleExpand,
+  onDelete,
+  onEdit,
+  onAddCost,
   onDeleteCost,
   isDeleting,
+  isEditing,
   isAddingCost
-}: { 
-  log: MaintenanceLog; 
+}: {
+  log: MaintenanceLog;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onDelete: () => void;
+  onEdit: (data: {
+    logDate: string;
+    minutesSpent: number;
+    description: string;
+    category: string;
+    estimatedCostCents: number | null;
+  }) => void;
   onAddCost: (costCents: number, description?: string) => void;
   onDeleteCost: (costId: number, logId: number) => void;
   isDeleting: boolean;
+  isEditing: boolean;
   isAddingCost: boolean;
 }) {
   const [newCostAmount, setNewCostAmount] = useState("");
   const [newCostDescription, setNewCostDescription] = useState("");
-  
+
+  const [editMode, setEditMode] = useState(false);
+  const [editDate, setEditDate] = useState(log.logDate);
+  const [editMinutes, setEditMinutes] = useState(String(log.minutesSpent));
+  const [editDescription, setEditDescription] = useState(log.description);
+  const [editCategory, setEditCategory] = useState(log.category || "support");
+  const [editCost, setEditCost] = useState(
+    log.estimatedCostCents != null ? (log.estimatedCostCents / 100).toFixed(2) : ""
+  );
+
   const { data: costs = [] } = useQuery<MaintenanceLogCost[]>({
     queryKey: ["/api/admin/maintenance-logs", log.id, "costs"],
     enabled: isExpanded,
   });
-  
+
   const totalCost = (log.estimatedCostCents || 0) + costs.reduce((sum, c) => sum + c.costCents, 0);
-  
+
   const handleAddCost = () => {
     const dollars = parseFloat(newCostAmount);
     if (isNaN(dollars) || dollars <= 0) return;
@@ -256,9 +275,103 @@ function MaintenanceLogItem({
     setNewCostAmount("");
     setNewCostDescription("");
   };
-  
+
+  const enterEditMode = () => {
+    setEditDate(log.logDate);
+    setEditMinutes(String(log.minutesSpent));
+    setEditDescription(log.description);
+    setEditCategory(log.category || "support");
+    setEditCost(log.estimatedCostCents != null ? (log.estimatedCostCents / 100).toFixed(2) : "");
+    setEditMode(true);
+  };
+
+  const saveEdit = () => {
+    const minutes = parseInt(editMinutes, 10);
+    if (isNaN(minutes) || minutes < 0) return;
+    if (!editDescription.trim()) return;
+    const costDollars = editCost.trim() === "" ? null : parseFloat(editCost);
+    if (costDollars !== null && (isNaN(costDollars) || costDollars < 0)) return;
+    onEdit({
+      logDate: editDate,
+      minutesSpent: minutes,
+      description: editDescription.trim(),
+      category: editCategory,
+      estimatedCostCents: costDollars === null ? null : Math.round(costDollars * 100),
+    });
+    setEditMode(false);
+  };
+
   return (
     <div className="border rounded-lg bg-card" data-testid={`maintenance-log-${log.id}`}>
+      {editMode ? (
+        <div className="p-3 space-y-2 bg-muted/40">
+          <div className="grid grid-cols-12 gap-2">
+            <Input
+              type="date"
+              value={editDate}
+              onChange={(e) => setEditDate(e.target.value)}
+              className="col-span-4 h-8 text-xs"
+              data-testid={`edit-log-date-${log.id}`}
+            />
+            <Input
+              type="number"
+              min={0}
+              placeholder="Minutes"
+              value={editMinutes}
+              onChange={(e) => setEditMinutes(e.target.value)}
+              className="col-span-3 h-8 text-xs"
+              data-testid={`edit-log-minutes-${log.id}`}
+            />
+            <Select value={editCategory} onValueChange={setEditCategory}>
+              <SelectTrigger className="col-span-3 h-8 text-xs" data-testid={`edit-log-category-${log.id}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="support">Support</SelectItem>
+                <SelectItem value="bug_fix">Bug Fix</SelectItem>
+                <SelectItem value="update">Update</SelectItem>
+                <SelectItem value="monitoring">Monitoring</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              type="number"
+              step="0.01"
+              min={0}
+              placeholder="Cost ($)"
+              value={editCost}
+              onChange={(e) => setEditCost(e.target.value)}
+              className="col-span-2 h-8 text-xs"
+              data-testid={`edit-log-cost-${log.id}`}
+            />
+          </div>
+          <Textarea
+            value={editDescription}
+            onChange={(e) => setEditDescription(e.target.value)}
+            className="min-h-[60px] text-sm"
+            data-testid={`edit-log-description-${log.id}`}
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditMode(false)}
+              disabled={isEditing}
+              data-testid={`cancel-edit-log-${log.id}`}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={saveEdit}
+              disabled={isEditing || !editDescription.trim() || !editMinutes}
+              data-testid={`save-edit-log-${log.id}`}
+            >
+              <Check className="h-4 w-4 mr-1" /> Save
+            </Button>
+          </div>
+        </div>
+      ) : (
       <div className="flex items-start justify-between p-3">
         <div className="space-y-1 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -290,17 +403,26 @@ function MaintenanceLogItem({
           )}
         </div>
         <div className="flex items-center gap-1">
-          <Button 
-            variant="ghost" 
-            size="icon" 
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={onToggleExpand}
             data-testid={`expand-log-${log.id}`}
           >
             {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </Button>
-          <Button 
-            variant="ghost" 
-            size="icon" 
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={enterEditMode}
+            disabled={isEditing}
+            data-testid={`edit-log-${log.id}`}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={onDelete}
             disabled={isDeleting}
             data-testid={`delete-log-${log.id}`}
@@ -309,6 +431,7 @@ function MaintenanceLogItem({
           </Button>
         </div>
       </div>
+      )}
       
       {isExpanded && (
         <div className="border-t p-3 bg-muted/30 space-y-3">
@@ -527,6 +650,31 @@ function LogTypeSection({ projectId, logType, label }: { projectId: number; logT
       queryClient.invalidateQueries({ queryKey: ["/api/admin/projects", projectId, "maintenance-cycle-summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/projects", projectId, "maintenance-alltime-summary"] });
       toast({ title: "Log deleted" });
+    },
+  });
+
+  const editLogMutation = useMutation({
+    mutationFn: async ({ logId, data }: {
+      logId: number;
+      data: {
+        logDate: string;
+        minutesSpent: number;
+        description: string;
+        category: string;
+        estimatedCostCents: number | null;
+      };
+    }) => {
+      const res = await apiRequest("PATCH", `/api/admin/maintenance-logs/${logId}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/projects", projectId, "maintenance-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/projects", projectId, "maintenance-cycle-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/projects", projectId, "maintenance-alltime-summary"] });
+      toast({ title: "Log updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update log", description: error.message, variant: "destructive" });
     },
   });
 
@@ -815,15 +963,17 @@ function LogTypeSection({ projectId, logType, label }: { projectId: number; logT
           <p className="text-sm text-muted-foreground text-center py-4">No {label.toLowerCase()} logs yet</p>
         ) : (
           logs.map((log) => (
-            <MaintenanceLogItem 
+            <MaintenanceLogItem
               key={log.id}
               log={log}
               isExpanded={expandedLogId === log.id}
               onToggleExpand={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)}
               onDelete={() => deleteLogMutation.mutate(log.id)}
+              onEdit={(data) => editLogMutation.mutate({ logId: log.id, data })}
               onAddCost={(costCents, description) => addCostMutation.mutate({ logId: log.id, costCents, description })}
               onDeleteCost={(costId, logId) => deleteCostMutation.mutate({ costId, logId })}
               isDeleting={deleteLogMutation.isPending}
+              isEditing={editLogMutation.isPending}
               isAddingCost={addCostMutation.isPending}
             />
           ))
