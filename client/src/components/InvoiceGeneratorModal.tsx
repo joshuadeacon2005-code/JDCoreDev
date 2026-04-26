@@ -421,6 +421,28 @@ function generateInvoicePDF(
       py += 10;
     }
 
+    // UK Bank Transfer (sort code + 8-digit account number)
+    if (paymentSettings.ukBankName || paymentSettings.ukAccountNumber || paymentSettings.ukSortCode) {
+      checkPaymentPageBreak(25);
+      doc.setFillColor(245, 245, 245);
+      doc.rect(margin, py - 5, contentWidth, 10, 'F');
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(...BRAND_DARK);
+      doc.text("UK Bank Transfer", margin + 5, py + 2);
+      py += 15;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(60, 60, 60);
+
+      if (paymentSettings.ukAccountHolderName) addPaymentInfoLine("Account Name:", paymentSettings.ukAccountHolderName);
+      if (paymentSettings.ukBankName) addPaymentInfoLine("Bank:", paymentSettings.ukBankName);
+      if (paymentSettings.ukSortCode) addPaymentInfoLine("Sort Code:", paymentSettings.ukSortCode);
+      if (paymentSettings.ukAccountNumber) addPaymentInfoLine("Account Number:", paymentSettings.ukAccountNumber);
+      py += 10;
+    }
+
     // Digital Payments Section
     if (paymentSettings.paypalEmail || paymentSettings.zelleEmail || paymentSettings.venmoUsername || paymentSettings.cashappTag || paymentSettings.stripePaymentLink) {
       checkPaymentPageBreak(25);

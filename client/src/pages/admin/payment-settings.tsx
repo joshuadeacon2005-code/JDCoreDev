@@ -21,6 +21,10 @@ interface PaymentSettingsForm {
   routingNumber: string;
   swiftCode: string;
   iban: string;
+  ukBankName: string;
+  ukAccountHolderName: string;
+  ukAccountNumber: string;
+  ukSortCode: string;
   paypalEmail: string;
   venmoUsername: string;
   cashappTag: string;
@@ -50,6 +54,10 @@ export default function AdminPaymentSettings() {
       routingNumber: "",
       swiftCode: "",
       iban: "",
+      ukBankName: "",
+      ukAccountHolderName: "",
+      ukAccountNumber: "",
+      ukSortCode: "",
       paypalEmail: "",
       venmoUsername: "",
       cashappTag: "",
@@ -74,6 +82,10 @@ export default function AdminPaymentSettings() {
         routingNumber: settings.routingNumber || "",
         swiftCode: settings.swiftCode || "",
         iban: settings.iban || "",
+        ukBankName: settings.ukBankName || "",
+        ukAccountHolderName: settings.ukAccountHolderName || "",
+        ukAccountNumber: settings.ukAccountNumber || "",
+        ukSortCode: settings.ukSortCode || "",
         paypalEmail: settings.paypalEmail || "",
         venmoUsername: settings.venmoUsername || "",
         cashappTag: settings.cashappTag || "",
@@ -204,11 +216,61 @@ export default function AdminPaymentSettings() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="iban">IBAN</Label>
-                <Input 
-                  id="iban" 
-                  {...form.register("iban")} 
+                <Input
+                  id="iban"
+                  {...form.register("iban")}
                   placeholder="International Bank Account Number"
                   data-testid="input-iban"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5" />
+              UK Bank Transfer
+            </CardTitle>
+            <CardDescription>Sort code + 8-digit account number (HSBC, Revolut, etc.). Rendered as a separate block on invoices when populated.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="ukBankName">Bank Name</Label>
+                <Input
+                  id="ukBankName"
+                  {...form.register("ukBankName")}
+                  placeholder="e.g. HSBC UK / Revolut"
+                  data-testid="input-uk-bank-name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ukAccountHolderName">Account Holder Name</Label>
+                <Input
+                  id="ukAccountHolderName"
+                  {...form.register("ukAccountHolderName")}
+                  placeholder="Full legal name (or trading name)"
+                  data-testid="input-uk-account-holder"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ukAccountNumber">Account Number</Label>
+                <Input
+                  id="ukAccountNumber"
+                  {...form.register("ukAccountNumber")}
+                  placeholder="8-digit UK account number"
+                  data-testid="input-uk-account-number"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ukSortCode">Sort Code</Label>
+                <Input
+                  id="ukSortCode"
+                  {...form.register("ukSortCode")}
+                  placeholder="e.g. 04-00-04"
+                  data-testid="input-uk-sort-code"
                 />
               </div>
             </div>

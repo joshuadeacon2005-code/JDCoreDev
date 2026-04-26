@@ -576,6 +576,19 @@ function generateHostingInvoicePDF(
     y += 3;
   }
 
+  if (paymentSettings?.ukBankName || paymentSettings?.ukAccountNumber || paymentSettings?.ukSortCode) {
+    checkPageBreak(8);
+    doc.setFont("helvetica", "bold");
+    doc.text("UK Bank Transfer:", margin, y);
+    doc.setFont("helvetica", "normal");
+    y += 4;
+    if (paymentSettings?.ukAccountHolderName) addPaymentLine("Name:", paymentSettings.ukAccountHolderName);
+    if (paymentSettings?.ukBankName) addPaymentLine("Bank:", paymentSettings.ukBankName);
+    if (paymentSettings?.ukSortCode) addPaymentLine("Sort Code:", paymentSettings.ukSortCode);
+    if (paymentSettings?.ukAccountNumber) addPaymentLine("Account:", paymentSettings.ukAccountNumber);
+    y += 3;
+  }
+
   if (paymentSettings?.paypalEmail) addPaymentLine("PayPal:", paymentSettings.paypalEmail, true);
   if (paymentSettings?.zelleEmail) addPaymentLine("Zelle:", paymentSettings.zelleEmail, true);
   if (paymentSettings?.venmoUsername) addPaymentLine("Venmo:", `@${paymentSettings.venmoUsername}`, true);
