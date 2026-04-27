@@ -4,14 +4,7 @@
  */
 
 import { Router } from "express";
-import cron from "node-cron";
 import { pool } from "./db";
-import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-});
 
 export const traderRouter = Router();
 
@@ -81,13 +74,10 @@ async function initTraderTables() {
   await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS positions_json JSONB`);
   await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS validation_json JSONB`);
 
-  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_enabled', 'false') ON CONFLICT (key) DO NOTHING`);
-  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_risk', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_RISK || 'medium']);
-  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_mode', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_MODE || 'day']);
-  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_day', '15') ON CONFLICT (key) DO NOTHING`);
-  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_swing', '240') ON CONFLICT (key) DO NOTHING`);
-  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_portfolio', '1440') ON CONFLICT (key) DO NOTHING`);
-  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_crypto', '1440') ON CONFLICT (key) DO NOTHING`);
+  // Trader is swing-only and scheduled exclusively by a Claude Code routine.
+  // The risk knob still drives sizing in the routine prompt; bot_enabled is
+  // the kill switch and daily_max_loss_usd is the per-day cap on /place-trade.
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('risk', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_RISK || 'medium']);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('bot_enabled', 'false') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('daily_max_loss_usd', '500') ON CONFLICT (key) DO NOTHING`);
 }
@@ -384,41 +374,10 @@ function buildOrderBody(o: any) {
   return body;
 }
 
-// ── Claude helpers ──────────────────────────────────────────────────────────
-
-function parseJSON(text: string) {
-  if (!text) return null;
-  try {
-    const m = text.replace(/```json|```/g, '').match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-    if (m) return JSON.parse(m[0]);
-  } catch {}
-  return null;
-}
-
-// In-process Claude calls flowed through Replit's modelfarm proxy, which is
-// not reachable from Railway. The reasoning loop now runs inside a scheduled
-// Claude Code routine that POSTs verdicts to /place-trade. Throwing here is
-// intentional — silent fallback would mask bot misconfiguration.
-async function callClaudeTrader(_prompt: string, _useSearch = false): Promise<string> {
-  throw new Error("trader: in-process Claude calls disabled. Use the scheduled routine + /api/trader/place-trade.");
-}
-
-// ── RISK_CONFIGS ─────────────────────────────────────────────────────────────
-
-const RISK_CONFIGS: any = {
-  low:    { maxPos:12, stopLoss:2,  takeProfit:4,  maxSinglePct:12 },
-  medium: { maxPos:10, stopLoss:4,  takeProfit:8,  maxSinglePct:15 },
-  high:   { maxPos:8,  stopLoss:6,  takeProfit:15, maxSinglePct:15 },
-};
-
-const UNIVERSES: any = {
-  low:    ['JNJ','PG','KO','WMT','NEE','VYM','SCHD','SO','VZ','MCD','ABBV','T','DUK','O','JEPI'],
-  medium: ['AAPL','MSFT','GOOGL','AMZN','META','NVDA','AVGO','LLY','UNH','JPM','V','HD','MA','CRM','MRK'],
-  high:   ['MSTR','COIN','HOOD','IONQ','SMCI','PLTR','RKLB','CLSK','MARA','TSLA','AMD','SOXL','TQQQ','ARKK','NVDA'],
-  meme:   ['DOGE','SHIB','PEPE','WIF','BONK'],
-};
-
-// ── Server-side pipeline (for cron) ─────────────────────────────────────────
+// The legacy in-process pipeline (parseJSON, callClaudeTrader, RISK_CONFIGS,
+// UNIVERSES, runServerPipeline) has been removed. The scheduled Claude
+// routine is now the only reasoning loop, and it POSTs verdicts to
+// /place-trade. Universe + risk knobs live in the routine prompt now.
 
 // ── Market Signals (Reddit sentiment + congressional whale trades) ─────────
 
@@ -627,55 +586,6 @@ async function fetchMarketSignals(mode: string, keys?: any) {
   };
 }
 
-async function runServerPipeline(config: any, onStage: (s: number, st: string, msg: string) => void) {
-  const { risk, mode, equity = 10000, buyingPower = 5000, keys } = config;
-  const rc      = RISK_CONFIGS[risk];
-  const tickers = UNIVERSES[risk];
-  const meme    = risk === 'high' ? UNIVERSES.meme : [];
-
-  // Fetch all market signals (social + extended research) in parallel
-  onStage(1, 'running', `Fetching market signals + technicals + news + scoring ${tickers.length + meme.length} assets…`);
-  const signals    = await fetchMarketSignals(mode, keys);
-  const signalsCtx = signals.stockTwitsCtx || '';
-  const techCtx    = signals.techCtx    || '';
-  const newsCtx    = signals.newsCtx    || '';
-  const earningsCtx = signals.earningsCtx || '';
-
-  const s1 = parseJSON(await callClaudeTrader(
-    `Financial screening. Mode:${mode}. Risk:${risk}.\nStocks:${tickers.join(',')}${meme.length ? '\nMeme:' + meme.join(',') : ''}\nScore 0-100: momentum 30%, fundamentals 40%, sentiment 30%.\n${mode === 'day' ? 'Favour pre-market movers and intraday volume.' : ''}\n${signalsCtx ? `\nLIVE SOCIAL SIGNALS (weight heavily):\n${signalsCtx}` : ''}${techCtx ? `\n\nTECHNICAL INDICATORS (RSI oversold <30=buy signal, overbought >70=avoid; MACD▲=bullish momentum; vol-spike=unusual interest):\n${techCtx}` : ''}${earningsCtx ? `\n\nEARNINGS RISK — avoid buying within 3 days of earnings unless thesis is earnings-driven:\n${earningsCtx}` : ''}\nReturn ONLY JSON:{"screened":[{"t":"XX","score":82,"type":"stock","why":"reason"}],"top":["T1","T2","T3","T4","T5","T6","T7"]}`
-  )) || { screened: [], top: tickers.slice(0, 7) };
-  onStage(1, 'done', `${s1.screened?.length || 0} scored · ${signals.equities.length + signals.crypto.length} social signals${techCtx ? ' · technicals' : ''}${newsCtx ? ' · news' : ''}`);
-
-  const tops = (s1.top || tickers.slice(0, 7)).slice(0, 8);
-  onStage(2, 'running', `Bull/bear debate on ${tops.length}…`);
-  const s2 = parseJSON(await callClaudeTrader(
-    `Adversarial research — ONLY last 7 days count.\nTickers:${tops.join(',')}. Mode:${mode}. Risk:${risk}.\n${signalsCtx ? `\nLIVE SOCIAL SIGNALS:\n${signalsCtx}` : ''}${newsCtx ? `\n\nRECENT NEWS (factor into bull/bear case):\n${newsCtx}` : ''}${techCtx ? `\n\nTECHNICAL SIGNALS:\n${techCtx}` : ''}${earningsCtx ? `\n\nEARNINGS SCHEDULE:\n${earningsCtx}` : ''}\nReturn ONLY JSON:{"analysis":[{"t":"XX","bull":"why","bear":"why","bs":8,"be":3,"v":"BUY","note":"catalyst"}]}\nv=BUY|HOLD|SELL`, true
-  )) || { analysis: [] };
-  onStage(2, 'done', `${s2.analysis?.length || 0} dossiers`);
-
-  const buyList = (s2.analysis || []).filter((a: any) => a.v !== 'SELL').map((a: any) => a.t);
-  const mkList  = buyList.length ? buyList : tops.slice(0, 6);
-  onStage(3, 'running', `Scenarios for ${mkList.length} assets…`);
-  const s3 = parseJSON(await callClaudeTrader(
-    `Scenario modeling. Assets:${mkList.join(',')}.\nBull/base/bear. Probs sum to 100. 3-month targets.\nReturn ONLY JSON:{"models":[{"t":"XX","bp":30,"mp":55,"bep":15,"bt":"+40%","mt":"+12%","bet":"-20%","er":"+15%","c":8}]}`
-  )) || { models: [] };
-  onStage(3, 'done', `${s3.models?.length || 0} models`);
-
-  onStage(4, 'running', 'Building portfolio…');
-  const s4 = parseJSON(await callClaudeTrader(
-    `Portfolio optimizer. Models:${JSON.stringify(s3.models || [])}.\nBuild ≤${rc.maxPos} positions. Equity $${equity.toFixed(0)}. BP $${buyingPower.toFixed(0)}.\nAllocs sum=100%, max single ${rc.maxSinglePct}%, min 3%, all positive EV.\n${risk === 'high' ? 'Max meme total 20%, max per coin 5%.' : ''}\nReturn ONLY JSON:{"positions":[{"t":"XX","alloc":12,"type":"stock","sector":"Tech","er":"+15%","why":"reason","notional":1200}],"ter":"+14%","thesis":"2 sentences"}`
-  )) || { positions: [], ter: 'N/A', thesis: '' };
-  onStage(4, 'done', `${s4.positions?.length || 0} positions`);
-
-  onStage(5, 'running', 'Validating…');
-  const s5 = parseJSON(await callClaudeTrader(
-    `Validate ${risk} portfolio:${JSON.stringify(s4.positions || [])}.\nMode:${mode}. SL ${rc.stopLoss}% TP ${rc.takeProfit}%.${earningsCtx ? `\nEarnings risk: ${earningsCtx}` : ''}\nReturn ONLY JSON:{"score":85,"pass":true,"strengths":["s1"],"warnings":["w1"],"suggestion":"tip"}`
-  )) || { score: 80, pass: true, strengths: [], warnings: [] };
-  onStage(5, 'done', `Score ${s5.score}/100 — ${s5.pass ? 'PASS' : 'FAIL'}`);
-
-  return { risk, mode, screened: s1.screened || [], analysis: s2.analysis || [], models: s3.models || [], positions: s4.positions || [], ter: s4.ter || 'N/A', thesis: s4.thesis || '', validation: s5, signals, timestamp: new Date().toISOString() };
-}
-
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 // ── Alpaca config (tells frontend whether env keys are present) ─────────────
@@ -774,19 +684,8 @@ traderRouter.post('/alpaca-data-proxy', async (req, res) => {
   }
 });
 
-traderRouter.post('/claude', async (req, res) => {
-  try {
-    const { messages, max_tokens = 8192 } = req.body;
-    const msg = await anthropic.messages.create({
-      model: "claude-opus-4-6",
-      max_tokens,
-      messages,
-    });
-    res.json(msg);
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
+// /claude was a thin passthrough to the modelfarm proxy. The scheduled
+// routine hits Anthropic directly, so this endpoint is no longer needed.
 
 traderRouter.get('/health', async (_req, res) => {
   const dbPaper = await getSetting('alpaca_paper');
@@ -1315,144 +1214,6 @@ traderRouter.post('/settings', async (req, res) => {
   }
 });
 
-traderRouter.post('/cron/run', async (req, res) => {
-  const secret = req.headers['x-cron-secret'] || req.query.secret;
-  if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  const risk = (req.body.risk || process.env.CRON_RISK || 'medium') as string;
-  const mode = (req.body.mode || process.env.CRON_MODE || 'day') as string;
-  const dbPaper = await getSetting('alpaca_paper');
-  const isPaperMode = dbPaper !== null ? dbPaper !== 'false' : process.env.CRON_ALPACA_PAPER !== 'false';
-  const keys = getAlpacaEnvKeys(isPaperMode);
-  if (!keys.key || !keys.secret) return res.status(500).json({ error: 'Alpaca creds not configured' });
-
-  const log: string[] = [];
-  const push = async (msg: string, type = 'info') => { log.push(msg); await insertLog(type, `[cron] ${msg}`); };
-
-  try {
-    await push('Fetching account…');
-    const rawAcct = await alpacaReq(keys, '/v2/account');
-    if (rawAcct.error) throw new Error(`Alpaca: ${rawAcct.message}`);
-
-    const account = {
-      equity:       parseFloat(rawAcct.equity),
-      buyingPower:  parseFloat(rawAcct.buying_power),
-      cash:         parseFloat(rawAcct.cash),
-      pnl:          parseFloat(rawAcct.equity) - parseFloat(rawAcct.last_equity),
-    };
-    await push(`Equity $${account.equity.toFixed(2)}`);
-
-    const rawPos = await alpacaReq(keys, '/v2/positions');
-    const positions = Array.isArray(rawPos) ? rawPos.map((p: any) => ({ symbol: p.symbol, mktVal: parseFloat(p.market_value) })) : [];
-    await insertSnapshot({ equity: account.equity, cash: account.buyingPower, pnl: account.pnl, pnlPct: 0, positions: positions.length });
-
-    const clock = await alpacaReq(keys, '/v2/clock');
-    if (!clock.is_open && mode === 'day') {
-      await push('Market closed — skipping');
-      return res.json({ skipped: true, reason: 'market closed', log });
-    }
-
-    if (mode === 'day') {
-      const now = new Date();
-      const etH = now.getUTCHours() - 4;
-      const etM = now.getUTCMinutes();
-      if (etH >= 15 && etM >= 45) {
-        // Only close positions that were opened by day-mode trades today
-        const todayStart = new Date();
-        todayStart.setUTCHours(0, 0, 0, 0);
-        const dayBuysRes = await pool.query<{ symbol: string }>(
-          `SELECT DISTINCT symbol FROM trader_trades
-           WHERE mode = 'day' AND side = 'buy'
-             AND COALESCE(executed_at, logged_at) >= $1`,
-          [todayStart.toISOString()]
-        );
-        const daySymbols = dayBuysRes.rows.map(r => r.symbol);
-        const openSymbols = Array.isArray(positions) ? positions.map((p: any) => p.symbol) : [];
-        const toClose = daySymbols.filter(s => openSymbols.includes(s));
-        if (toClose.length) {
-          await push(`3:45 PM ET — closing ${toClose.length} day trade position(s): ${toClose.join(', ')}`);
-          for (const sym of toClose) {
-            try { await alpacaReq(keys, `/v2/positions/${sym}`, 'DELETE'); } catch {}
-            await new Promise(r => setTimeout(r, 300));
-          }
-        } else {
-          await push('3:45 PM ET — no day trade positions to close');
-        }
-        return res.json({ action: 'close_day_positions', symbols: toClose, reason: 'eod', log });
-      }
-    }
-
-    await push('Running Claude pipeline…');
-    let pipeline: any = null;
-    try {
-      pipeline = await runServerPipeline(
-        { risk, mode, equity: account.equity, buyingPower: account.buyingPower, keys },
-        async (s, status, msg) => await push(`S${s}[${status}]: ${msg}`)
-      );
-      await insertPipelineRun(pipeline);
-    } catch (pipeErr: any) {
-      await push(`Pipeline error: ${pipeErr.message}`, 'error');
-      try {
-        await insertPipelineRun({
-          risk, mode,
-          screened: pipeline?.screened || [],
-          analysis: pipeline?.analysis || [],
-          positions: pipeline?.positions || [],
-          ter: pipeline?.ter || 'N/A',
-          thesis: `Pipeline failed: ${pipeErr.message}`,
-          validation: { pass: false, score: 0, strengths: [], warnings: [`Error: ${pipeErr.message}`] },
-        });
-      } catch {}
-      return res.status(500).json({ error: pipeErr.message, log });
-    }
-
-    if (!pipeline.validation.pass) {
-      await push(`Validation failed (${pipeline.validation.score}) — skipping`, 'warn');
-      return res.json({ skipped: true, reason: 'validation', log });
-    }
-
-    const rc = RISK_CONFIGS[risk];
-    const sellSet = new Set((pipeline.analysis||[]).filter((a:any)=>a.v==='SELL').map((a:any)=>a.t));
-    const heldSet = new Set(positions.map(p=>p.symbol));
-    const trades: any[] = [];
-
-    for (const pos of positions) {
-      if (sellSet.has(pos.symbol)) trades.push({ symbol: pos.symbol, side: 'sell', notional: pos.mktVal, rationale: 'SELL signal' });
-    }
-    for (const p of (pipeline.positions||[])) {
-      if (heldSet.has(p.t)) continue;
-      const notional = p.notional || (account.equity * (p.alloc / 100));
-      if (notional >= 1) trades.push({ symbol: p.t, side: 'buy', notional, rationale: p.why || 'AI signal' });
-    }
-
-    let orders = 0;
-    for (const t of trades.filter(x=>x.side==='sell')) {
-      const body = { symbol:t.symbol, side:'sell', type:'market', time_in_force:'day', notional:t.notional.toFixed(2) };
-      const res2 = await alpacaReq(keys, '/v2/orders', 'POST', body);
-      await insertTrade({ ...t, orderId:res2.id, status:res2.status||'submitted', risk, mode });
-      orders++;
-    }
-    for (const t of trades.filter(x=>x.side==='buy')) {
-      if (account.buyingPower < t.notional) continue;
-      const price = await getQuote(keys, t.symbol);
-      const body = buildOrderBody({ ...t, price, mode, stopLossPct:rc.stopLoss, takeProfitPct:rc.takeProfit });
-      if (!body) continue;
-      const res2 = await alpacaReq(keys, '/v2/orders', 'POST', body);
-      await insertTrade({ ...t, orderId:res2.id, status:res2.status||'submitted', risk, mode });
-      account.buyingPower -= t.notional;
-      orders++;
-    }
-
-    await push(`Done — ${orders} orders submitted`);
-    res.json({ action: 'executed', orders, log });
-
-  } catch (e: any) {
-    await push(`ERROR: ${e.message}`, 'error');
-    res.status(500).json({ error: e.message, log });
-  }
-});
-
 // ── Routine bridge: /trigger-routine ────────────────────────────────────────
 // Fire-and-forget POST to TRADER_ROUTINE_URL. Returns 202; the routine writes
 // progress to trader_logs which the admin UI polls.
@@ -1568,185 +1329,7 @@ traderRouter.post('/place-trade', async (req, res) => {
   }
 });
 
-// ── Cron scheduler ───────────────────────────────────────────────────────────
-// Runs every 15 minutes (finest granularity). Internally checks whether it's
-// actually time to act based on the active mode's cadence:
-//   day       → every 15 min, market hours only (9:30–16:00 ET, Mon–Fri)
-//   swing     → every 4 hours, market hours only
-//   portfolio → once per day at market open (9:30 ET)
-//   crypto    → once per day, 24/7 including weekends
-
-const MODE_INTERVAL_MINUTES: Record<string, number> = {
-  day:       15,
-  swing:     240,
-  portfolio: 1440,
-  crypto:    1440,
-};
-
-function isMarketHours(): boolean {
-  const now  = new Date();
-  const day  = now.getUTCDay();                       // 0=Sun, 6=Sat
-  if (day === 0 || day === 6) return false;
-  const etH  = now.getUTCHours() - 4;                // rough ET (ignores DST edge)
-  const etM  = now.getUTCMinutes();
-  const mins = etH * 60 + etM;
-  return mins >= 9 * 60 + 30 && mins < 16 * 60;      // 9:30–16:00 ET
-}
-
-async function shouldRunNow(mode: string): Promise<boolean> {
-  const dbInterval = await getSetting(`cron_interval_${mode}`);
-  const interval = dbInterval ? parseFloat(dbInterval) : (MODE_INTERVAL_MINUTES[mode] ?? 15);
-
-  if (mode === 'crypto') {
-    // 24/7 — just check the time interval
-    const lastRaw = await getSetting(`cron_last_run_${mode}`);
-    if (!lastRaw) return true;
-    const mins = (Date.now() - new Date(lastRaw).getTime()) / 60000;
-    return mins >= interval;
-  }
-
-  // Stock modes: only run during market hours
-  if (!isMarketHours()) return false;
-
-  const lastRaw = await getSetting(`cron_last_run_${mode}`);
-  if (!lastRaw) return true;
-  const mins = (Date.now() - new Date(lastRaw).getTime()) / 60000;
-  return mins >= interval;
-}
-
-let cronJob: cron.ScheduledTask | null = null;
-
 export async function initTrader() {
   await initTraderTables();
-  console.log('[trader] tables ready');
-
-  // Tick every 15 minutes around the clock so crypto and the scheduler itself
-  // are always evaluated. Mode-specific gating happens inside the callback.
-  const schedule = '*/15 * * * *';
-
-  cronJob = cron.schedule(schedule, async () => {
-    const enabled = await getSetting('cron_enabled');
-    if (enabled !== 'true') return;
-
-    const cronDbPaper = await getSetting('alpaca_paper');
-    const cronIsPaper = cronDbPaper !== null ? cronDbPaper !== 'false' : process.env.CRON_ALPACA_PAPER !== 'false';
-    const cronKeys = getAlpacaEnvKeys(cronIsPaper);
-    if (!cronKeys.key || !cronKeys.secret) {
-      console.log('[trader-cron] Alpaca creds not set — skipping');
-      return;
-    }
-
-    const risk = await getSetting('cron_risk') || process.env.CRON_RISK || 'medium';
-
-    // Run every enabled mode independently on its own cadence
-    for (const mode of ['day', 'swing', 'portfolio', 'crypto']) {
-      const modeEnabled = await getSetting(`cron_${mode}_enabled`);
-      if (modeEnabled !== 'true') continue;
-
-      const ready = await shouldRunNow(mode);
-      if (!ready) {
-        console.log(`[trader-cron] ${mode} — not yet time, skipping`);
-        continue;
-      }
-
-      // Record run time before executing so overlapping ticks can't double-fire
-      await setSetting(`cron_last_run_${mode}`, new Date().toISOString());
-
-      const intervalLabel = MODE_INTERVAL_MINUTES[mode] >= 60
-        ? `${MODE_INTERVAL_MINUTES[mode] / 60}h`
-        : `${MODE_INTERVAL_MINUTES[mode]}m`;
-      console.log(`[trader-cron] Running — ${risk}/${mode} (cadence: ${intervalLabel})`);
-      await insertLog('info', `[cron] Scheduled cycle — ${risk}/${mode} · cadence ${intervalLabel}`);
-
-      try {
-        // Day-trading EOD: close only day-tagged positions between 3:45–4 PM ET
-        if (mode === 'day') {
-          const now = new Date();
-          const etH = now.getUTCHours() - 4;
-          const etM = now.getUTCMinutes();
-          if (etH === 15 && etM >= 45) {
-            await insertLog('info', '[cron] Day EOD — closing day-tagged positions');
-            const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
-            const dayBuysRes = await pool.query<{ symbol: string }>(
-              `SELECT DISTINCT symbol FROM trader_trades
-               WHERE mode = 'day' AND side = 'buy'
-                 AND COALESCE(executed_at, logged_at) >= $1`,
-              [todayStart.toISOString()]
-            );
-            const rawPos = await alpacaReq(cronKeys, '/v2/positions');
-            const openSymbols: string[] = Array.isArray(rawPos) ? rawPos.map((p: any) => p.symbol) : [];
-            const toClose = dayBuysRes.rows.map(r => r.symbol).filter(s => openSymbols.includes(s));
-            for (const sym of toClose) {
-              try { await alpacaReq(cronKeys, `/v2/positions/${sym}`, 'DELETE'); } catch {}
-              await new Promise(r => setTimeout(r, 300));
-            }
-            await insertLog('info', `[cron] EOD closed ${toClose.length} day positions: ${toClose.join(', ') || 'none'}`);
-            continue;
-          }
-        }
-
-        // Fetch live account data, insert equity snapshot, pass real values to pipeline
-        let cronEquity = 10000;
-        let cronBp = 5000;
-        try {
-          const cronAcct = await alpacaReq(cronKeys, '/v2/account');
-          if (!cronAcct.error) {
-            cronEquity = parseFloat(cronAcct.equity) || 10000;
-            cronBp     = parseFloat(cronAcct.buying_power) || 5000;
-            const cronPnlDay = cronEquity - parseFloat(cronAcct.last_equity || String(cronEquity));
-            const cronPos    = await alpacaReq(cronKeys, '/v2/positions');
-            const cronPosCount = Array.isArray(cronPos) ? cronPos.length : 0;
-            await insertSnapshot({ equity: cronEquity, cash: cronBp, pnl: cronPnlDay, positions: cronPosCount });
-            await insertLog('info', `[cron:${mode}] Snapshot — equity $${cronEquity.toFixed(2)}, ${cronPosCount} positions`);
-          }
-        } catch (snapErr: any) {
-          await insertLog('warn', `[cron:${mode}] Snapshot failed: ${snapErr.message}`);
-        }
-
-        let pipeline: any = null;
-        try {
-          pipeline = await runServerPipeline({ risk, mode, equity: cronEquity, buyingPower: cronBp, keys: cronKeys }, async (s, st, msg) => {
-            console.log(`[trader-cron][${mode}] S${s}[${st}]: ${msg}`);
-            await insertLog('info', `[cron:${mode}] S${s}: ${msg}`);
-          });
-          await insertPipelineRun(pipeline);
-          await insertLog('info', `[cron:${mode}] Pipeline complete — ${pipeline.positions.length} positions · ${pipeline.ter}`);
-        } catch (pipeErr: any) {
-          console.error(`[trader-cron][${mode}] Pipeline error:`, pipeErr.message);
-          await insertLog('error', `[cron:${mode}] Pipeline ERROR: ${pipeErr.message}`);
-          // Always save a failure record so the Runs page shows what happened
-          try {
-            await insertPipelineRun({
-              risk, mode,
-              screened: pipeline?.screened || [],
-              analysis: pipeline?.analysis || [],
-              positions: pipeline?.positions || [],
-              ter: pipeline?.ter || 'N/A',
-              thesis: `Pipeline failed: ${pipeErr.message}`,
-              validation: { pass: false, score: 0, strengths: [], warnings: [`Error: ${pipeErr.message}`] },
-            });
-          } catch {}
-        }
-
-        // Reconcile P&L from Alpaca fill activities (runs regardless of pipeline success)
-        try {
-          const { updated } = await syncTradesPnl(cronKeys);
-          if (updated > 0) await insertLog('info', `[cron:${mode}] PnL sync — ${updated} trade(s) updated`);
-        } catch (syncErr: any) {
-          await insertLog('warn', `[cron:${mode}] PnL sync failed: ${syncErr.message}`);
-        }
-      } catch (e: any) {
-        console.error(`[trader-cron][${mode}] Error:`, e.message);
-        await insertLog('error', `[cron:${mode}] ERROR: ${e.message}`);
-      }
-
-      // Brief pause between modes to avoid Alpaca rate limits
-      await new Promise(r => setTimeout(r, 1000));
-    }
-  }, { timezone: 'America/New_York' });
-
-  const cadences = Object.entries(MODE_INTERVAL_MINUTES)
-    .map(([m, mins]) => `${m}=${mins >= 60 ? mins/60+'h' : mins+'m'}`)
-    .join(', ');
-  console.log(`[trader] cron scheduler ready — cadences: ${cadences}`);
+  console.log('[trader] tables ready — swing-only, scheduled by Claude routine');
 }

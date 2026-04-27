@@ -29,8 +29,6 @@ import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { traderRouter, initTrader } from "./trader";
 import { predictorRouter, initPredictor } from "./predictor";
-import { arbitrageRouter, initArbitrage } from "./arbitrage";
-import { cryptoArbRouter, initCryptoArb } from "./crypto-arb";
 import { z } from "zod";
 import { ObjectStorageService, ObjectNotFoundError, verifyUploadToken } from "./replit_integrations/object_storage";
 import { sendEmail, formatContactInquiryEmail } from "./email";
@@ -707,89 +705,13 @@ export async function registerRoutes(
     next();
   };
 
-  // Claude Trader API routes
+  // Claude Trader API routes (Alpaca swing trading)
   app.use("/api/trader", requireBotSecret, traderRouter);
   initTrader().catch(e => console.error('[trader] init error:', e));
 
-  // Claude Predictor API routes
+  // Claude Predictor API routes (Kalshi prediction markets)
   app.use("/api/predictor", requireBotSecret, predictorRouter);
   initPredictor().catch(e => console.error('[predictor] init error:', e));
-
-  // Cross-platform arbitrage engine
-  app.use("/api/arbitrage", requireBotSecret, arbitrageRouter);
-  initArbitrage().catch(e => console.error('[arbitrage] init error:', e));
-
-  // Crypto hedge arb engine
-  app.use("/api/crypto-arb", requireBotSecret, cryptoArbRouter);
-  initCryptoArb().catch(e => console.error('[crypto-arb] init error:', e));
-
-  // ── Automation Master Control ─────────────────────────────────────────────
-  // GET /api/automation — returns cron_enabled for all services
-  app.get("/api/automation", async (_req, res) => {
-    try {
-      const tables = [
-        { id: "predictor",  table: "predictor_settings"  },
-        { id: "trader",     table: "trader_settings"     },
-        { id: "arbitrage",  table: "arb_settings"        },
-        { id: "crypto_arb", table: "crypto_arb_settings" },
-      ];
-      const result: Record<string, string> = {};
-      for (const { id, table } of tables) {
-        try {
-          const r = await pool.query(`SELECT value FROM ${table} WHERE key='cron_enabled'`);
-          result[id] = r.rows[0]?.value ?? "false";
-        } catch { result[id] = "false"; }
-      }
-      res.json(result);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
-  });
-
-  // POST /api/automation — set cron_enabled for all services at once
-  app.post("/api/automation", async (req, res) => {
-    const { enabled } = req.body as { enabled: boolean };
-    const val = enabled ? "true" : "false";
-    const tables = [
-      { table: "predictor_settings"  },
-      { table: "trader_settings"     },
-      { table: "arb_settings"        },
-      { table: "crypto_arb_settings" },
-    ];
-    try {
-      for (const { table } of tables) {
-        try {
-          await pool.query(
-            `INSERT INTO ${table} (key, value, updated_at) VALUES ('cron_enabled', $1, NOW())
-             ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
-            [val]
-          );
-        } catch {}
-      }
-      res.json({ ok: true, enabled });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
-  });
-
-  // PATCH /api/automation/:service — toggle one service's cron
-  app.patch("/api/automation/:service", async (req, res) => {
-    const { service } = req.params;
-    const { enabled } = req.body as { enabled: boolean };
-    const tableMap: Record<string, string> = {
-      predictor: "predictor_settings",
-      trader:    "trader_settings",
-      arbitrage: "arb_settings",
-      crypto_arb:"crypto_arb_settings",
-    };
-    const table = tableMap[service];
-    if (!table) return res.status(400).json({ error: "Unknown service" });
-    try {
-      await pool.query(
-        `INSERT INTO ${table} (key, value, updated_at) VALUES ('cron_enabled', $1, NOW())
-         ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
-        [enabled ? "true" : "false"]
-      );
-      res.json({ ok: true, service, enabled });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
-  });
-  // ── End Automation Master Control ──────────────────────────────────────────
 
   // Apply general rate limiting to all API routes
   app.use("/api", generalApiLimiter);

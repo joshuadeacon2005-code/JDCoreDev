@@ -40,14 +40,11 @@ import {
   Radar,
   TrendingUp,
   Scale,
-  ArrowLeftRight,
   MoreHorizontal,
   Activity,
-  Brain,
   MessageSquare,
   Star,
   FlaskConical,
-  Zap,
   Handshake,
 } from "lucide-react";
 import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
@@ -64,9 +61,6 @@ const mainNavItems = [
   { title: "Lead Engine",   icon: Radar,           href: "/admin/lead-engine" },
   { title: "Claude Trader", icon: TrendingUp,      href: "/admin/trader" },
   { title: "Predictions",   icon: Scale,           href: "/admin/trader/predictions" },
-  { title: "Arbitrage",     icon: ArrowLeftRight,  href: "/admin/trader/arbitrage" },
-  { title: "Crypto Arb",    icon: Bitcoin,         href: "/admin/trader/crypto-arb" },
-  { title: "Automation",    icon: Zap,             href: "/admin/automation" },
 ];
 
 const moreNavItems = [

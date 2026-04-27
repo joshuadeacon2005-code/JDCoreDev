@@ -4,7 +4,6 @@
  */
 
 import { Router } from "express";
-import cron from "node-cron";
 import { pool } from "./db";
 import crypto from "crypto";
 import Anthropic from "@anthropic-ai/sdk";
@@ -183,11 +182,9 @@ async function initPredictorTables() {
   // One-time migration: import dev bets that don't exist here yet
   await importDevBetsOnce();
 
-  // Default settings
+  // Default settings — predictor is Kalshi-focused and scheduled by a Claude
+  // Code routine, so the legacy cron_* and crypto_* keys have been retired.
   const defaults: [string, string][] = [
-    ["cron_enabled",            "false"],
-    ["cron_interval_hours",     "2"],
-    ["cron_last_run",           ""],
     ["min_edge",                "0.05"],
     ["max_bet_usd",             "25"],
     ["poly_max_bet_usd",        "20"],
@@ -196,16 +193,11 @@ async function initPredictorTables() {
     ["mode",                    "demo"],
     ["time_horizon_days",       "30"],
     ["poly_enabled",            "true"],
-    ["crypto_scan_enabled",       "false"],
-    ["crypto_min_edge",           "0.12"],
-    ["crypto_short_horizon_days", "7"],
-    ["crypto_max_bet_usd",        "10"],
-    ["crypto_kelly_fraction",     "0.15"],
-    ["max_spread",                "0.12"],
-    ["max_correlated_bets",       "2"],
-    ["dynamic_edge",              "true"],
-    ["bot_enabled",               "false"],
-    ["daily_max_loss_usd",        "100"],
+    ["max_spread",              "0.12"],
+    ["max_correlated_bets",     "2"],
+    ["dynamic_edge",            "true"],
+    ["bot_enabled",             "false"],
+    ["daily_max_loss_usd",      "100"],
   ];
   for (const [k, v] of defaults) {
     await pool.query(
@@ -817,202 +809,6 @@ function calcSimpleRSI(closes: number[], period = 14): number {
   return parseFloat((100 - 100 / (1 + avgGain / avgLoss)).toFixed(1));
 }
 
-async function fetchCryptoContext(): Promise<string> {
-  try {
-    const [btcData, ethData, fngData] = await Promise.all([
-      fetch("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=30&interval=daily")
-        .then(r => r.json()).catch(() => ({})),
-      fetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=usd&days=30&interval=daily")
-        .then(r => r.json()).catch(() => ({})),
-      fetch("https://api.alternative.me/fng/?limit=7")
-        .then(r => r.json()).catch(() => ({})),
-    ]);
-
-    const btcCloses: number[] = (btcData.prices || []).map((p: any[]) => p[1]);
-    const ethCloses: number[] = (ethData.prices || []).map((p: any[]) => p[1]);
-
-    const btcPrice = btcCloses.at(-1) || 0;
-    const ethPrice = ethCloses.at(-1) || 0;
-    const btc7dChange = btcCloses.length >= 8
-      ? ((btcPrice - btcCloses[btcCloses.length - 8]) / btcCloses[btcCloses.length - 8] * 100).toFixed(1)
-      : "N/A";
-    const btcRSI = calcSimpleRSI(btcCloses);
-    const ethRSI = calcSimpleRSI(ethCloses);
-
-    const fng = fngData?.data?.[0];
-    const fngValue = fng?.value || "N/A";
-    const fngLabel = fng?.value_classification || "Unknown";
-    const rsiTag = (rsi: number) => rsi > 70 ? "overbought ⚠️" : rsi < 30 ? "oversold ⚠️" : "neutral";
-
-    return `LIVE CRYPTO TECHNICALS (anchor your probability estimates to these):
-• BTC price: $${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })} | 7-day change: ${btc7dChange}%
-• ETH price: $${ethPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-• BTC RSI-14 (daily): ${btcRSI} — ${rsiTag(btcRSI)}
-• ETH RSI-14 (daily): ${ethRSI} — ${rsiTag(ethRSI)}
-• Crypto Fear & Greed Index: ${fngValue}/100 — ${fngLabel}
-• SHORT-TERM HORIZON: This is a 1-7 day market. Price momentum and technicals matter more than macro here.`;
-  } catch {
-    return "Crypto context unavailable (API error) — use your best knowledge of current BTC/ETH prices.";
-  }
-}
-
-async function scanCryptoShortTermMarkets(
-  onStage: (msg: string) => void
-): Promise<any[]> {
-  onStage("Fetching live BTC/ETH prices and technicals…");
-  const cryptoContext = await fetchCryptoContext();
-  onStage("Scanning Kalshi for short-term crypto price markets…");
-
-  const horizonDays = parseInt((await getSetting("crypto_short_horizon_days")) || "7");
-  const now = Date.now();
-  const maxMs = horizonDays * 24 * 60 * 60 * 1000;
-
-  let events: any[] = [];
-  let cursor: string | undefined;
-  for (let page = 0; page < 5; page++) {
-    const qs = cursor
-      ? `/events?status=open&with_nested_markets=true&limit=200&cursor=${cursor}`
-      : "/events?status=open&with_nested_markets=true&limit=200";
-    const data = await kalshiPublicReq(qs);
-    const batch: any[] = data?.events || [];
-    events.push(...batch);
-    cursor = data?.cursor;
-    if (!cursor || batch.length < 200) break;
-  }
-
-  const CRYPTO_KEYWORDS = /\b(btc|bitcoin|eth|ethereum|crypto|xrp|solana|sol\b|bnb|stablecoin|altcoin|defi|blockchain|coin\b)\b/i;
-  const cryptoMarkets: any[] = [];
-  for (const event of events) {
-    const markets: any[] = event.markets || [];
-    for (const m of markets) {
-      if (m.status !== "open") continue;
-      const title = (m.title || event.title || "");
-      if (!CRYPTO_KEYWORDS.test(title)) continue;
-      const closeTime = m.close_time ? new Date(m.close_time).getTime() : null;
-      if (!closeTime) continue;
-      const msToClose = closeTime - now;
-      if (msToClose < 0 || msToClose > maxMs) continue;
-      const yesAsk = (m.yes_ask ?? 0) / 100;
-      if (yesAsk <= 0.02 || yesAsk >= 0.98) continue;
-      cryptoMarkets.push({
-        ticker: m.ticker,
-        title: m.title || event.title,
-        yes_price: yesAsk,
-        yes_ask: yesAsk,
-        yes_bid: (m.yes_bid ?? 0) / 100,
-        closes_in_days: (msToClose / (24 * 60 * 60 * 1000)).toFixed(1),
-        platform: "kalshi",
-      });
-    }
-  }
-
-  onStage(`${cryptoMarkets.length} short-term crypto markets found — scoring for mispricing…`);
-  if (!cryptoMarkets.length) return [];
-
-  const summaries = cryptoMarkets.slice(0, 60).map(m => ({
-    ticker: m.ticker,
-    title: m.title,
-    yes_price: m.yes_price,
-    closes_in_days: m.closes_in_days,
-  }));
-
-  const scored = parseJSON(
-    await callClaude(
-      `You are a crypto prediction market specialist hunting for short-term (1-7 day) mispricings.
-
-${cryptoContext}
-
-SHORT-TERM CRYPTO MARKETS (closing within ${horizonDays} days):
-${JSON.stringify(summaries, null, 1)}
-
-For each market, ask: "Given the current BTC/ETH price, RSI, and Fear & Greed index, is this market price materially wrong?"
-
-Edge sources in short-term crypto markets:
-- RSI extremes (>70 = likely reversal, <30 = bounce likely) vs market pricing continuation
-- Crowd overreaction to recent large moves (buying fear when RSI shows oversold)
-- Round-number resistance/support — BTC historically stalls at round thousands
-- Fear & Greed extremes (>80 = near-term top, <20 = near-term bottom)
-- Momentum continuation when trend is strong and RSI is mid-range (40-60)
-
-Be DECISIVE. Reference the specific price/RSI/F&G data when explaining your edge.
-Score 0-100 on mispricing confidence. Include markets scoring ≥50.
-
-Return ONLY JSON:
-{"scored":[{"ticker":"XX","title":"short title","yes_price":0.65,"your_estimate":0.82,"edge":0.17,"score":85,"why":"cite specific price level and RSI/F&G data"}]}
-
-Max 8 results. Order by score descending.`
-    )
-  );
-
-  const results: any[] = (scored?.scored || []).map((r: any) => {
-    const live = cryptoMarkets.find((m: any) => m.ticker === r.ticker);
-    if (live) {
-      r.yes_ask = live.yes_ask;
-      r.yes_bid = live.yes_bid;
-      r.yes_price = live.yes_price;
-      r.closes_in_days = live.closes_in_days;
-    }
-    r.crypto_context = cryptoContext;
-    r.platform = "kalshi";
-    r.is_crypto_short_term = true;
-    return r;
-  });
-
-  onStage(`${results.length} short-term crypto opportunities identified`);
-  return results;
-}
-
-async function runCryptoPipeline(
-  onStage: (stage: number, status: string, msg: string) => void
-): Promise<{ candidates: any[]; councils: any[]; bets: any[] }> {
-  onStage(1, "running", "Scanning short-term crypto markets on Kalshi…");
-  const candidates = await scanCryptoShortTermMarkets((msg) => onStage(1, "running", `[Crypto] ${msg}`));
-  onStage(1, "done", `${candidates.length} short-term crypto candidate(s) found`);
-
-  if (!candidates.length) {
-    onStage(2, "done", "No short-term crypto opportunities found");
-    onStage(3, "done", "No crypto markets to debate");
-    onStage(4, "done", "No crypto bets to place");
-    return { candidates, councils: [], bets: [] };
-  }
-
-  const cryptoMinEdge     = parseFloat((await getSetting("crypto_min_edge"))     || "0.12");
-  const cryptoMaxBetUsd   = parseFloat((await getSetting("crypto_max_bet_usd"))   || "10");
-  const cryptoKelly       = parseFloat((await getSetting("crypto_kelly_fraction")) || "0.15");
-
-  onStage(2, "running", `Deep-researching ${candidates.length} crypto market(s)…`);
-  onStage(3, "running", "Crypto council assembling…");
-
-  const results = await Promise.all(
-    candidates.map(async (market: any) => {
-      // Inject kelly fraction into market so council sizing prompt picks it up
-      const enriched = { ...market, _kelly_override: cryptoKelly };
-      const brief = await deepResearch(enriched, () => {});
-      const council = await runCouncilDebate(enriched, brief, () => {});
-      return { market: enriched, council };
-    })
-  );
-
-  onStage(2, "done", `Research complete for ${candidates.length} crypto market(s)`);
-  onStage(3, "done", "Crypto council debates done");
-  onStage(4, "running", `Evaluating crypto bets (min edge: ${(cryptoMinEdge * 100).toFixed(0)}pp, max bet: $${cryptoMaxBetUsd})…`);
-
-  const allBets: any[] = [];
-  for (const { market, council } of results) {
-    if (council.verdict !== "PASS" && Math.abs(council.edge || 0) >= cryptoMinEdge) {
-      const bet = await executeBet(
-        market,
-        council,
-        (msg) => onStage(4, "running", `[Crypto] ${msg}`),
-        { maxBetUsd: cryptoMaxBetUsd, minEdge: cryptoMinEdge }
-      );
-      if (bet && !bet.error) allBets.push(bet);
-    }
-  }
-  onStage(4, "done", `${allBets.length} crypto bet(s) placed`);
-
-  return { candidates, councils: results.map(r => r.council), bets: allBets };
-}
 
 // ── PIPELINE STAGES ─────────────────────────────────────────────────────────
 
@@ -2355,30 +2151,6 @@ predictorRouter.post("/check-resolutions", async (_req, res) => {
   }
 });
 
-// Crypto short-term scan — SSE streaming endpoint
-predictorRouter.post("/run-crypto", async (_req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  const send = (data: any) => {
-    try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch {}
-  };
-
-  try {
-    const result = await runCryptoPipeline(async (stage, status, msg) => {
-      send({ type: "stage", stage, status, msg });
-      await insertLog("info", `[crypto-pipeline] S${stage}: ${msg}`);
-    });
-    send({ type: "done", result });
-  } catch (e: any) {
-    await insertLog("error", `[crypto-pipeline] ERROR: ${e.message}`);
-    send({ type: "error", message: (e as any).message });
-  }
-  res.end();
-});
-
 // Run history — full list of past pipeline runs
 predictorRouter.get("/runs", async (_req, res) => {
   try {
@@ -2805,7 +2577,7 @@ CURRENT SETTINGS:
 - Max bet size: $${settings.max_bet_usd || "25"}
 - Max open positions: ${settings.max_positions || "10"}
 - Kelly fraction: ${settings.kelly_fraction || "0.25"}
-- Auto-scan: ${settings.cron_enabled === "true" ? "ON (every 2h)" : "OFF"}
+- Bot enabled: ${settings.bot_enabled === "true" ? "ON" : "OFF (kill switch)"}
 
 PERFORMANCE SUMMARY:
 - Total bets: ${allBets.length} (${settled.length} settled, ${allBets.length - settled.length} pending)
@@ -2893,69 +2665,8 @@ export async function initPredictor() {
   if (_pk) console.log("[predictor] POLY_PRIVATE_KEY format: OK (EOA)");
   if (_funder) console.log("[predictor] POLY_FUNDER format: OK (EOA address)");
 
-  // Tick every hour; interval controlled by cron_interval_hours setting
-  cron.schedule("0 * * * *", async () => {
-    const enabled = await getSetting("cron_enabled");
-    if (enabled !== "true") return;
-
-    const intervalHours = parseFloat((await getSetting("cron_interval_hours")) || "2");
-    const lastRaw = await getSetting("cron_last_run");
-    if (lastRaw) {
-      const elapsedHours = (Date.now() - new Date(lastRaw).getTime()) / 3600000;
-      if (elapsedHours < intervalHours) return;
-    }
-    await setSetting("cron_last_run", new Date().toISOString());
-
-    console.log("[predictor-cron] Running scan…");
-    await insertLog("info", "[cron] Scheduled prediction scan");
-
-    try {
-      await runPredictorPipeline(async (stage, status, msg) => {
-        console.log(`[predictor-cron] S${stage}[${status}]: ${msg}`);
-        await insertLog("info", `[cron] S${stage}: ${msg}`);
-      });
-    } catch (e: any) {
-      console.error("[predictor-cron] Error:", e.message);
-      await insertLog("error", `[cron] ERROR: ${e.message}`);
-    }
-
-    const cryptoEnabled = await getSetting("crypto_scan_enabled");
-    if (cryptoEnabled === "true") {
-      await insertLog("info", "[cron] Running crypto short-term scan…");
-      try {
-        await runCryptoPipeline(async (stage, status, msg) => {
-          console.log(`[predictor-cron/crypto] S${stage}[${status}]: ${msg}`);
-          await insertLog("info", `[cron/crypto] S${stage}: ${msg}`);
-        });
-      } catch (e: any) {
-        console.error("[predictor-cron/crypto] Error:", e.message);
-        await insertLog("error", `[cron/crypto] ERROR: ${e.message}`);
-      }
-    }
-
-    // Always check for resolved markets after pipeline run
-    try {
-      const resResult = await checkResolutions();
-      if (resResult.resolved > 0) {
-        await insertLog("info", `[cron/resolution] ${resResult.resolved} bet(s) resolved from ${resResult.checked} checked`);
-      }
-    } catch (e: any) {
-      await insertLog("error", `[cron/resolution] ERROR: ${e.message}`);
-    }
-  });
-
-  // Resolution check cron — runs every 4h independently (catches markets that resolve outside pipeline windows)
-  cron.schedule("0 */4 * * *", async () => {
-    try {
-      const resResult = await checkResolutions();
-      if (resResult.resolved > 0) {
-        console.log(`[resolution-cron] ${resResult.resolved} bet(s) resolved`);
-        await insertLog("info", `[resolution-cron] ${resResult.resolved} resolved from ${resResult.checked} checked`);
-      }
-    } catch (e: any) {
-      console.error("[resolution-cron] Error:", e.message);
-    }
-  });
-
-  console.log("[predictor] cron scheduler ready — cadence: 2h");
+  // No server-side cron. The Claude Code routine ticks via /schedule and
+  // calls /place-bet directly. Resolution sweeps happen at the start of
+  // each routine run via /check-resolutions.
+  console.log("[predictor] ready — scheduled by Claude routine");
 }
