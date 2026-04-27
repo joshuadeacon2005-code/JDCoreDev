@@ -97,7 +97,7 @@ $watcherScript = Join-Path $hooksDir "watcher.mjs"
 $taskAction = New-ScheduledTaskAction -Execute $nodeExe -Argument "`"$watcherScript`""
 $taskTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(60) `
   -RepetitionInterval (New-TimeSpan -Seconds $WatcherEverySeconds) `
-  -RepetitionDuration ([TimeSpan]::MaxValue)
+  -RepetitionDuration (New-TimeSpan -Days 365)
 $taskSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 $taskPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
@@ -115,6 +115,6 @@ Write-Host "Next steps:"
 Write-Host "  1. Open a NEW terminal so env vars are picked up"
 Write-Host "  2. In each project you want logged, run:"
 Write-Host "       node `"$hooksDir\link.mjs`" <projectId>"
-Write-Host "  3. Verify connectivity:"
-Write-Host "       Invoke-RestMethod -Method Get -Uri `"$Endpoint`".Replace('/ingest','/ping') ``"
-Write-Host "         -Headers @{'x-jdcd-key'='$ApiKey'}"
+Write-Host "  3. Verify connectivity (key read from env, not printed):"
+$pingUri = $Endpoint.Replace('/ingest','/ping')
+Write-Host "       Invoke-RestMethod -Method Get -Uri '$pingUri' -Headers @{'x-jdcd-key'=`$env:JDCD_DEV_LOG_KEY}"
