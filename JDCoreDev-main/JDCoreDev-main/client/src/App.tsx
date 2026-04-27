@@ -37,6 +37,7 @@ import AdminPaymentSettings from "@/pages/admin/payment-settings";
 import AdminCryptoTracker from "@/pages/admin/crypto-tracker";
 import AdminLeadEngine from "@/pages/admin/lead-engine";
 import AdminLeadsImport from "@/pages/admin/leads-import";
+import AdminDevLogs from "@/pages/admin/dev-logs";
 import AdminTrader from "@/pages/admin/trader";
 import AdminTraderRuns from "@/pages/admin/trader-runs";
 import AdminTraderAnalytics from "@/pages/admin/trader-analytics";
@@ -87,6 +88,7 @@ function Router() {
       <ProtectedRoute path="/admin/crypto" component={AdminCryptoTracker} requiredRole="admin" />
       <ProtectedRoute path="/admin/lead-engine" component={AdminLeadEngine} requiredRole="admin" />
       <ProtectedRoute path="/admin/leads" component={AdminLeadsImport} requiredRole="admin" />
+      <ProtectedRoute path="/admin/dev-logs" component={AdminDevLogs} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader" component={AdminTrader} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader/runs" component={AdminTraderRuns} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader/analytics" component={AdminTraderAnalytics} requiredRole="admin" />
