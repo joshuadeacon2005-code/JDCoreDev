@@ -38,6 +38,7 @@ import AdminInvoices from "@/pages/admin/invoices";
 import AdminPaymentSettings from "@/pages/admin/payment-settings";
 import AdminCryptoTracker from "@/pages/admin/crypto-tracker";
 import AdminLeadEngine from "@/pages/admin/lead-engine";
+import AdminDevLogs from "@/pages/admin/dev-logs";
 import AdminTrader from "@/pages/admin/trader";
 import AdminTraderRuns from "@/pages/admin/trader-runs";
 import AdminTraderAnalytics from "@/pages/admin/trader-analytics";
@@ -47,8 +48,6 @@ import AdminTraderSettings from "@/pages/admin/trader-settings";
 import AdminTraderBacktest from "@/pages/admin/trader-backtest";
 import AdminTraderWatchlist from "@/pages/admin/trader-watchlist";
 import AdminTraderPredictions from "@/pages/admin/trader-predictions";
-import AdminTraderArbitrage from "@/pages/admin/trader-arbitrage";
-import AdminTraderCryptoArb from "@/pages/admin/trader-crypto-arb";
 import AdminAutomation from "@/pages/admin/automation";
 
 // Client portal pages
@@ -91,6 +90,7 @@ function Router() {
       <ProtectedRoute path="/admin/payment-settings" component={AdminPaymentSettings} requiredRole="admin" />
       <ProtectedRoute path="/admin/crypto" component={AdminCryptoTracker} requiredRole="admin" />
       <ProtectedRoute path="/admin/lead-engine" component={AdminLeadEngine} requiredRole="admin" />
+      <ProtectedRoute path="/admin/dev-logs" component={AdminDevLogs} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader" component={AdminTrader} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader/runs" component={AdminTraderRuns} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader/analytics" component={AdminTraderAnalytics} requiredRole="admin" />
@@ -100,8 +100,6 @@ function Router() {
       <ProtectedRoute path="/admin/trader/backtest" component={AdminTraderBacktest} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader/watchlist" component={AdminTraderWatchlist} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader/predictions" component={AdminTraderPredictions} requiredRole="admin" />
-      <ProtectedRoute path="/admin/trader/arbitrage" component={AdminTraderArbitrage} requiredRole="admin" />
-      <ProtectedRoute path="/admin/trader/crypto-arb" component={AdminTraderCryptoArb} requiredRole="admin" />
       <ProtectedRoute path="/admin/automation" component={AdminAutomation} requiredRole="admin" />
 
       {/* Client portal routes */}

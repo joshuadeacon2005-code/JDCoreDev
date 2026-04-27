@@ -29,8 +29,7 @@ import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { traderRouter, initTrader } from "./trader";
 import { predictorRouter, initPredictor } from "./predictor";
-import { arbitrageRouter, initArbitrage } from "./arbitrage";
-import { cryptoArbRouter, initCryptoArb } from "./crypto-arb";
+import { devLogsIngestRouter } from "./dev-logs-ingest";
 import { z } from "zod";
 import { ObjectStorageService, ObjectNotFoundError, verifyUploadToken } from "./replit_integrations/object_storage";
 import { sendEmail, formatContactInquiryEmail } from "./email";
@@ -492,8 +491,12 @@ export async function registerRoutes(
     }
   })();
 
-  // Lead engine API routes (protected by ENGINE_SECRET header in route.js)
-  app.use("/api/lead-engine", leadEngineRouter);
+  // Lead engine API routes (admin session auth + ENGINE_SECRET fallback in route.js)
+  app.use("/api/lead-engine", requireAdmin, leadEngineRouter);
+
+  // Dev-logs ingest (API-key auth, called by Claude Code hook scripts on dev machines).
+  // Writes into maintenance_logs so entries count toward project_hosting_terms budgets.
+  app.use("/api/dev-logs", devLogsIngestRouter);
 
   // ── External Leads Import API ─────────────────────────────────────────────
   // POST /api/leads/import  — coworker automation pushes pre-researched leads
@@ -701,14 +704,6 @@ export async function registerRoutes(
   // Claude Predictor API routes
   app.use("/api/predictor", predictorRouter);
   initPredictor().catch(e => console.error('[predictor] init error:', e));
-
-  // Cross-platform arbitrage engine
-  app.use("/api/arbitrage", arbitrageRouter);
-  initArbitrage().catch(e => console.error('[arbitrage] init error:', e));
-
-  // Crypto hedge arb engine
-  app.use("/api/crypto-arb", cryptoArbRouter);
-  initCryptoArb().catch(e => console.error('[crypto-arb] init error:', e));
 
   // ── Automation Master Control ─────────────────────────────────────────────
   // GET /api/automation — returns cron_enabled for all services
@@ -3199,6 +3194,42 @@ JD CoreDev System`,
       const logId = parseInt(req.params.id);
       await storage.deleteMaintenanceLog(logId);
       res.json({ message: "Maintenance log deleted" });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // List Claude Code session logs across all projects (admin view).
+  // These are the auto-generated entries written by the dev-logs ingest endpoint.
+  app.get("/api/admin/dev-logs/claude-sessions", requireAdmin, async (req, res, next) => {
+    try {
+      const limit = Math.min(parseInt((req.query.limit as string) || "100"), 500);
+      const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : null;
+      const rows = await db
+        .select({
+          id: maintenanceLogs.id,
+          projectId: maintenanceLogs.projectId,
+          projectName: projects.name,
+          logDate: maintenanceLogs.logDate,
+          minutesSpent: maintenanceLogs.minutesSpent,
+          estimatedCostCents: maintenanceLogs.estimatedCostCents,
+          logType: maintenanceLogs.logType,
+          description: maintenanceLogs.description,
+          createdAt: maintenanceLogs.createdAt,
+        })
+        .from(maintenanceLogs)
+        .innerJoin(projects, eq(maintenanceLogs.projectId, projects.id))
+        .where(
+          projectId
+            ? and(
+                eq(maintenanceLogs.category, "claude-code-session"),
+                eq(maintenanceLogs.projectId, projectId)
+              )
+            : eq(maintenanceLogs.category, "claude-code-session")
+        )
+        .orderBy(desc(maintenanceLogs.createdAt))
+        .limit(limit);
+      res.json(rows);
     } catch (error) {
       next(error);
     }
