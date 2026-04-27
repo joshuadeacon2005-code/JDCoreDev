@@ -61,7 +61,6 @@ SMTP_PORT = "587"
 SMTP_SECURE = "false"
 SMTP_FROM = ""
 STATIC_FOLDER = "pipeline/data"
-ENGINE_SECRET = "jdcd-engine-ai72shfgexau"
 
 [objectStorage]
 defaultBucketID = "replit-objstore-6f6a0339-5b43-4a06-8d18-82f90f6d3577"

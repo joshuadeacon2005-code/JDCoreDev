@@ -11,27 +11,26 @@ import {
 } from "lucide-react";
 import { SiWhatsapp, SiInstagram } from "react-icons/si";
 
-const ENGINE_SECRET = "jdcd-engine-ai72shfgexau";
 const API = "/api/lead-engine";
 
 async function apiPost(endpoint: string, body: Record<string, unknown> = {}) {
   const res = await fetch(`${API}${endpoint}`, {
     method: "POST",
-    headers: { "x-engine-secret": ENGINE_SECRET, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   return res.json();
 }
 
 async function apiGet(endpoint: string) {
-  const res = await fetch(`${API}${endpoint}`, { headers: { "x-engine-secret": ENGINE_SECRET } });
+  const res = await fetch(`${API}${endpoint}`);
   return res.json();
 }
 
 async function apiDelete(endpoint: string, body: Record<string, unknown> = {}) {
   const res = await fetch(`${API}${endpoint}`, {
     method: "DELETE",
-    headers: { "x-engine-secret": ENGINE_SECRET, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   return res.json();

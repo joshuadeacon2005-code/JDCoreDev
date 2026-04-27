@@ -411,8 +411,8 @@ export async function registerRoutes(
     }
   })();
 
-  // Lead engine API routes (protected by ENGINE_SECRET header in route.js)
-  app.use("/api/lead-engine", leadEngineRouter);
+  // Lead engine API routes (admin session auth + ENGINE_SECRET fallback in route.js)
+  app.use("/api/lead-engine", requireAdmin, leadEngineRouter);
 
   // Claude Trader API routes
   app.use("/api/trader", traderRouter);
