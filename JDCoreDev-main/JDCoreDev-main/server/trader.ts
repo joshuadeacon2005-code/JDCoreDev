@@ -77,7 +77,7 @@ async function initTraderTables() {
 
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_enabled', 'false') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_risk', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_RISK || 'medium']);
-  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_mode', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_MODE || 'day']);
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_mode', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_MODE || 'swing']);
 }
 
 async function getSetting(key: string): Promise<string | null> {
@@ -855,7 +855,7 @@ traderRouter.get('/health', async (_req, res) => {
 // ── Market signals endpoint ───────────────────────────────────────────────
 traderRouter.get('/market-signals', async (req, res) => {
   try {
-    const mode = (req.query.mode as string) || 'day';
+    const mode = (req.query.mode as string) || 'swing';
     const signals = await fetchMarketSignals(mode);
     res.json(signals);
   } catch (e: any) {
@@ -1337,7 +1337,7 @@ traderRouter.post('/cron/run', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   const risk = (req.body.risk || process.env.CRON_RISK || 'medium') as string;
-  const mode = (req.body.mode || process.env.CRON_MODE || 'day') as string;
+  const mode = (req.body.mode || process.env.CRON_MODE || 'swing') as string;
   const dbPaper = await getSetting('alpaca_paper');
   const isPaperMode = dbPaper !== null ? dbPaper !== 'false' : process.env.CRON_ALPACA_PAPER !== 'false';
   const keys = getAlpacaEnvKeys(isPaperMode);
@@ -1520,8 +1520,8 @@ export async function initTrader() {
 
     const risk = await getSetting('cron_risk') || process.env.CRON_RISK || 'medium';
 
-    // Run every enabled mode independently on its own cadence
-    for (const mode of ['day', 'swing', 'portfolio', 'crypto']) {
+    // Swing-only — see ADR: trader pivot to swing-trading focus.
+    for (const mode of ['swing']) {
       const modeEnabled = await getSetting(`cron_${mode}_enabled`);
       if (modeEnabled !== 'true') continue;
 

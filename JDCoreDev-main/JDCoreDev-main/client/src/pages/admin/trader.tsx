@@ -35,10 +35,7 @@ const UNIVERSES: any = {
 };
 
 const TRADING_MODES: any = {
-  day:       { id:"day",       label:"Day Trading", Icon:Zap,        desc:"Intraday — positions closed by 3:45 PM ET", cronMinutes:15,    riskKey:"medium", accent:"teal" },
   swing:     { id:"swing",     label:"Swing",       Icon:TrendingUp, desc:"1–5 day holds — signal check every 4 hours",cronMinutes:240,   riskKey:"medium", accent:"purple" },
-  portfolio: { id:"portfolio", label:"Portfolio",   Icon:BarChart2,  desc:"Long-term rebalancing — weekly cadence",   cronMinutes:10080, riskKey:"low",    accent:"green" },
-  crypto:    { id:"crypto",    label:"Crypto",      Icon:Bitcoin,    desc:"24/7 crypto markets via Alpaca",           cronMinutes:60,    riskKey:"high",   accent:"orange" },
 };
 
 const MODE_ACCENT: any = {
@@ -202,7 +199,7 @@ export default function TraderDashboard() {
   const [envConfig,   setEnvConfig]   = useState<{configured:boolean,isPaper:boolean}|null>(null);
   const [autoConnecting, setAutoConnecting] = useState(true);
   const [risk,        setRisk]        = useState("medium");
-  const [mode,        setMode]        = useState("day");
+  const [mode,        setMode]        = useState("swing");
   const [connErr,     setConnErr]     = useState("");
   const [account,     setAccount]     = useState<any>(null);
   const [positions,   setPositions]   = useState<any[]>([]);

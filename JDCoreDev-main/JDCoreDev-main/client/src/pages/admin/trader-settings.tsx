@@ -15,10 +15,7 @@ const RISK_CONFIGS: any = {
   high:   { label:"Aggressive"   },
 };
 const TRADING_MODES: any = {
-  day:       { label:"Day Trading", cadence:"Every 15 min · market hours",  accent:"teal"   },
   swing:     { label:"Swing",       cadence:"Every 4 h · market hours",     accent:"purple" },
-  portfolio: { label:"Portfolio",   cadence:"Once daily · market open",     accent:"green"  },
-  crypto:    { label:"Crypto",      cadence:"Once daily · 24/7",            accent:"orange" },
 };
 const UNIVERSES: any = {
   low:    ["JNJ","PG","KO","WMT","NEE","VYM","SCHD","SO","VZ","MCD","ABBV","T","DUK","O","JEPI"],
