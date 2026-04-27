@@ -204,6 +204,8 @@ async function initPredictorTables() {
     ["max_spread",                "0.12"],
     ["max_correlated_bets",       "2"],
     ["dynamic_edge",              "true"],
+    ["bot_enabled",               "false"],
+    ["daily_max_loss_usd",        "100"],
   ];
   for (const [k, v] of defaults) {
     await pool.query(
@@ -685,24 +687,20 @@ function parseJSON(text: string) {
   return null;
 }
 
-// Fast model for debate agents — good quality, low latency
-async function callClaudeFast(prompt: string, maxTokens = 4096): Promise<string> {
-  const msg = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: maxTokens,
-    messages: [{ role: "user", content: prompt }],
-  });
-  return msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+// In-process AI calls used to flow through Replit's modelfarm proxy. That
+// proxy is not reachable from Railway, so the council debate now runs in a
+// scheduled Claude Code routine that POSTs verdicts to /place-bet. These
+// stubs preserve the exports so the legacy /run pipeline still type-checks
+// — but invoking them throws and refuses to silently fall back.
+const MODELFARM_REPLACED =
+  "predictor: in-process Claude calls disabled. Use the scheduled routine + /api/predictor/place-bet.";
+
+async function callClaudeFast(_prompt: string, _maxTokens = 4096): Promise<string> {
+  throw new Error(MODELFARM_REPLACED);
 }
 
-// Deep model for final decisions only — most capable, used sparingly
-async function callClaude(prompt: string, _useSearch = false, maxTokens = 8192): Promise<string> {
-  const msg = await anthropic.messages.create({
-    model: "claude-opus-4-6",
-    max_tokens: maxTokens,
-    messages: [{ role: "user", content: prompt }],
-  });
-  return msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+async function callClaude(_prompt: string, _useSearch = false, _maxTokens = 8192): Promise<string> {
+  throw new Error(MODELFARM_REPLACED);
 }
 
 // ── IMPROVEMENT HELPERS ──────────────────────────────────────────────────────
@@ -2207,6 +2205,121 @@ Be factual, cite publicly known information, and highlight any poor reputation. 
   }
 });
 
+// ── Routine bridge: /trigger-routine ────────────────────────────────────────
+// Fires the scheduled Claude Code routine bound to PREDICTOR_ROUTINE_URL —
+// the Run Now button in the admin UI repoints from /run to here. Returns 202
+// immediately; the routine streams progress into predictor_logs.
+predictorRouter.post("/trigger-routine", async (req, res) => {
+  try {
+    const url = process.env.PREDICTOR_ROUTINE_URL;
+    if (!url) return res.status(503).json({ error: "PREDICTOR_ROUTINE_URL not configured" });
+    const apiKey = process.env.ANTHROPIC_TRIGGER_API_KEY || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: "ANTHROPIC_API_KEY not configured" });
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(req.body || {}),
+    }).catch((e) => {
+      console.error("[predictor] trigger-routine error:", e.message);
+      void insertLog("error", `[trigger-routine] ${e.message}`);
+    });
+
+    await insertLog("info", "[trigger-routine] fired");
+    res.status(202).json({ ok: true, status: "fired" });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Routine bridge: /place-bet ──────────────────────────────────────────────
+// Takes a verdict produced by a scheduled Claude Code routine and places the
+// Kalshi order using the same plumbing as the in-process pipeline. The server
+// remains authoritative for sizing, kill-switches, and broker auth — the
+// routine never touches the Kalshi private key.
+predictorRouter.post("/place-bet", async (req, res) => {
+  try {
+    const {
+      market_ticker,
+      market_title,
+      side,
+      yes_price,
+      your_estimate,
+      edge,
+      confidence,
+      verdict,
+      council_transcript,
+    } = req.body || {};
+
+    if (!market_ticker || !verdict) {
+      return res.status(400).json({ error: "market_ticker and verdict are required" });
+    }
+    if (verdict === "PASS") {
+      return res.json({ skipped: true, reason: "verdict_pass" });
+    }
+    if (verdict !== "BET_YES" && verdict !== "BET_NO") {
+      return res.status(400).json({ error: `invalid verdict: ${verdict}` });
+    }
+    if (typeof yes_price !== "number" || yes_price <= 0 || yes_price >= 1) {
+      return res.status(400).json({ error: "yes_price must be a decimal between 0 and 1" });
+    }
+
+    const botEnabled = (await getSetting("bot_enabled")) === "true";
+    if (!botEnabled) {
+      return res.status(409).json({ error: "bot_enabled is false — kill switch engaged" });
+    }
+
+    // Daily loss cap — refuses new bets if trailing 24h realised PnL is below cap.
+    const lossCapRaw = await getSetting("daily_max_loss_usd");
+    if (lossCapRaw) {
+      const cap = parseFloat(lossCapRaw);
+      if (cap > 0) {
+        const r = await pool.query(
+          `SELECT COALESCE(SUM(pnl), 0) AS pnl
+             FROM predictor_bets
+            WHERE settled_at > NOW() - INTERVAL '24 hours'`
+        );
+        const pnl24h = parseFloat(r.rows?.[0]?.pnl ?? "0");
+        if (pnl24h <= -cap) {
+          return res.status(409).json({
+            error: `daily loss cap hit (pnl24h=${pnl24h.toFixed(2)}, cap=${cap})`,
+          });
+        }
+      }
+    }
+
+    // Reuse executeBet — but we need to feed it a council shape it expects.
+    // executeBet enforces min-edge floors, dynamic edge, NO-price ceiling,
+    // sizing, and the predictor_bets / predictor_councils inserts.
+    const stages: string[] = [];
+    const onStage = (msg: string) => stages.push(msg);
+
+    const conf = typeof confidence === "number"
+      ? (confidence >= 0.8 ? "high" : confidence >= 0.6 ? "medium" : "low")
+      : (typeof confidence === "string" ? confidence : "medium");
+
+    const market = {
+      ticker: market_ticker,
+      title:  market_title || market_ticker,
+      yes_price,
+      platform: "kalshi",
+    };
+    const council = {
+      verdict,
+      edge:              typeof edge === "number" ? edge : 0,
+      final_probability: typeof your_estimate === "number" ? your_estimate : yes_price,
+      confidence:        conf,
+      suggested_contracts: 1,
+      transcript:        council_transcript || {},
+    };
+
+    const result = await executeBet(market, council, onStage);
+    return res.json({ result, stages });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // Run the full pipeline manually
 predictorRouter.post("/run", async (_req, res) => {
   // Stream stage updates as SSE so the UI can show real-time progress
@@ -2648,6 +2761,12 @@ predictorRouter.post("/chat", async (req, res) => {
   try {
     const { message } = req.body;
     if (!message?.trim()) return res.status(400).json({ error: "message required" });
+
+    // Modelfarm proxy is gone — chat is disabled until rewired through a
+    // routine or a direct ANTHROPIC_API_KEY-based call.
+    if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || !process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      return res.status(503).json({ error: "predictor chat disabled — modelfarm proxy retired" });
+    }
 
     // Save user message
     await pool.query("INSERT INTO predictor_chat (role, content) VALUES ('user', $1)", [message]);

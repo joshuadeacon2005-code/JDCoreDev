@@ -88,6 +88,8 @@ async function initTraderTables() {
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_swing', '240') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_portfolio', '1440') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_crypto', '1440') ON CONFLICT (key) DO NOTHING`);
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('bot_enabled', 'false') ON CONFLICT (key) DO NOTHING`);
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('daily_max_loss_usd', '500') ON CONFLICT (key) DO NOTHING`);
 }
 
 async function getSetting(key: string): Promise<string | null> {
@@ -393,13 +395,12 @@ function parseJSON(text: string) {
   return null;
 }
 
-async function callClaudeTrader(prompt: string, _useSearch = false): Promise<string> {
-  const msg = await anthropic.messages.create({
-    model: "claude-opus-4-6",
-    max_tokens: 8192,
-    messages: [{ role: "user", content: prompt }],
-  });
-  return msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+// In-process Claude calls flowed through Replit's modelfarm proxy, which is
+// not reachable from Railway. The reasoning loop now runs inside a scheduled
+// Claude Code routine that POSTs verdicts to /place-trade. Throwing here is
+// intentional — silent fallback would mask bot misconfiguration.
+async function callClaudeTrader(_prompt: string, _useSearch = false): Promise<string> {
+  throw new Error("trader: in-process Claude calls disabled. Use the scheduled routine + /api/trader/place-trade.");
 }
 
 // ── RISK_CONFIGS ─────────────────────────────────────────────────────────────
@@ -1113,6 +1114,11 @@ traderRouter.post('/chat', async (req, res) => {
     const { message, mode = 'general' } = req.body;
     if (!message?.trim()) return res.status(400).json({ error: 'message required' });
 
+    // Modelfarm proxy is gone — chat is disabled until rewired.
+    if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || !process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      return res.status(503).json({ error: 'trader chat disabled — modelfarm proxy retired' });
+    }
+
     // Save user message
     await pool.query(
       `INSERT INTO trader_chat (mode, role, content) VALUES ($1, 'user', $2)`,
@@ -1444,6 +1450,121 @@ traderRouter.post('/cron/run', async (req, res) => {
   } catch (e: any) {
     await push(`ERROR: ${e.message}`, 'error');
     res.status(500).json({ error: e.message, log });
+  }
+});
+
+// ── Routine bridge: /trigger-routine ────────────────────────────────────────
+// Fire-and-forget POST to TRADER_ROUTINE_URL. Returns 202; the routine writes
+// progress to trader_logs which the admin UI polls.
+traderRouter.post('/trigger-routine', async (req, res) => {
+  try {
+    const url = process.env.TRADER_ROUTINE_URL;
+    if (!url) return res.status(503).json({ error: 'TRADER_ROUTINE_URL not configured' });
+    const apiKey = process.env.ANTHROPIC_TRIGGER_API_KEY || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify(req.body || {}),
+    }).catch((e) => {
+      console.error('[trader] trigger-routine error:', e.message);
+      void insertLog('error', `[trigger-routine] ${e.message}`);
+    });
+
+    await insertLog('info', '[trigger-routine] fired');
+    res.status(202).json({ ok: true, status: 'fired' });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Routine bridge: /place-trade ────────────────────────────────────────────
+// Receives a verdict (one trade) from a scheduled Claude routine and places
+// the corresponding Alpaca order using the env-resident keys. Server enforces
+// the kill switch, the daily-loss cap, and the per-trade buying-power cap.
+traderRouter.post('/place-trade', async (req, res) => {
+  try {
+    const {
+      symbol, side, qty, type = 'market',
+      limit_price, time_in_force, rationale, risk = 'medium', mode = 'day',
+    } = req.body || {};
+
+    if (!symbol || !side) {
+      return res.status(400).json({ error: 'symbol and side are required' });
+    }
+    if (side !== 'buy' && side !== 'sell') {
+      return res.status(400).json({ error: `invalid side: ${side}` });
+    }
+
+    const botEnabled = (await getSetting('bot_enabled')) === 'true';
+    if (!botEnabled) {
+      return res.status(409).json({ error: 'bot_enabled is false — kill switch engaged' });
+    }
+
+    // Daily loss cap from realised PnL on closed sells in the last 24h.
+    const lossCapRaw = await getSetting('daily_max_loss_usd');
+    if (lossCapRaw) {
+      const cap = parseFloat(lossCapRaw);
+      if (cap > 0) {
+        const r = await pool.query(
+          `SELECT COALESCE(SUM(pnl), 0) AS pnl
+             FROM trader_trades
+            WHERE executed_at > NOW() - INTERVAL '24 hours'`
+        );
+        const pnl24h = parseFloat(r.rows?.[0]?.pnl ?? '0');
+        if (pnl24h <= -cap) {
+          return res.status(409).json({
+            error: `daily loss cap hit (pnl24h=${pnl24h.toFixed(2)}, cap=${cap})`,
+          });
+        }
+      }
+    }
+
+    const dbPaper = await getSetting('alpaca_paper');
+    const isPaper = dbPaper !== null ? dbPaper !== 'false' : process.env.CRON_ALPACA_PAPER !== 'false';
+    const keys = getAlpacaEnvKeys(isPaper);
+    if (!keys.key || !keys.secret) {
+      return res.status(503).json({ error: `Alpaca keys missing for ${isPaper ? 'paper' : 'live'} mode` });
+    }
+
+    // Per-trade buying-power cap: refuse trades larger than 25% of buying power.
+    const account = await alpacaReq(keys, '/v2/account');
+    const buyingPower = parseFloat(account?.buying_power ?? '0');
+    let qtyNum: number | null = typeof qty === 'number' ? qty : (qty ? parseFloat(qty) : null);
+    let priceNum: number | null = typeof limit_price === 'number' ? limit_price : (limit_price ? parseFloat(limit_price) : null);
+    if (side === 'buy' && qtyNum != null && priceNum != null && buyingPower > 0) {
+      const notional = qtyNum * priceNum;
+      if (notional > buyingPower * 0.25) {
+        return res.status(409).json({
+          error: `trade exceeds 25% of buying power (notional=${notional.toFixed(2)}, bp=${buyingPower.toFixed(2)})`,
+        });
+      }
+    }
+
+    const tif = time_in_force || (mode === 'day' ? 'day' : 'gtc');
+    const body: any = { symbol, side, type, time_in_force: tif };
+    if (qtyNum != null) body.qty = String(qtyNum);
+    if (type === 'limit') {
+      if (priceNum == null) return res.status(400).json({ error: 'limit_price required for limit orders' });
+      body.limit_price = priceNum.toFixed(2);
+    }
+
+    const orderRes = await alpacaReq(keys, '/v2/orders', 'POST', body);
+    if (orderRes?.code || orderRes?.error) {
+      const msg = orderRes?.message || 'order rejected';
+      await insertLog('error', `[place-trade] ${symbol} ${side}: ${msg}`);
+      return res.status(502).json({ error: msg, raw: orderRes });
+    }
+
+    await insertTrade({
+      symbol, side, qty: qtyNum, price: priceNum, notional: (qtyNum && priceNum) ? qtyNum * priceNum : null,
+      status: orderRes?.status || 'submitted', rationale, risk, mode, orderId: orderRes?.id,
+    });
+
+    return res.json({ ok: true, order: orderRes });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
   }
 });
 

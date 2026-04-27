@@ -6,6 +6,7 @@
 
 import { Router } from "express";
 import cron from "node-cron";
+import crypto from "crypto";
 import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -109,6 +110,8 @@ async function initCryptoArbTables() {
     ["hedge_enabled", "true"],
     ["scan_interval_min", "3"],
     ["cron_last_run", ""],
+    ["bot_enabled", "false"],
+    ["daily_max_loss_usd", "150"],
   ];
   for (const [k, v] of defaults) {
     await pool.query(`INSERT INTO crypto_arb_settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO NOTHING`, [k, v]);
@@ -365,15 +368,11 @@ function parseJSON(text: string) {
   return null;
 }
 
-async function callClaude(prompt: string, useSearch = false, maxTokens = 1500): Promise<string> {
-  const params: any = {
-    model: "claude-sonnet-4-5",
-    max_tokens: maxTokens,
-    messages: [{ role: "user", content: prompt }],
-  };
-  if (useSearch) params.tools = [{ type: "web_search_20250305", name: "web_search" }];
-  const d = await anthropic.messages.create(params);
-  return (d.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+// In-process Claude calls flowed through Replit's modelfarm proxy, which is
+// not reachable from Railway. The council debate now runs in a scheduled
+// Claude Code routine that POSTs verdicts to /place-hedge.
+async function callClaude(_prompt: string, _useSearch = false, _maxTokens = 1500): Promise<string> {
+  throw new Error("crypto-arb: in-process Claude calls disabled. Use the scheduled routine + /api/crypto-arb/place-hedge.");
 }
 
 // ── Council ─────────────────────────────────────────────────────────────────
@@ -668,6 +667,242 @@ async function runCryptoArbPipeline(
 
   return { contracts: contracts.length, spotPrices, opportunities, councils, executions };
 }
+
+// ── Routine bridge: /trigger-routine ────────────────────────────────────────
+cryptoArbRouter.post("/trigger-routine", async (req, res) => {
+  try {
+    const url = process.env.CRYPTO_ARB_ROUTINE_URL;
+    if (!url) return res.status(503).json({ error: "CRYPTO_ARB_ROUTINE_URL not configured" });
+    const apiKey = process.env.ANTHROPIC_TRIGGER_API_KEY || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: "ANTHROPIC_API_KEY not configured" });
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(req.body || {}),
+    }).catch((e) => {
+      console.error("[crypto-arb] trigger-routine error:", e.message);
+      void insertLog("error", `[trigger-routine] ${e.message}`);
+    });
+
+    await insertLog("info", "[trigger-routine] fired");
+    res.status(202).json({ ok: true, status: "fired" });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Authenticated broker helpers ────────────────────────────────────────────
+
+function normalisePem(raw: string): string {
+  let pem = raw.replace(/\\n/g, "\n").trim();
+  if (!pem.includes("-----BEGIN")) {
+    const b64 = pem.replace(/\s+/g, "");
+    const folded = (b64.match(/.{1,64}/g) ?? [b64]).join("\n");
+    return `-----BEGIN PRIVATE KEY-----\n${folded}\n-----END PRIVATE KEY-----\n`;
+  }
+  const typeMatch = pem.match(/-----BEGIN ([^-]+)-----/);
+  const keyType = typeMatch?.[1] ?? "PRIVATE KEY";
+  const b64 = pem
+    .replace(/-----BEGIN[^-]+-----/g, "")
+    .replace(/-----END[^-]+-----/g, "")
+    .replace(/\s+/g, "");
+  const folded = (b64.match(/.{1,64}/g) ?? [b64]).join("\n");
+  return `-----BEGIN ${keyType}-----\n${folded}\n-----END ${keyType}-----\n`;
+}
+
+function kalshiSign(privateKeyPem: string, timestamp: string, method: string, path: string): string {
+  const pathWithoutQuery = path.split("?")[0];
+  const message = `${timestamp}${method.toUpperCase()}/trade-api/v2${pathWithoutQuery}`;
+  const pem = normalisePem(privateKeyPem);
+  const keyObj = crypto.createPrivateKey({ key: pem, format: "pem" });
+  return crypto.sign("sha256", Buffer.from(message), {
+    key: keyObj,
+    padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+    saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+  }).toString("base64");
+}
+
+async function kalshiAuthedReq(path: string, method = "GET", body: any = null): Promise<any> {
+  const isDemo = (await getSetting("kalshi_mode")) === "demo";
+  const base = isDemo ? KALSHI_BASE.demo : KALSHI_BASE.prod;
+  const keyId      = isDemo ? (process.env.KALSHI_KEY_ID_DEMO     || "") : (process.env.KALSHI_KEY_ID_LIVE     || "");
+  const privateKey = isDemo ? (process.env.KALSHI_PRIVATE_KEY_DEMO || "") : (process.env.KALSHI_PRIVATE_KEY_LIVE || "");
+  if (!keyId || !privateKey) {
+    return { error: true, message: `Kalshi ${isDemo ? "demo" : "live"} keys missing` };
+  }
+  const timestamp = String(Date.now());
+  const sig = kalshiSign(privateKey, timestamp, method, path);
+  try {
+    const res = await fetch(base + path, {
+      method,
+      headers: {
+        "Content-Type":              "application/json",
+        "KALSHI-ACCESS-KEY":         keyId,
+        "KALSHI-ACCESS-TIMESTAMP":   timestamp,
+        "KALSHI-ACCESS-SIGNATURE":   sig,
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(15000),
+    });
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  } catch (e: any) {
+    return { error: true, message: e.message };
+  }
+}
+
+function getCryptoAlpacaKeys(): { key: string; secret: string; isPaper: boolean } {
+  const liveKey    = process.env.CRON_ALPACA_KEY_LIVE   || "";
+  const liveSecret = process.env.CRON_ALPACA_SECRET_LIVE || "";
+  if (liveKey && liveSecret && process.env.CRON_ALPACA_PAPER === "false") {
+    return { key: liveKey, secret: liveSecret, isPaper: false };
+  }
+  return {
+    key:    process.env.CRON_ALPACA_KEY_PAPER    || process.env.CRON_ALPACA_KEY    || "",
+    secret: process.env.CRON_ALPACA_SECRET_PAPER || process.env.CRON_ALPACA_SECRET || "",
+    isPaper: true,
+  };
+}
+
+async function alpacaCryptoOrder(symbol: string, side: "buy" | "sell", qty: number): Promise<any> {
+  const keys = getCryptoAlpacaKeys();
+  if (!keys.key || !keys.secret) return { error: true, message: "Alpaca keys missing" };
+  const base = keys.isPaper ? ALPACA.paper : ALPACA.live;
+  const body = {
+    symbol,
+    side,
+    type:           "market",
+    time_in_force:  "gtc",
+    qty:            String(qty),
+  };
+  try {
+    const res = await fetch(base + "/v2/orders", {
+      method: "POST",
+      headers: {
+        "APCA-API-KEY-ID":     keys.key,
+        "APCA-API-SECRET-KEY": keys.secret,
+        "Content-Type":        "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  } catch (e: any) {
+    return { error: true, message: e.message };
+  }
+}
+
+// ── Routine bridge: /place-hedge ────────────────────────────────────────────
+// Receives a Kalshi-crypto + Alpaca-spot pair from a scheduled routine and
+// places both orders. Notional matching, settlement-timing checks, and the
+// council debate happen in the routine; the server holds the broker keys
+// and enforces kill switch + daily loss cap.
+cryptoArbRouter.post("/place-hedge", async (req, res) => {
+  try {
+    const {
+      kalshi_ticker, kalshi_side, kalshi_contracts, kalshi_price,
+      alpaca_symbol, alpaca_side, alpaca_qty,
+      expected_edge,
+      council_transcript,
+      opportunity_id,
+    } = req.body || {};
+
+    if (!kalshi_ticker || !kalshi_side || !kalshi_contracts || !alpaca_symbol || !alpaca_side || !alpaca_qty) {
+      return res.status(400).json({ error: "missing required Kalshi or Alpaca leg fields" });
+    }
+    if (kalshi_side !== "yes" && kalshi_side !== "no") {
+      return res.status(400).json({ error: "kalshi_side must be 'yes' or 'no'" });
+    }
+    if (alpaca_side !== "buy" && alpaca_side !== "sell") {
+      return res.status(400).json({ error: "alpaca_side must be 'buy' or 'sell'" });
+    }
+
+    const botEnabled = (await getSetting("bot_enabled")) === "true";
+    if (!botEnabled) {
+      return res.status(409).json({ error: "bot_enabled is false — kill switch engaged" });
+    }
+
+    const lossCapRaw = await getSetting("daily_max_loss_usd");
+    if (lossCapRaw) {
+      const cap = parseFloat(lossCapRaw);
+      if (cap > 0) {
+        const r = await pool.query(
+          `SELECT COALESCE(SUM(actual_pnl), 0) AS pnl
+             FROM crypto_arb_executions
+            WHERE settled_at > NOW() - INTERVAL '24 hours'`
+        );
+        const pnl24h = parseFloat(r.rows?.[0]?.pnl ?? "0");
+        if (pnl24h <= -cap) {
+          return res.status(409).json({
+            error: `daily loss cap hit (pnl24h=${pnl24h.toFixed(2)}, cap=${cap})`,
+          });
+        }
+      }
+    }
+
+    const execId = `crypto-arb-${Date.now()}`;
+    const totalCost = (kalshi_contracts * (kalshi_price ?? 0));
+
+    await pool.query(
+      `INSERT INTO crypto_arb_executions
+       (id, opportunity_id, kalshi_side, kalshi_price, kalshi_contracts,
+        hedge_symbol, hedge_side, hedge_qty,
+        total_cost, expected_profit, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        execId, opportunity_id ?? null,
+        kalshi_side, kalshi_price ?? null, kalshi_contracts,
+        alpaca_symbol, alpaca_side, alpaca_qty,
+        totalCost, (expected_edge ?? 0) * kalshi_contracts,
+        "executing",
+      ]
+    );
+
+    // Leg A — Kalshi crypto contract.
+    const yesPriceCents = Math.max(1, Math.min(99, Math.round((kalshi_price ?? 0.5) * 100)));
+    const kRes = await kalshiAuthedReq("/portfolio/orders", "POST", {
+      ticker:    kalshi_ticker,
+      action:    "buy",
+      side:      kalshi_side,
+      type:      "limit",
+      count:     kalshi_contracts,
+      yes_price: yesPriceCents,
+    });
+    if (kRes?.error) {
+      const msg = kRes?.message || "kalshi order failed";
+      await pool.query(`UPDATE crypto_arb_executions SET status='leg_a_failed' WHERE id=$1`, [execId]);
+      await insertLog("error", `[place-hedge] ${execId} kalshi: ${msg}`);
+      return res.status(502).json({ error: msg, execId, leg: "kalshi" });
+    }
+    const kalshiOrderId = kRes?.order?.order_id ?? null;
+
+    // Leg B — Alpaca crypto spot hedge.
+    const aRes = await alpacaCryptoOrder(alpaca_symbol, alpaca_side, alpaca_qty);
+    if (aRes?.error || aRes?.code) {
+      const msg = aRes?.message || "alpaca order failed";
+      await pool.query(
+        `UPDATE crypto_arb_executions SET status='leg_b_failed', kalshi_order_id=$2 WHERE id=$1`,
+        [execId, kalshiOrderId]
+      );
+      await insertLog("error", `[place-hedge] ${execId} alpaca: ${msg}`);
+      return res.status(502).json({ error: msg, execId, leg: "alpaca", kalshiOrderId });
+    }
+
+    await pool.query(
+      `UPDATE crypto_arb_executions
+          SET status='executed', kalshi_order_id=$2, hedge_order_id=$3
+        WHERE id=$1`,
+      [execId, kalshiOrderId, aRes?.id ?? null]
+    );
+    await insertLog("execution", `[place-hedge] ${execId} executed (council=${council_transcript ? "yes" : "no"})`);
+
+    return res.json({ ok: true, execId, kalshiOrderId, alpacaOrderId: aRes?.id });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 

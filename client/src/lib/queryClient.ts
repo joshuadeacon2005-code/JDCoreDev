@@ -7,6 +7,19 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+// Trading-fleet routers (trader, predictor, arbitrage, crypto-arb) sit behind
+// a shared header-secret guard so scheduled Claude routines can call them.
+// The admin UI uses the same header. The secret is injected at build time via
+// VITE_BOT_API_SECRET; if absent, requests proceed unauthenticated and the
+// server returns 401 with a clear message.
+const BOT_API_PREFIXES = ["/api/trader", "/api/predictor", "/api/arbitrage", "/api/crypto-arb"];
+
+function botSecretHeader(url: string): Record<string, string> {
+  if (!BOT_API_PREFIXES.some((p) => url.startsWith(p))) return {};
+  const secret = (import.meta as any).env?.VITE_BOT_API_SECRET as string | undefined;
+  return secret ? { "x-bot-secret": secret } : {};
+}
+
 export async function apiRequest(
   method: string,
   url: string,
@@ -14,7 +27,10 @@ export async function apiRequest(
 ): Promise<Response> {
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers: {
+      ...(data ? { "Content-Type": "application/json" } : {}),
+      ...botSecretHeader(url),
+    },
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -29,8 +45,10 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const url = queryKey.join("/") as string;
+    const res = await fetch(url, {
       credentials: "include",
+      headers: botSecretHeader(url),
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

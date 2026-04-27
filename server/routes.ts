@@ -694,20 +694,33 @@ export async function registerRoutes(
   });
   // ── End External Leads Import API ─────────────────────────────────────────
 
+  // Shared header-secret guard for the trading-fleet routers. Routines call
+  // these endpoints with x-bot-secret; the server holds the broker keys.
+  const requireBotSecret = (req: Request, res: Response, next: NextFunction) => {
+    const expected = process.env.BOT_API_SECRET;
+    if (!expected) {
+      return res.status(503).json({ error: "BOT_API_SECRET not set" });
+    }
+    if (req.headers["x-bot-secret"] !== expected) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    next();
+  };
+
   // Claude Trader API routes
-  app.use("/api/trader", traderRouter);
+  app.use("/api/trader", requireBotSecret, traderRouter);
   initTrader().catch(e => console.error('[trader] init error:', e));
 
   // Claude Predictor API routes
-  app.use("/api/predictor", predictorRouter);
+  app.use("/api/predictor", requireBotSecret, predictorRouter);
   initPredictor().catch(e => console.error('[predictor] init error:', e));
 
   // Cross-platform arbitrage engine
-  app.use("/api/arbitrage", arbitrageRouter);
+  app.use("/api/arbitrage", requireBotSecret, arbitrageRouter);
   initArbitrage().catch(e => console.error('[arbitrage] init error:', e));
 
   // Crypto hedge arb engine
-  app.use("/api/crypto-arb", cryptoArbRouter);
+  app.use("/api/crypto-arb", requireBotSecret, cryptoArbRouter);
   initCryptoArb().catch(e => console.error('[crypto-arb] init error:', e));
 
   // ── Automation Master Control ─────────────────────────────────────────────

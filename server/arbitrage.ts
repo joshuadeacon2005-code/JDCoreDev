@@ -133,6 +133,8 @@ async function initArbTables() {
     ["kalshi_mode", "demo"],
     ["scan_interval_min", "5"],
     ["cron_last_run", ""],
+    ["bot_enabled", "false"],
+    ["daily_max_loss_usd", "200"],
   ];
   for (const [k, v] of defaults) {
     await pool.query(
@@ -429,15 +431,12 @@ function parseJSON(text: string) {
   return null;
 }
 
-async function callClaude(prompt: string, useSearch = false, maxTokens = 1500): Promise<string> {
-  const params: any = {
-    model: "claude-sonnet-4-5",
-    max_tokens: maxTokens,
-    messages: [{ role: "user", content: prompt }],
-  };
-  if (useSearch) params.tools = [{ type: "web_search_20250305", name: "web_search" }];
-  const d = await anthropic.messages.create(params);
-  return (d.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+// In-process Claude calls flowed through Replit's modelfarm proxy, which is
+// not reachable from Railway. The matching + council reasoning now runs in a
+// scheduled Claude Code routine that POSTs verdicts to /place-arb. Throwing
+// here keeps the legacy /run pipeline from silently failing on bad keys.
+async function callClaude(_prompt: string, _useSearch = false, _maxTokens = 1500): Promise<string> {
+  throw new Error("arbitrage: in-process Claude calls disabled. Use the scheduled routine + /api/arbitrage/place-arb.");
 }
 
 // ── STAGE 1: AI-powered market matching ─────────────────────────────────────
@@ -1064,6 +1063,142 @@ async function runArbPipeline(
     executions,
   };
 }
+
+// ── Routine bridge: /trigger-routine ────────────────────────────────────────
+arbitrageRouter.post("/trigger-routine", async (req, res) => {
+  try {
+    const url = process.env.ARBITRAGE_ROUTINE_URL;
+    if (!url) return res.status(503).json({ error: "ARBITRAGE_ROUTINE_URL not configured" });
+    const apiKey = process.env.ANTHROPIC_TRIGGER_API_KEY || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: "ANTHROPIC_API_KEY not configured" });
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(req.body || {}),
+    }).catch((e) => {
+      console.error("[arbitrage] trigger-routine error:", e.message);
+      void insertLog("error", `[trigger-routine] ${e.message}`);
+    });
+
+    await insertLog("info", "[trigger-routine] fired");
+    res.status(202).json({ ok: true, status: "fired" });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Routine bridge: /place-arb ──────────────────────────────────────────────
+// A scheduled routine resolves the council debate in its own context, then
+// posts a structured verdict here for the server to execute on Kalshi and
+// Polymarket. Both legs go in atomic-ish — on Leg-A failure we abort, on
+// Leg-B failure we mark the execution leg_b_failed for human cleanup.
+arbitrageRouter.post("/place-arb", async (req, res) => {
+  try {
+    const {
+      matched_market_id,
+      kalshi_ticker, kalshi_side, kalshi_contracts, kalshi_price,
+      poly_token_id, poly_side, poly_size, poly_price,
+      expected_edge,
+      council_transcript,
+    } = req.body || {};
+
+    if (!kalshi_ticker || !kalshi_side || !kalshi_contracts || !poly_token_id || !poly_side || !poly_size) {
+      return res.status(400).json({ error: "missing kalshi_/poly_ leg fields" });
+    }
+    if (kalshi_side !== "yes" && kalshi_side !== "no") {
+      return res.status(400).json({ error: "kalshi_side must be 'yes' or 'no'" });
+    }
+    if (poly_side !== "BUY" && poly_side !== "SELL") {
+      return res.status(400).json({ error: "poly_side must be 'BUY' or 'SELL'" });
+    }
+
+    const botEnabled = (await getSetting("bot_enabled")) === "true";
+    if (!botEnabled) {
+      return res.status(409).json({ error: "bot_enabled is false — kill switch engaged" });
+    }
+    if (!process.env.POLY_API_SECRET || !process.env.POLY_API_PASSPHRASE) {
+      return res.status(503).json({ error: "POLY_API_SECRET / POLY_API_PASSPHRASE not configured" });
+    }
+
+    const lossCapRaw = await getSetting("daily_max_loss_usd");
+    if (lossCapRaw) {
+      const cap = parseFloat(lossCapRaw);
+      if (cap > 0) {
+        // arb_executions.expected_profit is positive on win — we approximate
+        // realised loss using executions marked leg_b_failed in the last 24h.
+        const r = await pool.query(
+          `SELECT COALESCE(SUM(CASE WHEN status LIKE 'leg_%_failed' THEN total_cost ELSE 0 END), 0) AS loss
+             FROM arb_executions
+            WHERE logged_at > NOW() - INTERVAL '24 hours'`
+        );
+        const loss24h = parseFloat(r.rows?.[0]?.loss ?? "0");
+        if (loss24h >= cap) {
+          return res.status(409).json({
+            error: `daily loss cap hit (loss24h=${loss24h.toFixed(2)}, cap=${cap})`,
+          });
+        }
+      }
+    }
+
+    const execId = `arb-${Date.now()}`;
+    const totalCost = (kalshi_contracts * kalshi_price) + (poly_size * poly_price);
+
+    await pool.query(
+      `INSERT INTO arb_executions
+       (id, opportunity_id, leg_a_platform, leg_a_side, leg_a_price, leg_a_contracts,
+        leg_b_platform, leg_b_side, leg_b_price, leg_b_contracts,
+        total_cost, expected_profit, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        execId, matched_market_id ?? null,
+        "kalshi", kalshi_side, kalshi_price, kalshi_contracts,
+        "polymarket", poly_side.toLowerCase(), poly_price, poly_size,
+        totalCost, (expected_edge || 0) * (kalshi_contracts + poly_size),
+        "executing",
+      ]
+    );
+
+    // Leg A — Kalshi.
+    const yesPriceCents = Math.max(1, Math.min(99, Math.round(kalshi_price * 100)));
+    const kRes = await arbKalshiReq("/portfolio/orders", "POST", {
+      ticker:    kalshi_ticker,
+      action:    "buy",
+      side:      kalshi_side,
+      type:      "limit",
+      count:     kalshi_contracts,
+      yes_price: yesPriceCents,
+    });
+    if (kRes?.error) {
+      const msg = kRes?.message || "kalshi order failed";
+      await pool.query(`UPDATE arb_executions SET status='leg_a_failed', notes=$2 WHERE id=$1`, [execId, msg]);
+      await insertLog("error", `[place-arb] ${execId} kalshi: ${msg}`);
+      return res.status(502).json({ error: msg, execId, leg: "kalshi" });
+    }
+    const kalshiOrderId = kRes?.order?.order_id ?? null;
+
+    // Leg B — Polymarket.
+    const polySpendUsdc = poly_size * poly_price;
+    const polySideCode = poly_side === "BUY" ? 0 : 1;
+    const pRes = await arbPlacePolyOrder(poly_token_id, polySpendUsdc, polySideCode as 0 | 1, poly_price);
+    if (pRes?.error) {
+      await pool.query(
+        `UPDATE arb_executions SET status='leg_b_failed', notes=$2 WHERE id=$1`,
+        [execId, `kalshi=${kalshiOrderId} poly_failed: ${pRes.error}`]
+      );
+      await insertLog("error", `[place-arb] ${execId} poly: ${pRes.error}`);
+      return res.status(502).json({ error: pRes.error, execId, leg: "polymarket", kalshiOrderId });
+    }
+
+    const notes = `kalshi=${kalshiOrderId} | poly=${pRes.orderId} | council=${council_transcript ? "yes" : "no"}`;
+    await pool.query(`UPDATE arb_executions SET status='executed', notes=$2 WHERE id=$1`, [execId, notes]);
+    await insertLog("execution", `[place-arb] ${execId} executed`);
+
+    return res.json({ ok: true, execId, kalshiOrderId, polyOrderId: pRes.orderId });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
