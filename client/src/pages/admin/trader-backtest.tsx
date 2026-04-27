@@ -19,9 +19,7 @@ const UNIVERSES: any = {
   high:   ["MSTR","COIN","HOOD","IONQ","SMCI","PLTR","TSLA","AMD","SOXL","TQQQ"],
 };
 const TRADING_MODES: any = {
-  day:       { label:"Day Trading" },
   swing:     { label:"Swing"       },
-  portfolio: { label:"Portfolio"   },
 };
 
 const fmtUSD = (n: any) => typeof n==="number" ? "$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}) : "—";
