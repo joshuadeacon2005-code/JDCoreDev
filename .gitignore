@@ -4,3 +4,20 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Claude Code local cache
+.claude/
+
+# Archives and extracted dumps at repo root
+*.zip
+/jdcoredev-lead-engine/
+
+# Loose documents at repo root (PDFs, statements, contracts)
+/*.pdf
+
+# Replit/project attached assets — these are downloads, not source
+JDCoreDev-main/JDCoreDev-main/attached_assets/*.zip
+JDCoreDev-main/JDCoreDev-main/attached_assets/*.pdf
+
+# Runtime logs
+JDCoreDev-main/JDCoreDev-main/pipeline/data/*.log
