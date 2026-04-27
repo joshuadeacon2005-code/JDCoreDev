@@ -34,8 +34,6 @@ function TraderNav({ active }: { active: string }) {
     { label: "Analytics",    path: "/admin/trader/analytics" },
     { label: "Performance",  path: "/admin/trader/performance" },
     { label: "Predictions",  path: "/admin/trader/predictions" },
-    { label: "Arb Engine",   path: "/admin/trader/arbitrage" },
-    { label: "Crypto Arb",   path: "/admin/trader/crypto-arb" },
     { label: "Watchlist",    path: "/admin/trader/watchlist" },
     { label: "Settings",     path: "/admin/trader/settings" },
   ];

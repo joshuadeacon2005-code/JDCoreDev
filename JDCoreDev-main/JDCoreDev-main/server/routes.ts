@@ -27,8 +27,6 @@ import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { traderRouter, initTrader } from "./trader";
 import { predictorRouter, initPredictor } from "./predictor";
-import { arbitrageRouter, initArbitrage } from "./arbitrage";
-import { cryptoArbRouter, initCryptoArb } from "./crypto-arb";
 import { leadsRouter, initLeads } from "./leads-api";
 import { devLogsIngestRouter } from "./dev-logs-ingest";
 import { z } from "zod";
@@ -426,14 +424,6 @@ export async function registerRoutes(
   // Claude Predictor API routes
   app.use("/api/predictor", predictorRouter);
   initPredictor().catch(e => console.error('[predictor] init error:', e));
-
-  // Arbitrage engine routes
-  app.use("/api/arbitrage", arbitrageRouter);
-  initArbitrage().catch(e => console.error('[arbitrage] init error:', e));
-
-  // Crypto arbitrage routes
-  app.use("/api/crypto-arb", cryptoArbRouter);
-  initCryptoArb().catch(e => console.error('[crypto-arb] init error:', e));
 
   // Lead import API routes
   app.use("/api/leads", leadsRouter);

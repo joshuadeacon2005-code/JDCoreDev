@@ -46,8 +46,6 @@ import AdminTraderSettings from "@/pages/admin/trader-settings";
 import AdminTraderBacktest from "@/pages/admin/trader-backtest";
 import AdminTraderWatchlist from "@/pages/admin/trader-watchlist";
 import AdminTraderPredictions from "@/pages/admin/trader-predictions";
-import AdminTraderArbitrage from "@/pages/admin/trader-arbitrage";
-import AdminTraderCryptoArb from "@/pages/admin/trader-crypto-arb";
 
 // Client portal pages
 import PortalDashboard from "@/pages/portal/dashboard";
@@ -97,8 +95,6 @@ function Router() {
       <ProtectedRoute path="/admin/trader/backtest" component={AdminTraderBacktest} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader/watchlist" component={AdminTraderWatchlist} requiredRole="admin" />
       <ProtectedRoute path="/admin/trader/predictions" component={AdminTraderPredictions} requiredRole="admin" />
-      <ProtectedRoute path="/admin/trader/arbitrage" component={AdminTraderArbitrage} requiredRole="admin" />
-      <ProtectedRoute path="/admin/trader/crypto-arb" component={AdminTraderCryptoArb} requiredRole="admin" />
 
       {/* Client portal routes */}
       <ProtectedRoute path="/portal" component={PortalDashboard} requiredRole="client" />
