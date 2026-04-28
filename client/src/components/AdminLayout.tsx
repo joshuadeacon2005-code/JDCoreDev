@@ -64,8 +64,6 @@ const mainNavItems = [
   { title: "Lead Engine",   icon: Radar,           href: "/admin/lead-engine" },
   { title: "Claude Trader", icon: TrendingUp,      href: "/admin/trader" },
   { title: "Predictions",   icon: Scale,           href: "/admin/trader/predictions" },
-  { title: "Arbitrage",     icon: ArrowLeftRight,  href: "/admin/trader/arbitrage" },
-  { title: "Crypto Arb",    icon: Bitcoin,         href: "/admin/trader/crypto-arb" },
   { title: "Automation",    icon: Zap,             href: "/admin/automation" },
 ];
 
