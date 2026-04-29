@@ -37,7 +37,10 @@ const ingestSchema = z.object({
   startedAt: z.string().datetime(),
   endedAt: z.string().datetime(),
   minutesSpent: z.number().int().min(0),
-  estimatedCostCents: z.number().int().min(0),
+  // Auto-logs default to no billable cost; the field is optional and
+  // defaults to 0. The hook records token API spend in the description
+  // text instead — operational cost, not a charge to the project.
+  estimatedCostCents: z.number().int().min(0).optional(),
   description: z.string().min(1),
   category: z.string().optional(),
 });
@@ -71,7 +74,7 @@ devLogsIngestRouter.post("/ingest", requireApiKey, async (req, res, next) => {
       logDate,
       minutesSpent: data.minutesSpent,
       description: data.description,
-      estimatedCostCents: data.estimatedCostCents,
+      estimatedCostCents: data.estimatedCostCents ?? 0,
       category: data.category ?? "claude-code-session",
       logType,
       // No createdByUserId — this is a system entry from the hook.
