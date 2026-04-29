@@ -34,10 +34,19 @@ function fmtMinutes(m: number) {
   return rem ? `${h}h ${rem}m` : `${h}h`;
 }
 
+function readProjectIdFromUrl(): number | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get("projectId");
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 export default function AdminDevLogs() {
   const [logs, setLogs] = useState<ClaudeSessionLog[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
-  const [filterProjectId, setFilterProjectId] = useState<number | null>(null);
+  const [filterProjectId, setFilterProjectId] = useState<number | null>(readProjectIdFromUrl());
   const [loading, setLoading] = useState(true);
 
   async function load() {

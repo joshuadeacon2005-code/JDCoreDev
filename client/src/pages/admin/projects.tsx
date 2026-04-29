@@ -371,7 +371,7 @@ export default function AdminProjects() {
                         Pause Project
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem 
+                    <DropdownMenuItem
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -383,26 +383,53 @@ export default function AdminProjects() {
                       <Server className="h-4 w-4 mr-2" />
                       Transfer to Hosting
                     </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <a
+                        href={`/admin/dev-logs?projectId=${project.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        data-testid={`menu-auto-logs-${project.id}`}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        View Auto Logs
+                      </a>
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              
+
               {project.status === "hosting" && (
-                <Button 
-                  size="icon" 
-                  variant="ghost" 
-                  className="shrink-0" 
-                  data-testid={`button-edit-hosting-${project.id}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setHostingProjectId(project.id);
-                    setIsEditingHostingTerms(true);
-                    setIsHostingDialogOpen(true);
-                  }}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild onClick={(e) => e.preventDefault()}>
+                    <Button size="icon" variant="ghost" className="shrink-0" data-testid={`button-hosting-menu-${project.id}`}>
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setHostingProjectId(project.id);
+                        setIsEditingHostingTerms(true);
+                        setIsHostingDialogOpen(true);
+                      }}
+                      data-testid={`menu-edit-hosting-${project.id}`}
+                    >
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Edit Hosting Terms
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <a
+                        href={`/admin/dev-logs?projectId=${project.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        data-testid={`menu-auto-logs-hosting-${project.id}`}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        View Auto Logs
+                      </a>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
           </Link>
@@ -460,7 +487,7 @@ export default function AdminProjects() {
                     Pause Project
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -472,26 +499,54 @@ export default function AdminProjects() {
                   <Server className="h-4 w-4 mr-2" />
                   Transfer to Hosting
                 </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <a
+                    href={`/admin/dev-logs?projectId=${project.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    data-testid={`menu-auto-logs-grid-${project.id}`}
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    View Auto Logs
+                  </a>
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         )}
         {project.status === "hosting" && (
           <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-            <Button 
-              size="icon" 
-              variant="ghost" 
-              data-testid={`button-edit-hosting-grid-${project.id}`}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setHostingProjectId(project.id);
-                setIsEditingHostingTerms(true);
-                setIsHostingDialogOpen(true);
-              }}
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="icon" variant="ghost" data-testid={`button-hosting-menu-grid-${project.id}`}>
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setHostingProjectId(project.id);
+                    setIsEditingHostingTerms(true);
+                    setIsHostingDialogOpen(true);
+                  }}
+                  data-testid={`menu-edit-hosting-grid-${project.id}`}
+                >
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Edit Hosting Terms
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <a
+                    href={`/admin/dev-logs?projectId=${project.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    data-testid={`menu-auto-logs-hosting-grid-${project.id}`}
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    View Auto Logs
+                  </a>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
         <Link href={`/admin/projects/${project.id}`}>

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($key = Get-Content \"C:\\\\Users\\\\joshu\\\\.claude\\\\jdcd-key.txt\" -Raw; $key = $key.Trim\\(\\); & \"C:\\\\Users\\\\joshu\\\\iCloudDrive\\\\JDCoreDev Code\\\\JDCoreDev\\\\JDCoreDev-main\\\\JDCoreDev-main\\\\scripts\\\\claude-hooks\\\\install.ps1\" -ApiKey $key)",
+      "PowerShell($key = \\(Get-Content \"C:\\\\Users\\\\joshu\\\\.claude\\\\jdcd-key.txt\" -Raw\\).Trim\\(\\); & \"C:\\\\Users\\\\joshu\\\\iCloudDrive\\\\JDCoreDev Code\\\\JDCoreDev\\\\JDCoreDev-main\\\\JDCoreDev-main\\\\scripts\\\\claude-hooks\\\\install.ps1\" -ApiKey $key 2>&1 | Where-Object { $_ -notmatch \"$key\" })",
+      "PowerShell(Get-ScheduledTask *)",
+      "PowerShell($result = try { Invoke-RestMethod -Method Get -Uri \"https://jdcoredev.com/api/dev-logs/ping\" -Headers @{ \"x-jdcd-key\" = $env:JDCD_DEV_LOG_KEY } -ErrorAction Stop } catch { $_.Exception.Response.StatusCode.value__, $_.Exception.Message }; $result | ConvertTo-Json -Depth 3)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "claude-flow"
+  ]
+}

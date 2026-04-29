@@ -1,0 +1,86 @@
+{
+  "bcdetailhk.com": {
+    "name": "BC Detailing Hong Kong",
+    "domain": "bcdetailhk.com",
+    "auditUrl": "https://jdcoredev.com/audits/bc-detailing-hong-kong",
+    "channel": "draft",
+    "contactedAt": "2026-03-25T15:02:01.082Z"
+  },
+  "colonyclothing.net": {
+    "name": "Colony Clothing",
+    "domain": "colonyclothing.net",
+    "auditUrl": "https://jdcoredev.com/audits/colony-clothing",
+    "channel": "draft",
+    "contactedAt": "2026-03-25T15:03:04.638Z"
+  },
+  "r-y-e.co": {
+    "name": "Rye",
+    "domain": "r-y-e.co",
+    "auditUrl": "https://jdcoredev.com/audits/rye",
+    "channel": "draft",
+    "contactedAt": "2026-03-25T15:04:07.920Z"
+  },
+  "krsvhk.com": {
+    "name": "KRSV",
+    "domain": "krsvhk.com",
+    "auditUrl": "https://jdcoredev.com/audits/krsv",
+    "channel": "draft",
+    "contactedAt": "2026-03-25T15:05:18.349Z"
+  },
+  "afterone.com.my": {
+    "name": "After One KL",
+    "domain": "afterone.com.my",
+    "auditUrl": "https://jdcoredev.com/audits/after-one-kl",
+    "channel": "draft",
+    "contactedAt": "2026-03-25T15:06:16.666Z"
+  },
+  "salvo-store.com": {
+    "name": "Salvo",
+    "domain": "salvo-store.com",
+    "auditUrl": "https://jdcoredev.com/audits/salvo",
+    "channel": "draft",
+    "contactedAt": "2026-03-28T15:01:44.686Z"
+  },
+  "stillhouse-store.com": {
+    "name": "Still House",
+    "domain": "stillhouse-store.com",
+    "auditUrl": "https://jdcoredev.com/audits/still-house",
+    "channel": "draft",
+    "contactedAt": "2026-03-28T15:02:47.648Z"
+  },
+  "contempoconcept.com": {
+    "name": "Contempo Concept",
+    "domain": "contempoconcept.com",
+    "auditUrl": "https://jdcoredev.com/audits/contempo-concept",
+    "channel": "draft",
+    "contactedAt": "2026-03-28T15:03:56.638Z"
+  },
+  "j-01.com": {
+    "name": "J-01",
+    "domain": "j-01.com",
+    "auditUrl": "https://jdcoredev.com/audits/j-01",
+    "channel": "draft",
+    "contactedAt": "2026-03-28T15:05:02.788Z"
+  },
+  "hideandseekstore.com": {
+    "name": "Hideandseek",
+    "domain": "hideandseekstore.com",
+    "auditUrl": "https://jdcoredev.com/audits/hideandseek",
+    "channel": "draft",
+    "contactedAt": "2026-03-28T15:05:57.776Z"
+  },
+  "dentdoctorhk.com": {
+    "name": "Dent Doctor",
+    "domain": "dentdoctorhk.com",
+    "auditUrl": "https://jdcoredev.com/audits/dent-doctor",
+    "channel": "draft",
+    "contactedAt": "2026-03-30T15:01:54.306Z"
+  },
+  "hairhousebyadamchan.com": {
+    "name": "Hair House Barbershop",
+    "domain": "hairhousebyadamchan.com",
+    "auditUrl": "https://jdcoredev.com/audits/hair-house-barbershop",
+    "channel": "draft",
+    "contactedAt": "2026-03-30T15:05:05.819Z"
+  }
+}
