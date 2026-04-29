@@ -492,8 +492,10 @@ export async function registerRoutes(
     }
   })();
 
-  // Lead engine API routes (admin session auth + ENGINE_SECRET fallback in route.js)
-  app.use("/api/lead-engine", requireAdmin, leadEngineRouter);
+  // Lead engine API routes (auth: x-engine-secret header per-route via requireSecret).
+  // requireAdmin was tried here but fails — this mount runs before passport.initialize
+  // so req.isAuthenticated is undefined. The router's own requireSecret is sufficient.
+  app.use("/api/lead-engine", leadEngineRouter);
 
   // Dev-logs ingest (API-key auth, called by Claude Code hook scripts on dev machines).
   // Writes into maintenance_logs so entries count toward project_hosting_terms budgets.
