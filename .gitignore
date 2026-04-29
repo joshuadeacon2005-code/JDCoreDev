@@ -21,3 +21,8 @@ Leads/
 JDCoreDev-main/
 JDCoreDev-main.zip
 *.zip
+
+# iCloud Drive sync duplicates
+*(1)*
+*(2)*
+.claude/settings.local.json.tmp.*
