@@ -1,0 +1,408 @@
+/**
+ * Trader agent-routine endpoints
+ * ──────────────────────────────────────────────────────────────────────────
+ * These endpoints back an Anthropic-hosted scheduled routine (created by the
+ * user via /schedule). The routine fires every 4 hours during US market
+ * hours, calls GET /agent-state to read the world, decides what to do, and
+ * POSTs decisions back to /agent-decisions for execution against Alpaca.
+ *
+ * The legacy server-side cron + Claude API pipeline in trader.ts is being
+ * phased out — the routine model uses the user's Claude subscription quota
+ * instead of metered API spend.
+ *
+ * Auth: x-jdcd-agent-key header matched against env JDCD_AGENT_KEY.
+ * Mounted at /api/trader/agent.
+ */
+
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { pool } from "./db";
+import {
+  alpacaReq,
+  getAlpacaEnvKeys,
+  fetchEarningsCalendar,
+} from "./trader";
+
+export const traderAgentRouter = Router();
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+function requireAgentKey(req: Request, res: Response, next: NextFunction) {
+  const provided = req.headers["x-jdcd-agent-key"];
+  const expected = process.env.JDCD_AGENT_KEY;
+  if (!expected) {
+    return res.status(503).json({ error: "JDCD_AGENT_KEY not configured on server" });
+  }
+  if (typeof provided !== "string" || provided !== expected) {
+    return res.status(401).json({ error: "Invalid or missing x-jdcd-agent-key" });
+  }
+  next();
+}
+
+// ── Hard risk constraints ─────────────────────────────────────────────────
+// The routine receives these in /agent-state. Any decision that violates them
+// is rejected at submission time regardless of what the routine proposes.
+const AGENT_CONSTRAINTS = {
+  maxPositions:         10,
+  maxPositionPct:       15,    // % of equity per position
+  stopLossPct:          4,
+  takeProfitPct:        8,
+  maxDrawdown7dPct:     10,
+  noEarningsWithinDays: 3,
+} as const;
+
+// ── DB helpers (small, inline to avoid widening trader.ts exports) ────────
+async function getSetting(key: string): Promise<string | null> {
+  const r = await pool.query("SELECT value FROM trader_settings WHERE key=$1", [key]);
+  return r.rows[0]?.value ?? null;
+}
+
+async function getActiveAlpacaKeys() {
+  const dbPaper = await getSetting("alpaca_paper");
+  const isPaper = dbPaper !== null
+    ? dbPaper !== "false"
+    : process.env.CRON_ALPACA_PAPER !== "false";
+  const keys = getAlpacaEnvKeys(isPaper);
+  return { keys, isPaper };
+}
+
+async function compute7dDrawdownPct(equityNow: number): Promise<number> {
+  const r = await pool.query(`
+    SELECT equity FROM trader_snapshots
+    WHERE logged_at > NOW() - INTERVAL '7 days'
+    ORDER BY logged_at ASC
+  `);
+  if (r.rows.length === 0) return 0;
+  const eqs = r.rows.map((row: any) => parseFloat(row.equity)).filter((n: number) => Number.isFinite(n));
+  if (eqs.length === 0) return 0;
+  const peak = Math.max(...eqs, equityNow);
+  return peak > 0 ? Math.round((peak - equityNow) / peak * 1000) / 10 : 0;
+}
+
+// ── GET /api/trader/agent/state ───────────────────────────────────────────
+// Single call returns everything the routine needs to decide. Routine may
+// supplement with /api/trader/market-signals or /api/trader/stock-bars on
+// specific symbols if it wants fresher technical data.
+traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
+  try {
+    const { keys, isPaper } = await getActiveAlpacaKeys();
+    if (!keys.key || !keys.secret) {
+      return res.status(503).json({ error: `Alpaca ${isPaper ? "paper" : "live"} keys not configured` });
+    }
+
+    const [account, positions] = await Promise.all([
+      alpacaReq(keys, "/v2/account").catch(() => null),
+      alpacaReq(keys, "/v2/positions").catch(() => []),
+    ]);
+
+    const recentRuns = await pool.query(`
+      SELECT id, logged_at, decision_source, mode, risk, thesis, decisions_json,
+             positions_json, executed_status, score, pass
+      FROM trader_pipelines
+      ORDER BY logged_at DESC
+      LIMIT 30
+    `);
+
+    const recentTrades = await pool.query(`
+      SELECT id, symbol, side, qty, notional, price, pnl, mode, logged_at, executed_at
+      FROM trader_trades
+      ORDER BY logged_at DESC
+      LIMIT 60
+    `);
+
+    const equityHistory = await pool.query(`
+      SELECT logged_at, equity
+      FROM trader_snapshots
+      WHERE logged_at > NOW() - INTERVAL '7 days'
+      ORDER BY logged_at ASC
+    `);
+
+    const equityNow = parseFloat(account?.equity || "0");
+    const drawdown7dPct = await compute7dDrawdownPct(equityNow);
+
+    res.json({
+      mode: "swing",
+      isPaper,
+      generatedAt: new Date().toISOString(),
+      constraints: AGENT_CONSTRAINTS,
+      account: account ? {
+        equity:         equityNow,
+        cash:           parseFloat(account.cash || "0"),
+        buyingPower:    parseFloat(account.buying_power || "0"),
+        portfolioValue: parseFloat(account.portfolio_value || "0"),
+        accountNumber:  account.account_number,
+        currency:       account.currency || "USD",
+      } : null,
+      positions: (positions || []).map((p: any) => ({
+        symbol:          p.symbol,
+        qty:             parseFloat(p.qty || "0"),
+        side:            p.side,
+        avgEntry:        parseFloat(p.avg_entry_price || "0"),
+        currentPrice:    parseFloat(p.current_price || "0"),
+        marketValue:     parseFloat(p.market_value || "0"),
+        unrealizedPL:    parseFloat(p.unrealized_pl || "0"),
+        unrealizedPLPct: parseFloat(p.unrealized_plpc || "0") * 100,
+      })),
+      drawdown7dPct,
+      equityHistory: equityHistory.rows.map((r: any) => ({
+        ts:     r.logged_at,
+        equity: parseFloat(r.equity),
+      })),
+      recentDecisions: recentRuns.rows.map((r: any) => ({
+        id:             r.id,
+        loggedAt:       r.logged_at,
+        source:         r.decision_source || "legacy-cron",
+        mode:           r.mode,
+        risk:           r.risk,
+        thesis:         r.thesis,
+        decisions:      r.decisions_json,
+        positions:      r.positions_json,
+        executedStatus: r.executed_status,
+        score:          r.score,
+        pass:           r.pass,
+      })),
+      recentTrades: recentTrades.rows.map((r: any) => ({
+        id:         r.id,
+        symbol:     r.symbol,
+        side:       r.side,
+        qty:        r.qty,
+        notional:   r.notional,
+        price:      r.price,
+        pnl:        r.pnl,
+        mode:       r.mode,
+        loggedAt:   r.logged_at,
+        executedAt: r.executed_at,
+      })),
+      currentRisk: (await getSetting("cron_risk")) || "medium",
+      marketHints: {
+        marketSignalsEndpoint: "/api/trader/market-signals?mode=swing",
+        stockBarsEndpoint:     "/api/trader/stock-bars/{SYMBOL}?limit=60&timeframe=1Day",
+        note: "Call market-signals for fresh indicators / news / earnings. " +
+              "Call stock-bars for price history on a specific ticker. " +
+              "Both endpoints are public — no auth header needed.",
+      },
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /api/trader/agent/decisions ──────────────────────────────────────
+// Routine submits decisions. Server validates against hard constraints,
+// executes survivors against Alpaca (respecting current paper/live setting),
+// records the run to trader_pipelines.
+traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const thesis: string = (body.thesis || "").toString().slice(0, 4000);
+    const decisions: any[] = Array.isArray(body.decisions) ? body.decisions : [];
+
+    if (!thesis || decisions.length === 0) {
+      return res.status(400).json({ error: "thesis and non-empty decisions array required" });
+    }
+
+    const { keys, isPaper } = await getActiveAlpacaKeys();
+    if (!keys.key || !keys.secret) {
+      return res.status(503).json({ error: `Alpaca ${isPaper ? "paper" : "live"} keys not configured` });
+    }
+
+    const account   = await alpacaReq(keys, "/v2/account");
+    const positions = await alpacaReq(keys, "/v2/positions");
+    const equity    = parseFloat(account?.equity || "0");
+    const heldSymbols = new Set((positions || []).map((p: any) => p.symbol));
+
+    const drawdown7dPct = await compute7dDrawdownPct(equity);
+
+    // Earnings within N days for any symbol the routine wants to BUY.
+    const buySymbols = decisions
+      .filter(d => d.action === "buy" && typeof d.symbol === "string")
+      .map(d => d.symbol.toUpperCase());
+    const earningsCtx = buySymbols.length > 0 ? await fetchEarningsCalendar(buySymbols) : "";
+    const earningsRiskSymbols = new Set<string>();
+    for (const sym of buySymbols) {
+      if (earningsCtx.toUpperCase().includes(sym)) earningsRiskSymbols.add(sym);
+    }
+
+    // Account-level blockers stop the whole run.
+    const accountBlockers: string[] = [];
+    const incomingBuyCount = decisions.filter(d => d.action === "buy").length;
+    const wouldBeTotal = heldSymbols.size + incomingBuyCount;
+    if (wouldBeTotal > AGENT_CONSTRAINTS.maxPositions) {
+      accountBlockers.push(
+        `Decision would push positions to ${wouldBeTotal} (held ${heldSymbols.size} + new ${incomingBuyCount}); ` +
+        `maxPositions=${AGENT_CONSTRAINTS.maxPositions}.`
+      );
+    }
+    if (drawdown7dPct > AGENT_CONSTRAINTS.maxDrawdown7dPct) {
+      accountBlockers.push(
+        `7-day drawdown ${drawdown7dPct}% exceeds limit ${AGENT_CONSTRAINTS.maxDrawdown7dPct}% — no new entries.`
+      );
+    }
+
+    const results: any[] = [];
+    let executedCount = 0;
+    let rejectedCount = 0;
+
+    for (const d of decisions) {
+      const symbol    = (d.symbol || "").toString().toUpperCase();
+      const action    = (d.action || "").toString().toLowerCase();
+      const rationale = (d.rationale || "").toString().slice(0, 500);
+
+      const reasons: string[] = [];
+
+      if (!["buy", "sell", "hold"].includes(action)) reasons.push(`Invalid action "${action}".`);
+      if (!symbol) reasons.push("Symbol required.");
+
+      if (action === "hold") {
+        results.push({ symbol, action, status: "noop", rationale });
+        continue;
+      }
+
+      if (action === "buy") {
+        const notional = Number(d.notional);
+        if (!Number.isFinite(notional) || notional <= 0) {
+          reasons.push("Buy decisions require positive `notional`.");
+        } else if (equity > 0 && (notional / equity) * 100 > AGENT_CONSTRAINTS.maxPositionPct) {
+          reasons.push(
+            `Notional $${notional.toFixed(2)} = ${((notional / equity) * 100).toFixed(1)}% of equity, ` +
+            `exceeds maxPositionPct=${AGENT_CONSTRAINTS.maxPositionPct}%.`
+          );
+        }
+        if (earningsRiskSymbols.has(symbol) && !d.earnings_aware) {
+          reasons.push(
+            `${symbol} has earnings within ${AGENT_CONSTRAINTS.noEarningsWithinDays} days — ` +
+            `set earnings_aware:true to acknowledge.`
+          );
+        }
+      }
+
+      if (action === "sell") {
+        const heldPos = (positions || []).find((p: any) => p.symbol === symbol);
+        if (!heldPos) reasons.push(`Cannot sell ${symbol} — no open position.`);
+      }
+
+      if (accountBlockers.length > 0) {
+        for (const b of accountBlockers) reasons.push(b);
+      }
+
+      if (reasons.length > 0) {
+        rejectedCount++;
+        results.push({ symbol, action, status: "rejected", reasons, rationale });
+        continue;
+      }
+
+      // Execute via Alpaca.
+      try {
+        let orderBody: any;
+        if (action === "buy") {
+          orderBody = {
+            symbol,
+            side: "buy",
+            type: d.type === "limit" ? "limit" : "market",
+            time_in_force: "gtc",
+            notional: Number(d.notional).toFixed(2),
+          };
+          if (d.type === "limit" && d.limit_price) orderBody.limit_price = String(d.limit_price);
+        } else {
+          const heldPos = (positions || []).find((p: any) => p.symbol === symbol);
+          const qty = d.qty || heldPos?.qty;
+          orderBody = {
+            symbol,
+            side: "sell",
+            type: "market",
+            time_in_force: "gtc",
+            qty: String(qty),
+          };
+        }
+        const order = await alpacaReq(keys, "/v2/orders", "POST", orderBody);
+        if (order && order.id) {
+          executedCount++;
+          await pool.query(`
+            INSERT INTO trader_trades (id, symbol, side, qty, notional, status, rationale, risk, mode, order_id)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            ON CONFLICT (id) DO NOTHING
+          `, [
+            order.id, symbol, action,
+            parseFloat(order.qty || "0") || null,
+            parseFloat(order.notional || "0") || null,
+            order.status, rationale,
+            d.risk_level || (await getSetting("cron_risk")) || "medium",
+            "swing",
+            order.id,
+          ]);
+          results.push({ symbol, action, status: "executed", orderId: order.id, rationale });
+        } else {
+          rejectedCount++;
+          results.push({
+            symbol, action, status: "order_failed",
+            reasons: [order?.message || "Unknown order error"], rationale,
+          });
+        }
+      } catch (e: any) {
+        rejectedCount++;
+        results.push({ symbol, action, status: "error", reasons: [e.message], rationale });
+      }
+    }
+
+    // Snapshot post-execution.
+    try {
+      const post = await alpacaReq(keys, "/v2/account");
+      await pool.query(`
+        INSERT INTO trader_snapshots (equity, buying_power, pnl_day, positions_count)
+        VALUES ($1,$2,$3,$4)
+      `, [
+        parseFloat(post?.equity || "0"),
+        parseFloat(post?.buying_power || "0"),
+        parseFloat(post?.equity || "0") - parseFloat(post?.last_equity || "0"),
+        (positions || []).length,
+      ]);
+    } catch {}
+
+    const runStatus =
+      rejectedCount === 0 && executedCount > 0 ? "executed"
+      : executedCount > 0                       ? "partial"
+      : "rejected";
+
+    await pool.query(`
+      INSERT INTO trader_pipelines
+        (risk, mode, positions_count, ter, thesis, pass, score,
+         decision_source, decisions_json, executed_status, positions_json)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `, [
+      (await getSetting("cron_risk")) || "medium",
+      "swing",
+      executedCount,
+      null,
+      thesis,
+      rejectedCount === 0,
+      Math.max(0, 100 - rejectedCount * 10),
+      "agent-routine",
+      JSON.stringify(decisions),
+      runStatus,
+      JSON.stringify(results),
+    ]);
+
+    await pool.query(`
+      INSERT INTO trader_logs (message, type)
+      VALUES ($1, $2)
+    `, [
+      `[agent-routine] ${executedCount} executed / ${rejectedCount} rejected. ${thesis.slice(0, 120)}`,
+      runStatus === "rejected" ? "warn" : "info",
+    ]);
+
+    res.status(201).json({
+      status: runStatus,
+      executed: executedCount,
+      rejected: rejectedCount,
+      results,
+      isPaper,
+      accountBlockers,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /api/trader/agent/ping ────────────────────────────────────────────
+// Connectivity + auth check — useful for verifying the routine's setup.
+traderAgentRouter.get("/ping", requireAgentKey, (_req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});

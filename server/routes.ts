@@ -28,6 +28,7 @@ import path from "path";
 import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { traderRouter, initTrader } from "./trader";
+import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
 import { devLogsIngestRouter } from "./dev-logs-ingest";
 import { z } from "zod";
@@ -699,6 +700,9 @@ export async function registerRoutes(
 
   // Claude Trader API routes
   app.use("/api/trader", traderRouter);
+  // Agent-routine endpoints (called by an Anthropic-hosted scheduled routine
+  // — replaces the legacy server-side cron + Claude API pipeline).
+  app.use("/api/trader/agent", traderAgentRouter);
   initTrader().catch(e => console.error('[trader] init error:', e));
 
   // Claude Predictor API routes

@@ -81,6 +81,12 @@ async function initTraderTables() {
   await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS positions_json JSONB`);
   await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS validation_json JSONB`);
 
+  // Agent-routine support — decisions submitted by an Anthropic-hosted scheduled
+  // routine (instead of the legacy server-side cron + Claude API pipeline).
+  await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS decision_source TEXT DEFAULT 'legacy-cron'`);
+  await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS decisions_json JSONB`);
+  await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS executed_status TEXT`);
+
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_enabled', 'false') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_risk', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_RISK || 'medium']);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_mode', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_MODE || 'swing']);
@@ -213,7 +219,7 @@ const ALPACA = {
   data:  'https://data.alpaca.markets',
 };
 
-async function alpacaReq(keys: any, path: string, method = 'GET', body: any = null) {
+export async function alpacaReq(keys: any, path: string, method = 'GET', body: any = null) {
   const base = keys.isPaper ? ALPACA.paper : ALPACA.live;
   try {
     const res = await fetch(base + path, {
@@ -342,7 +348,7 @@ async function fetchAlpacaNews(keys: any, symbols: string[]): Promise<string> {
 }
 
 // ── Fetch upcoming earnings dates via Yahoo Finance ───────────────────────────
-async function fetchEarningsCalendar(symbols: string[]): Promise<string> {
+export async function fetchEarningsCalendar(symbols: string[]): Promise<string> {
   if (!symbols.length) return '';
   try {
     const results = await Promise.all(symbols.slice(0, 8).map(async sym => {
@@ -713,7 +719,7 @@ traderRouter.post('/alpaca-paper', async (req, res) => {
 // single-key setup was always paper). Live mode does NOT fall back to those — it
 // requires an explicit CRON_ALPACA_KEY_LIVE to prevent paper keys hitting the live
 // endpoint and getting "request is not authorized".
-function getAlpacaEnvKeys(isPaper: boolean) {
+export function getAlpacaEnvKeys(isPaper: boolean) {
   if (isPaper) {
     return {
       key:    process.env.CRON_ALPACA_KEY_PAPER    || process.env.CRON_ALPACA_KEY    || '',
@@ -1498,6 +1504,16 @@ let cronJob: cron.ScheduledTask | null = null;
 export async function initTrader() {
   await initTraderTables();
   console.log('[trader] tables ready');
+
+  // Legacy server-side cron pipeline is RETIRED. Decisions are now produced
+  // by an Anthropic-hosted scheduled routine (see /api/trader/agent endpoints)
+  // which uses the developer's Claude subscription rather than metered API.
+  // The cron block below is intentionally never started — kept in source for
+  // reference / quick rollback if the routine path ever needs to be paused.
+  if (process.env.TRADER_LEGACY_CRON !== 'true') {
+    console.log('[trader] legacy cron disabled — using agent-routine path');
+    return;
+  }
 
   // Tick every 15 minutes around the clock so crypto and the scheduler itself
   // are always evaluated. Mode-specific gating happens inside the callback.

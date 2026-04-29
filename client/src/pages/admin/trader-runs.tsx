@@ -48,6 +48,10 @@ function RunCard({ run }: { run: any }) {
   const validation = run.validation || {};
   const analysis   = Array.isArray(run.analysis)   ? run.analysis   : [];
   const screened   = Array.isArray(run.screened)   ? run.screened   : [];
+  const isAgentRun = run.decision_source === "agent-routine";
+  const agentDecisions = Array.isArray(run.decisions_json) ? run.decisions_json : [];
+  const agentResults   = Array.isArray(run.positions_json) ? run.positions_json : [];
+  const executedStatus = run.executed_status as string | null;
 
   const runPnl = trades.reduce((s: number, t: any) => s + (t.pnl != null ? parseFloat(t.pnl) : 0), 0);
   const hasPnl = trades.some((t: any) => t.pnl != null);
@@ -76,6 +80,19 @@ function RunCard({ run }: { run: any }) {
                 : "border-amber-500/30 text-amber-500")}>
                 {run.risk || "medium"} risk
               </Badge>
+              {isAgentRun && (
+                <Badge variant="outline" className="text-[10px] border-violet-500/30 text-violet-500">
+                  agent routine
+                </Badge>
+              )}
+              {isAgentRun && executedStatus && (
+                <Badge variant="outline" className={cn("text-[10px]",
+                  executedStatus === "executed"  ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                  : executedStatus === "partial"  ? "border-amber-500/30 text-amber-500"
+                  : "border-red-500/30 text-red-500")}>
+                  {executedStatus}
+                </Badge>
+              )}
               {run.pass ? (
                 <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
                   <CheckCircle className="h-3 w-3" /> Executed · {positions.length} position{positions.length !== 1 ? "s" : ""}
@@ -112,6 +129,35 @@ function RunCard({ run }: { run: any }) {
                     {p.t} {p.alloc ? `${p.alloc}%` : ""}
                   </span>
                 ))}
+              </div>
+            )}
+
+            {/* Agent decision chips with action + status colour */}
+            {isAgentRun && agentDecisions.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {agentDecisions.map((d: any, i: number) => {
+                  const result = agentResults.find((r: any) => r.symbol === (d.symbol || "").toUpperCase()) || {};
+                  const status = result.status || "pending";
+                  const colour =
+                    status === "executed" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : status === "rejected" || status === "error" || status === "order_failed"
+                      ? "border-red-500/30 bg-red-500/10 text-red-500"
+                    : status === "noop"     ? "border-muted text-muted-foreground"
+                    :                          "border-amber-500/30 bg-amber-500/10 text-amber-500";
+                  const arrow = d.action === "buy" ? "↑" : d.action === "sell" ? "↓" : "·";
+                  const sizeText = d.action === "buy" && d.notional
+                    ? ` $${parseFloat(d.notional).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                    : "";
+                  return (
+                    <span
+                      key={i}
+                      title={d.rationale || ""}
+                      className={cn("text-[10px] px-1.5 py-0.5 rounded border font-mono", colour)}
+                    >
+                      {arrow} {(d.symbol || "?").toUpperCase()}{sizeText} · {status}
+                    </span>
+                  );
+                })}
               </div>
             )}
 
