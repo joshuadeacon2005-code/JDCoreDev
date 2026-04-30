@@ -297,7 +297,7 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
             symbol,
             side: "buy",
             type: d.type === "limit" ? "limit" : "market",
-            time_in_force: "gtc",
+            time_in_force: "day",
             notional: Number(d.notional).toFixed(2),
           };
           if (d.type === "limit" && d.limit_price) orderBody.limit_price = String(d.limit_price);
@@ -308,7 +308,7 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
             symbol,
             side: "sell",
             type: "market",
-            time_in_force: "gtc",
+            time_in_force: "day",
             qty: String(qty),
           };
         }
