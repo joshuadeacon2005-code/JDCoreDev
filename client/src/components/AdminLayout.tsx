@@ -65,6 +65,7 @@ const mainNavItems = [
   { title: "Claude Trader", icon: TrendingUp,      href: "/admin/trader" },
   { title: "Predictions",   icon: Scale,           href: "/admin/trader/predictions" },
   { title: "Automation",    icon: Zap,             href: "/admin/automation" },
+  { title: "Expenses",      icon: Receipt,         href: "/admin/expenses" },
 ];
 
 const moreNavItems = [

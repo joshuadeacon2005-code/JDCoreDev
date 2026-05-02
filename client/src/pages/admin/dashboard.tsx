@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
@@ -71,6 +71,36 @@ type DevLogsSummary = {
 };
 
 type OfficeDayWithClient = OfficeDayRequest & { client?: Client; project?: Project };
+
+// Small alert strip surfacing the count of expenses awaiting Yes/No review.
+// Polls /api/expenses/queue/count every 60s. Hidden when zero.
+function ExpenseQueueAlert() {
+  const [pending, setPending] = useState<number>(0);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchCount = () => fetch("/api/expenses/queue/count")
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setPending(d?.pending ?? 0); })
+      .catch(() => {});
+    fetchCount();
+    const t = setInterval(fetchCount, 60000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  if (pending === 0) return null;
+  return (
+    <Link href="/admin/expenses">
+      <a className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400 text-sm hover:bg-amber-500/10 transition-colors cursor-pointer">
+        <div className="flex items-center gap-2">
+          <Receipt className="h-4 w-4 shrink-0" />
+          <span>
+            <strong>{pending}</strong> {pending === 1 ? "expense" : "expenses"} awaiting business / personal review
+          </span>
+        </div>
+        <span className="text-xs underline">Review →</span>
+      </a>
+    </Link>
+  );
+}
 
 export default function AdminDashboard() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -293,6 +323,8 @@ export default function AdminDashboard() {
             </Link>
           </div>
         </div>
+
+        <ExpenseQueueAlert />
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {isLoading ? (

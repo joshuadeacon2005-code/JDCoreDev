@@ -28,6 +28,7 @@ import path from "path";
 import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { leadEngineAgentRouter } from "./lead-engine-agent";
+import { expensesAgentRouter, expensesRouter } from "./expenses-agent";
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
@@ -501,6 +502,10 @@ export async function registerRoutes(
   // Agent-routine endpoints (called by an Anthropic-hosted scheduled routine
   // — replaces the legacy /run server-side Anthropic API pipeline).
   app.use("/api/lead-engine/agent", leadEngineAgentRouter);
+
+  // Business expense tracker — Gmail scanner routine + admin CRUD.
+  app.use("/api/expenses", expensesRouter);
+  app.use("/api/expenses/agent", expensesAgentRouter);
 
   // Dev-logs ingest (API-key auth, called by Claude Code hook scripts on dev machines).
   // Writes into maintenance_logs so entries count toward project_hosting_terms budgets.
