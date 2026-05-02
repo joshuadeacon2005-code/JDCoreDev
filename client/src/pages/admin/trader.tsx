@@ -914,7 +914,7 @@ export default function TraderDashboard() {
                                 <Square className="h-3 w-3 mr-1.5"/>Stop
                               </Button>
                             )}
-                            <Button size="sm" variant="outline" className="text-xs" onClick={async()=>{const pipe=await runPipeline();if(pipe) await executeTrades(pipe);}}>
+                            <Button size="sm" variant="outline" className="text-xs" onClick={mode==="swing" ? startAgent : async()=>{const pipe=await runPipeline();if(pipe) await executeTrades(pipe);}}>
                               Run Once
                             </Button>
                           </div>

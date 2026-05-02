@@ -2169,43 +2169,37 @@ export default function PredictionsPage() {
   }, [loadStats, loadPortfolio]);
 
   const runPipeline = async () => {
+    // The full pipeline now runs in an Anthropic-hosted Claude routine
+    // (subscription quota, not metered API spend). This button fires the
+    // routine; results land in predictor_bets / predictor_scans /
+    // predictor_councils with source=agent-routine when it completes.
     setRunning(true);
     setStageStatus({});
-    setRunLog([]);
+    setRunLog(["Dispatching Claude routine…"]);
     try {
-      const response = await fetch("/api/predictor/run", { method: "POST" });
-      if (!response.body) { setRunning(false); return; }
-
-      const reader  = response.body.getReader();
-      const decoder = new TextDecoder();
-      let   buffer  = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const part of parts) {
-          const line = part.trim();
-          if (!line.startsWith("data:")) continue;
-          try {
-            const ev = JSON.parse(line.slice(5).trim());
-            if (ev.type === "stage") {
-              setStageStatus((prev: any) => ({
-                ...prev,
-                [ev.stage]: { status: ev.status, log: ev.msg },
-              }));
-              setRunLog((prev) => [...prev, ev.msg]);
-            } else if (ev.type === "done" || ev.type === "error") {
-              await loadStats();
-              await loadPortfolio();
-              setRunsKey(k => k + 1);
-            }
-          } catch {}
-        }
+      const r = await fetch("/api/predictor/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: "manual fire from /admin/trader/predictions" }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const detail = d?.hint || d?.error || `HTTP ${r.status}`;
+        setRunLog((prev) => [...prev, `Dispatch failed: ${detail}`]);
+      } else {
+        const sessionUrl = d?.upstream?.claude_code_session_url;
+        setRunLog((prev) => [
+          ...prev,
+          "Routine dispatched ✓ — Claude is running the council in the background.",
+          ...(sessionUrl ? [`Watch live: ${sessionUrl}`] : []),
+          "Bets will land in trader_pipelines / predictor_bets when complete. Refresh in a few minutes.",
+        ]);
+        // Best-effort refresh after a delay so the user sees new rows.
+        setTimeout(() => { loadStats(); loadPortfolio(); setRunsKey(k => k + 1); }, 90000);
       }
-    } catch {}
+    } catch (e: any) {
+      setRunLog((prev) => [...prev, `Dispatch error: ${e.message}`]);
+    }
     setRunning(false);
   };
 

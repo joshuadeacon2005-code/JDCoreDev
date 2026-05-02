@@ -21,41 +21,44 @@ interface ServiceDef {
   label: string;
   description: string;
   cadence: string;
-  costLevel: "high" | "medium" | "low";
+  costLevel: "high" | "medium" | "low" | "routine";
   costNote: string;
   href: string;
   icon: React.ElementType;
   color: string;
   borderColor: string;
   iconBg: string;
+  routineUrl?: string;   // when set, the card replaces the cron toggle with a "Manage routine" link
 }
 
 const SERVICES: ServiceDef[] = [
   {
     id: "predictor",
     label: "AI Predictor",
-    description: "Researches political + financial events, runs a multi-agent debate council, and places live bets on Kalshi and Polymarket when it finds high-confidence edge.",
-    cadence: "Every 2 hours",
-    costLevel: "high",
-    costNote: "Multiple deep-research + AI council calls per run",
+    description: "Researches political + financial events on Kalshi and Polymarket, runs a 4-agent council debate (analyst / contrarian / risk / judge), and places live bets when it finds high-confidence edge above the configured floor.",
+    cadence: "Every 6h — Anthropic-hosted Claude routine",
+    costLevel: "routine",
+    costNote: "Runs on your Claude subscription quota — no metered API spend",
     href: "/admin/trader/predictions",
     icon: Brain,
     color: "text-purple-500",
     borderColor: "border-purple-500/20",
     iconBg: "bg-purple-500/10",
+    routineUrl: "https://claude.ai/code/routines/trig_01Y8JJDwmLXCBmfzaUjBF9jN",
   },
   {
     id: "trader",
     label: "Claude Trader",
-    description: "Algorithmic AI stock and crypto trader. Monitors positions, evaluates new trades using Claude, and manages day/swing portfolios automatically.",
-    cadence: "Day: every 15 min · Swing: every 4h",
-    costLevel: "high",
-    costNote: "Claude API + market data on every cycle",
+    description: "Swing-mode equities agent on Alpaca. Reads world state, runs WebSearch + 4-agent council, submits decisions through hard server-side guardrails (max 10 positions, 15% per position, 4% stop / 8% take, 10% 7-day drawdown).",
+    cadence: "Twice daily M–F (12:00 + 22:00 UTC) — Anthropic-hosted Claude routine",
+    costLevel: "routine",
+    costNote: "Runs on your Claude subscription quota — no metered API spend",
     href: "/admin/trader",
     icon: TrendingUp,
     color: "text-teal-500",
     borderColor: "border-teal-500/20",
     iconBg: "bg-teal-500/10",
+    routineUrl: "https://claude.ai/code/routines/trig_01RdmE8PHaQyfruhHQeheDDb",
   },
   {
     id: "arbitrage",
@@ -86,9 +89,10 @@ const SERVICES: ServiceDef[] = [
 ];
 
 const costLevelConfig = {
-  high:   { label: "High API cost",   cls: "border-red-500/30 text-red-500 bg-red-500/5" },
-  medium: { label: "Medium API cost", cls: "border-amber-500/30 text-amber-500 bg-amber-500/5" },
-  low:    { label: "Low API cost",    cls: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" },
+  high:    { label: "High API cost",        cls: "border-red-500/30 text-red-500 bg-red-500/5" },
+  medium:  { label: "Medium API cost",      cls: "border-amber-500/30 text-amber-500 bg-amber-500/5" },
+  low:     { label: "Low API cost",         cls: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" },
+  routine: { label: "Subscription quota",   cls: "border-violet-500/30 text-violet-600 dark:text-violet-400 bg-violet-500/5" },
 };
 
 interface LeadEngineStatus {
@@ -172,27 +176,54 @@ export default function AutomationPage() {
     setSaving(null);
   };
 
-  const toggleAll = async (val: boolean) => {
+  // Routine-driven services are scheduled at claude.ai and ignore cron_enabled
+  // flags entirely — they're effectively always-on from this page's perspective.
+  // Toggle/Kill operations only affect cron-driven services.
+  const cronServices    = SERVICES.filter(s => !s.routineUrl);
+  const routineServices = SERVICES.filter(s =>  s.routineUrl);
+
+  const toggleAllCrons = async (val: boolean) => {
     setSaving("all");
     try {
-      await fetch("/api/automation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: val }),
+      // Per-service PATCH so we don't flip cron flags for routine-driven services
+      // (which would be silently ignored but is misleading state to write).
+      await Promise.all(cronServices.map(s =>
+        fetch(`/api/automation/${s.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: val }),
+        })
+      ));
+      setStates(prev => {
+        const next = { ...prev };
+        for (const s of cronServices) next[s.id] = val;
+        return next;
       });
-      setStates({ predictor: val, trader: val, arbitrage: val, crypto_arb: val });
       toast({
-        title: val ? "All automations enabled" : "All automations stopped",
-        description: val ? "Every scheduled process is now running." : "No scheduled processes will run until re-enabled.",
+        title: val ? "All cron services enabled" : "All cron services stopped",
+        description: val
+          ? "Routine-driven services (Trader, Predictor) are managed separately at claude.ai."
+          : "Routine-driven services are still scheduled at claude.ai — pause them there if needed.",
       });
     } catch { toast({ title: "Failed to update all", variant: "destructive" }); }
     setSaving(null);
   };
 
-  const anyOn = Object.values(states).some(Boolean) || leStatus.running;
-  const allOn = Object.values(states).every(Boolean) && leStatus.running;
-  const allOff = Object.values(states).every(v => !v) && !leStatus.running;
-  const activeCount = Object.values(states).filter(Boolean).length + (leStatus.running ? 1 : 0);
+  const cronStates    = cronServices.map(s => states[s.id]);
+  const cronAnyOn     = cronStates.some(Boolean);
+  const cronAllOff    = cronStates.every(v => !v);
+  const cronAllOn     = cronStates.every(Boolean);
+
+  const anyOn  = cronAnyOn || leStatus.running || routineServices.length > 0;
+  const allOn  = cronAllOn && leStatus.running;
+  const allOff = cronAllOff && !leStatus.running && routineServices.length === 0;
+
+  // Routines count as always-active in the visual summary (their scheduling
+  // lives at claude.ai; pausing here is impossible).
+  const activeCount =
+    cronStates.filter(Boolean).length +
+    (leStatus.running ? 1 : 0) +
+    routineServices.length;
   const totalCount = SERVICES.length + 1;
 
   return (
@@ -216,14 +247,15 @@ export default function AutomationPage() {
             </Button>
             <Button
               size="sm"
-              variant={allOff ? "default" : "destructive"}
-              onClick={() => toggleAll(allOff ? true : false)}
-              disabled={saving === "all"}
-              className={cn("h-8 text-xs font-medium", allOff && "bg-emerald-600 hover:bg-emerald-700")}
+              variant={cronAllOff ? "default" : "destructive"}
+              onClick={() => toggleAllCrons(cronAllOff ? true : false)}
+              disabled={saving === "all" || cronServices.length === 0}
+              className={cn("h-8 text-xs font-medium", cronAllOff && "bg-emerald-600 hover:bg-emerald-700")}
               data-testid="button-toggle-all"
+              title="Affects cron-driven services only. Routine-driven services (Trader, Predictor) are scheduled at claude.ai."
             >
               <Power className="h-3.5 w-3.5 mr-1.5" />
-              {saving === "all" ? "Updating…" : allOff ? "Enable All" : "Kill All"}
+              {saving === "all" ? "Updating…" : cronAllOff ? "Enable cron services" : "Stop cron services"}
             </Button>
           </div>
         </div>
@@ -240,7 +272,12 @@ export default function AutomationPage() {
           ) : allOn ? (
             <><CheckCircle2 className="h-4 w-4 shrink-0" /><span>All {totalCount} automations are <strong>active</strong> and running.</span></>
           ) : (
-            <><CheckCircle2 className="h-4 w-4 shrink-0 text-amber-500" /><span className="text-amber-600 dark:text-amber-400"><strong>{activeCount}</strong> of {totalCount} automations are currently active.</span></>
+            <><CheckCircle2 className="h-4 w-4 shrink-0 text-amber-500" /><span className="text-amber-600 dark:text-amber-400">
+              <strong>{activeCount}</strong> of {totalCount} automations are currently active
+              {routineServices.length > 0 && (
+                <> — including <strong>{routineServices.length}</strong> Claude {routineServices.length === 1 ? "routine" : "routines"} (managed at claude.ai)</>
+              )}.
+            </span></>
           )}
         </div>
 
@@ -330,8 +367,9 @@ export default function AutomationPage() {
           {SERVICES.map(svc => {
             const on = states[svc.id];
             const busy = saving === svc.id;
+            const isRoutine = !!svc.routineUrl;
             return (
-              <Card key={svc.id} className={cn("border transition-all", svc.borderColor, !on && "opacity-70")}>
+              <Card key={svc.id} className={cn("border transition-all", svc.borderColor, !on && !isRoutine && "opacity-70")}>
                 <CardHeader className="pb-3 pt-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -350,21 +388,36 @@ export default function AutomationPage() {
                       <Badge variant="outline" className={cn("text-[10px]", costLevelConfig[svc.costLevel].cls)}>
                         {costLevelConfig[svc.costLevel].label}
                       </Badge>
-                      <button
-                        onClick={() => toggle(svc.id, !on)}
-                        disabled={busy}
-                        data-testid={`toggle-${svc.id}`}
-                        className={cn(
-                          "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus-visible:outline-none",
-                          on ? "bg-emerald-500" : "bg-muted-foreground/30",
-                          busy && "opacity-50 cursor-not-allowed"
-                        )}
-                      >
-                        <span className={cn(
-                          "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
-                          on ? "translate-x-6" : "translate-x-1"
-                        )} />
-                      </button>
+                      {svc.routineUrl ? (
+                        <a
+                          href={svc.routineUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          data-testid={`manage-routine-${svc.id}`}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium transition-colors hover:bg-muted",
+                            "border-violet-500/30 text-violet-600 dark:text-violet-400 bg-violet-500/5"
+                          )}
+                        >
+                          Manage routine <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
+                      ) : (
+                        <button
+                          onClick={() => toggle(svc.id, !on)}
+                          disabled={busy}
+                          data-testid={`toggle-${svc.id}`}
+                          className={cn(
+                            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus-visible:outline-none",
+                            on ? "bg-emerald-500" : "bg-muted-foreground/30",
+                            busy && "opacity-50 cursor-not-allowed"
+                          )}
+                        >
+                          <span className={cn(
+                            "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+                            on ? "translate-x-6" : "translate-x-1"
+                          )} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </CardHeader>
