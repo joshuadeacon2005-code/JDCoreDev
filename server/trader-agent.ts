@@ -442,9 +442,10 @@ traderAgentRouter.post("/run", async (req, res) => {
       {
         method:  "POST",
         headers: {
-          "Authorization":   `Bearer ${token}`,
-          "anthropic-beta":  ROUTINE_FIRE_BETA,
-          "Content-Type":    "application/json",
+          "Authorization":     `Bearer ${token}`,
+          "anthropic-beta":    ROUTINE_FIRE_BETA,
+          "anthropic-version": "2023-06-01",
+          "Content-Type":      "application/json",
         },
         body: JSON.stringify({ text }),
       }
