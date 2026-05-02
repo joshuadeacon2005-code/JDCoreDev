@@ -127,6 +127,8 @@ export default function LeadEngine() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [filter, setFilter] = useState("all");
+  const [sortKey, setSortKey] = useState<"name" | "domain" | "status" | "channel" | "contactedAt">("contactedAt");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [loading, setLoading] = useState(true);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"audits"|"drafts"|"sent">("audits");
@@ -246,6 +248,30 @@ export default function LeadEngine() {
   const pendingDrafts = drafts.filter(d => !d.sent);
   const sentDrafts    = drafts.filter(d => d.sent);
   const filteredLeads = filter === "all" ? leads : leads.filter(l => (l.status || l.channel) === filter);
+
+  function toggleSort(key: typeof sortKey) {
+    if (sortKey === key) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      // Sensible defaults: dates newest first, text fields A→Z
+      setSortDir(key === "contactedAt" ? "desc" : "asc");
+    }
+  }
+
+  const sortedLeads = [...filteredLeads].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    if (sortKey === "contactedAt") {
+      const aT = a.contactedAt ? new Date(a.contactedAt).getTime() : 0;
+      const bT = b.contactedAt ? new Date(b.contactedAt).getTime() : 0;
+      return (aT - bT) * dir;
+    }
+    const aV = (a[sortKey] ?? "").toString().toLowerCase();
+    const bV = (b[sortKey] ?? "").toString().toLowerCase();
+    if (aV < bV) return -1 * dir;
+    if (aV > bV) return  1 * dir;
+    return 0;
+  });
 
   const stats = [
     { label: "Total Audits", value: leads.length, sub: "all time", icon: Radar, color: "text-foreground" },
@@ -699,10 +725,13 @@ export default function LeadEngine() {
                   </Button>
                 </div>
                 <div className="flex gap-1.5 flex-wrap">
-                  {["all","emailed","draft","no_reply","replied","manual","taken_down"].map(f => (
+                  {["all","emailed","draft","no_reply","replied","manual","cowork-engine","taken_down"].map(f => (
                     <button key={f} onClick={() => setFilter(f)}
                       className={`text-xs font-mono px-3 py-1 rounded-full border transition-all ${filter === f ? "bg-teal-500/15 text-teal-500 border-teal-500/30" : "border-border text-muted-foreground hover:text-foreground"}`}>
-                      {f === "no_reply" ? "No Reply" : f === "taken_down" ? "Offline" : f.charAt(0).toUpperCase() + f.slice(1)}
+                      {f === "no_reply" ? "No Reply"
+                       : f === "taken_down" ? "Offline"
+                       : f === "cowork-engine" ? "Cowork"
+                       : f.charAt(0).toUpperCase() + f.slice(1)}
                     </button>
                   ))}
                 </div>
@@ -711,7 +740,7 @@ export default function LeadEngine() {
             <CardContent className="p-0">
               {loading ? (
                 <div className="py-12 text-center text-muted-foreground text-sm">Loading audits…</div>
-              ) : filteredLeads.length === 0 ? (
+              ) : sortedLeads.length === 0 ? (
                 <div className="py-12 text-center space-y-2">
                   <Radar className="w-8 h-8 text-muted-foreground/40 mx-auto" />
                   <p className="text-sm font-medium text-muted-foreground">No {filter === "all" ? "" : filter + " "}audits yet</p>
@@ -722,13 +751,38 @@ export default function LeadEngine() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border/50">
-                        {["Company","Website","Status","Channel","Age","Audit",""].map(h => (
-                          <th key={h} className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-4 py-3 bg-muted/30 font-mono">{h}</th>
-                        ))}
+                        {([
+                          { label: "Company", key: "name" },
+                          { label: "Website", key: "domain" },
+                          { label: "Status",  key: "status" },
+                          { label: "Channel", key: "channel" },
+                          { label: "Age",     key: "contactedAt" },
+                          { label: "Audit",   key: null },
+                          { label: "",        key: null },
+                        ] as Array<{ label: string; key: typeof sortKey | null }>).map(h => {
+                          const isActive = h.key && sortKey === h.key;
+                          return (
+                            <th key={h.label || "actions"} className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-4 py-3 bg-muted/30 font-mono">
+                              {h.key ? (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSort(h.key as typeof sortKey)}
+                                  className={`inline-flex items-center gap-1 transition-colors hover:text-foreground ${isActive ? "text-foreground" : ""}`}
+                                  data-testid={`sort-${h.key}`}
+                                >
+                                  {h.label}
+                                  {isActive && (sortDir === "asc"
+                                    ? <ChevronUp className="w-3 h-3" />
+                                    : <ChevronDown className="w-3 h-3" />)}
+                                </button>
+                              ) : h.label}
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredLeads.map((lead, i) => {
+                      {sortedLeads.map((lead, i) => {
                         const days = daysSince(lead.contactedAt);
                         const isOffline = lead.status === "no_reply" || lead.status === "taken_down";
                         const { cls, label } = statusStyle(lead.status || lead.channel);

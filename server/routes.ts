@@ -533,6 +533,17 @@ export async function registerRoutes(
         created_at TEXT NOT NULL
       )
     `);
+    // Migrations for fields the cowork-engine sends that the original schema
+    // didn't capture. Idempotent — safe to run on every boot.
+    await pool.query(`
+      ALTER TABLE leads
+        ADD COLUMN IF NOT EXISTS channel TEXT,
+        ADD COLUMN IF NOT EXISTS recommendations_json TEXT,
+        ADD COLUMN IF NOT EXISTS currency TEXT,
+        ADD COLUMN IF NOT EXISTS estimated_monthly_saas_spend REAL,
+        ADD COLUMN IF NOT EXISTS primary_pain_point TEXT,
+        ADD COLUMN IF NOT EXISTS linkedin TEXT
+    `);
   })();
 
   const leadsImportCors = (_req: Request, res: Response, next: NextFunction) => {
@@ -572,10 +583,12 @@ export async function registerRoutes(
       await pool.query(
         `INSERT INTO leads (
           id, business_name, industry, location, priority, owner_name, phone, email,
-          website, instagram, facebook, google_rating, google_review_count, overall_score,
-          scores_json, missing_features_json, ai_opportunities_json, competitor_intel,
-          draft_email_subject, draft_email_body, draft_dm, notes, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+          website, instagram, facebook, linkedin, google_rating, google_review_count, overall_score,
+          scores_json, missing_features_json, ai_opportunities_json, recommendations_json, competitor_intel,
+          draft_email_subject, draft_email_body, draft_dm, notes,
+          channel, currency, estimated_monthly_saas_spend, primary_pain_point,
+          created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
         [
           id,
           lead.business_name,
@@ -588,24 +601,32 @@ export async function registerRoutes(
           lead.website || null,
           lead.instagram || null,
           lead.facebook || null,
+          lead.linkedin || null,
           lead.google_rating ?? null,
           lead.google_review_count ?? null,
           lead.overall_score ?? null,
           lead.scores ? JSON.stringify(lead.scores) : null,
           lead.missing_features ? JSON.stringify(lead.missing_features) : null,
           lead.ai_opportunities ? JSON.stringify(lead.ai_opportunities) : null,
+          lead.recommendations ? JSON.stringify(lead.recommendations) : null,
           lead.competitor_intel || null,
           lead.draft_email_subject || null,
           lead.draft_email_body || null,
           lead.draft_dm || null,
           lead.notes || null,
+          lead.channel || "cowork-engine",
+          lead.currency || null,
+          lead.estimated_monthly_saas_spend ?? null,
+          lead.primary_pain_point || null,
           now,
         ]
       );
 
       // ── Bridge to Lead Engine audit system ────────────────────────────────
       // After saving to the leads table, also upsert into lead_audits + lead_drafts
-      // so the lead appears in the Lead Engine dashboard immediately.
+      // so the lead appears in the Lead Engine dashboard immediately. Generate
+      // the audit page from the imported scores so the dashboard has a clickable
+      // Audit link for cowork-engine leads (previously these were silently null).
       try {
         // Extract a clean hostname from the website URL for use as the unique domain key
         let auditDomain: string;
@@ -620,15 +641,32 @@ export async function registerRoutes(
           auditDomain = `${lead.business_name.toLowerCase().replace(/[^a-z0-9]/g, "-")}.cowork`;
         }
 
-        // Upsert audit — ON CONFLICT (domain) DO UPDATE handles dedup automatically
+        // Build the audit page from cowork's payload and persist the URL.
+        // generateAuditPage handles file write + DB upsert + html backfill;
+        // any failure here is non-fatal so the lead row still survives.
+        let generatedAuditUrl: string | null = null;
+        try {
+          const { generateAuditPage } = await import("../pipeline/generate-page.js");
+          const { synthesiseCoworkAudit } = await import("../pipeline/synthesise-cowork-audit.js");
+          const auditObj = synthesiseCoworkAudit(lead);
+          generatedAuditUrl = await generateAuditPage(
+            { name: lead.business_name, domain: auditDomain, industry: lead.industry, location: lead.location },
+            auditObj
+          );
+        } catch (genErr: any) {
+          console.error("[leads/import] audit page generation failed:", genErr.message);
+        }
+
+        // Upsert audit — generateAuditPage already writes the row, but call this
+        // again to set channel + status correctly (it defaults to 'draft' channel).
         await storage.upsertLeadAudit({
           name: lead.business_name,
           domain: auditDomain,
           location: lead.location || null,
           industry: lead.industry || null,
-          auditUrl: null,
+          auditUrl: generatedAuditUrl,
           htmlContent: null,
-          channel: "cowork-engine",
+          channel: lead.channel || "cowork-engine",
           status: "draft",
         });
 
@@ -643,7 +681,7 @@ export async function registerRoutes(
               subject: lead.draft_email_subject,
               body: lead.draft_email_body,
               domain: auditDomain,
-              auditUrl: null,
+              auditUrl: generatedAuditUrl,
             });
           } else {
             await storage.createLeadDraft({
@@ -652,7 +690,7 @@ export async function registerRoutes(
               email: lead.email || null,
               instagram: lead.instagram || null,
               whatsapp: null,
-              auditUrl: null,
+              auditUrl: generatedAuditUrl,
               subject: lead.draft_email_subject,
               body: lead.draft_email_body,
               sent: false,
@@ -692,6 +730,7 @@ export async function registerRoutes(
         scores: r.scores_json ? JSON.parse(r.scores_json) : null,
         missing_features: r.missing_features_json ? JSON.parse(r.missing_features_json) : null,
         ai_opportunities: r.ai_opportunities_json ? JSON.parse(r.ai_opportunities_json) : null,
+        recommendations: r.recommendations_json ? JSON.parse(r.recommendations_json) : null,
       })));
     } catch (err: any) {
       console.error("[leads] error:", err.message);

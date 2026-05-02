@@ -26,3 +26,8 @@ JDCoreDev-main.zip
 *(1)*
 *(2)*
 .claude/settings.local.json.tmp.*
+
+# Local secret-fill scripts (values pasted by hand, never committed)
+scripts/*.local.sh
+scripts/*.local.mjs
+scripts/*.local.cjs

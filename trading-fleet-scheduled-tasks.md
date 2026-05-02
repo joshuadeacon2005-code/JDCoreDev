@@ -1,612 +1,264 @@
-# JD CoreDev Trading Fleet — Scheduled-Task Blueprint
+# JD CoreDev Trader — Scheduled Routine Reference
 
-Reference for migrating every server-side trading system in this repo
-from the broken Replit `AI_INTEGRATIONS_*` proxy to a fleet of
-scheduled Claude Code routines. Covers four systems:
-
-1. **Kalshi Predictor** — prediction markets (Kalshi only)
-2. **Claude Trader** — Alpaca stock trading
-3. **Cross-market Arbitrage** — Kalshi vs Polymarket
-4. **Crypto Arbitrage** — Kalshi crypto contracts hedged with Alpaca crypto
-
-Replaces the older Predictor-only doc — read this and delete
-`predictor-scheduled-task.md` when you have.
+Reference for setting up and operating the Anthropic-hosted scheduled
+routine that drives the Claude Trader (Alpaca stocks). Predictor still
+runs on its old cron loop; arbitrage + crypto-arb were retired and
+their server files (`server/arbitrage.ts`, `server/crypto-arb.ts`) are
+orphans pending deletion.
 
 ---
 
-## 1. Why migrate the whole fleet at once
+## 1. Status (as of 2026-04-29)
 
-All four systems share the same broken plumbing:
-
-```
-AI_INTEGRATIONS_ANTHROPIC_API_KEY = _DUMMY_API_KEY_
-AI_INTEGRATIONS_ANTHROPIC_BASE_URL = http://localhost:1106/modelfarm/anthropic
-AI_INTEGRATIONS_OPENAI_API_KEY    = _DUMMY_API_KEY_
-AI_INTEGRATIONS_OPENAI_BASE_URL    = http://localhost:1106/modelfarm/openai
-```
-
-`localhost:1106/modelfarm` is a Replit-internal proxy that does not
-exist on Railway, and the keys are literal `_DUMMY_API_KEY_`. Each
-system imports from this same env block, so each system is dormant
-for the same reason. The cron flags (`cron_enabled` etc.) are off,
-which is why no errors are hitting the logs.
-
-Migrating all four together is cleaner than one-at-a-time because
-the auth middleware, secret-management story, kill-switch design,
-and Run Now wiring are identical across systems.
+| System | State |
+|---|---|
+| **Trader** (`/api/trader`) | Agent-routine endpoints live (`server/trader-agent.ts`), awaiting routine schedule |
+| **Predictor** (`/api/predictor`) | Still on legacy cron + dead modelfarm Claude calls — migration not started |
+| ~~Arbitrage~~ | Removed from sidebar nav. Source file `server/arbitrage.ts` is dead code, not mounted in routes.ts |
+| ~~Crypto Arb~~ | Same — `server/crypto-arb.ts` orphan |
 
 ---
 
-## 2. Yes — every routine talks to the same APIs the website does
+## 2. Architecture (trader)
 
-`server/routes.ts:700-712`:
+Routine = brain. Server endpoints = hands.
 
-```ts
-app.use("/api/trader",     traderRouter);
-app.use("/api/predictor",  predictorRouter);
-app.use("/api/arbitrage",  arbitrageRouter);
-app.use("/api/crypto-arb", cryptoArbRouter);
+```
+┌──────────────────────────┐   GET /agent/state   ┌────────────────────────┐
+│ Scheduled Claude routine │ ───────────────────▶ │ /api/trader/agent      │
+│  • read account + positions                     │  • signs Alpaca orders │
+│  • run council in-context│ ◀─── JSON state ──── │  • enforces hard caps  │
+│  • emit JSON decisions   │                      │  • writes trader_trades│
+│  • POST decisions        │ ───────────────────▶ │                        │
+└──────────────────────────┘                      └────────────────────────┘
 ```
 
-Every endpoint the admin pages call is reachable from a scheduled
-routine. No mirroring or duplicate wiring.
+The routine holds only `BOT_API_BASE` and `JDCD_AGENT_KEY`. The server
+holds Alpaca paper/live keys, the DB connection string, and the
+authoritative settings/constraints.
 
 ---
 
-## 3. CRITICAL — auth gap to fix before scheduling anything
+## 3. Auth
 
-Today **all four routers are publicly mountable with no auth**:
+The trader-agent router uses `x-jdcd-agent-key` validated against the
+`JDCD_AGENT_KEY` env var (`server/trader-agent.ts:28-38`). The key is
+already set on Railway. Every routine request must include:
 
-| Router | Auth today | Fix |
-|---|---|---|
-| `/api/trader` | `x-cron-secret` enforced **only on `/cron/run`**, and `CRON_SECRET` is not set on Railway, so the check short-circuits to "allow" | Add router-wide middleware below |
-| `/api/predictor` | none | Same |
-| `/api/arbitrage` | none | Same |
-| `/api/crypto-arb` | none | Same |
-
-Recommended single shared middleware (`server/routes.ts` around the
-existing `app.use` block):
-
-```ts
-const requireBotSecret = (req: Request, res: Response, next: NextFunction) => {
-  const expected = process.env.BOT_API_SECRET;
-  if (!expected) return res.status(503).json({ error: "BOT_API_SECRET not set" });
-  if (req.headers["x-bot-secret"] !== expected) {
-    return res.status(401).json({ error: "unauthorized" });
-  }
-  next();
-};
-
-app.use("/api/trader",     requireBotSecret, traderRouter);
-app.use("/api/predictor",  requireBotSecret, predictorRouter);
-app.use("/api/arbitrage",  requireBotSecret, arbitrageRouter);
-app.use("/api/crypto-arb", requireBotSecret, cryptoArbRouter);
+```
+x-jdcd-agent-key: <value of JDCD_AGENT_KEY>
 ```
 
-Add `BOT_API_SECRET=…` to Railway. The admin UI's existing
-`fetch()` calls need updating to send `x-bot-secret`, easiest via a
-shared `apiRequest` helper that injects it for `/api/(trader|predictor|arbitrage|crypto-arb)/*`.
-
-One secret across all four is fine — they all run under the same
-admin trust boundary. Use four if you want per-system rotation.
+Predictor has not been migrated and is currently mounted without auth
+on `/api/predictor`. Outside scope of this doc.
 
 ---
 
-## 4. The architectural pattern (applied to all four systems)
+## 4. Trader API contract (current code)
 
-Each system's routine is the **brain**; the existing `/api/...`
-router is the **hands**.
+### `GET /api/trader/agent/state`
 
-```
-┌──────────────────────────┐    HTTPS POST    ┌────────────────────┐
-│ Scheduled Claude routine │ ───────────────▶ │ /api/.../place-bet │
-│  • fetch markets via API │                  │  • signs orders    │
-│  • run council in-context│                  │  • writes to DB    │
-│  • emit JSON verdicts    │                  │  • enforces caps   │
-└──────────────────────────┘                  └────────────────────┘
-                  ▲                                       │
-                  └────────── /history, /stats ◀──────────┘
-```
+Single call returning everything the routine needs to decide.
 
-The routine never holds:
-- Kalshi RSA private key
-- Alpaca API secret
-- Polymarket private key
-- DB connection string
+Response shape (top-level keys):
+- `mode: "swing"`
+- `isPaper: bool`
+- `generatedAt: ISO`
+- `constraints` — `{ maxPositions, maxPositionPct, stopLossPct, takeProfitPct, maxDrawdown7dPct, noEarningsWithinDays }`
+- `account` — `{ equity, cash, buyingPower, portfolioValue, accountNumber, currency }` or `null` if paper/live keys missing
+- `positions[]` — `{ symbol, qty, side, avgEntry, currentPrice, marketValue, unrealizedPL, unrealizedPLPct }`
+- `drawdown7dPct: number`
+- `equityHistory[]` — `{ ts, equity }` for last 7 days
+- `recentDecisions[]` — last 30 entries from `trader_pipelines`
+- `recentTrades[]` — last 60 from `trader_trades`
+- `currentRisk: "low" | "medium" | "high"` — from `trader_settings.cron_risk`
+- `marketHints` — pointers to `/api/trader/market-signals?mode=swing` and `/api/trader/stock-bars/{SYMBOL}?limit=60&timeframe=1Day` (both public, no auth needed)
 
-The routine only holds: `BOT_API_BASE` and `BOT_API_SECRET`.
+### `POST /api/trader/agent/decisions`
 
----
-
-## 5. System-by-system reference
-
-### 5.1 Kalshi Predictor — `/api/predictor`
-
-**Source:** `server/predictor.ts`
-
-**Tables (auto-created at boot, lines 116-174):**
-- `predictor_bets` — id, market_ticker, side, contracts, price, cost,
-  confidence, edge, council_verdict, council_transcript JSONB,
-  status, order_id, pnl, settled_at, logged_at
-- `predictor_councils` — market_ticker, our_probability,
-  market_probability, edge, verdict, confidence, transcript JSONB
-- `predictor_scans`, `predictor_logs`, `predictor_chat`
-
-**Endpoints (read-only, safe to call from routine):**
-- `GET /health`, `GET /key-check`
-- `GET /markets`, `GET /account`, `GET /positions`, `GET /portfolio`
-- `GET /history?type=bets|councils`, `GET /stats`, `GET /runs`
-- `GET /settings`
-
-**Endpoints (existing, mutating, no AI dependency):**
-- `POST /check-resolutions` — settle won/lost from Kalshi
-- `POST /sync-orders` — refresh order status
-- `DELETE /bets`, `DELETE /bets/:betId`
-
-**Endpoints (existing, mutating, BROKEN — do not call from routine):**
-- `POST /run` — full pipeline incl. dead modelfarm AI
-- `POST /scan`, `POST /council`, `POST /research-trader`
-
-**New endpoint to add (the bridge):**
-
-```
-POST /api/predictor/place-bet
-```
-
+Body:
 ```json
 {
-  "market_ticker": "KX...",
-  "market_title":  "Will X happen by Y?",
-  "side":          "yes" | "no",
-  "yes_price":     0.42,
-  "your_estimate": 0.65,
-  "edge":          0.23,
-  "confidence":    0.7,
-  "verdict":       "BET_YES" | "BET_NO" | "PASS",
-  "council_transcript": { "bear": {...}, "bull": {...}, "devil": {...}, "risk": {...}, "judge": {...} }
+  "thesis": "1-3 sentence rationale for the run",
+  "decisions": [
+    { "action": "buy",  "symbol": "AAPL", "notional": 1000, "rationale": "...", "earnings_aware": false },
+    { "action": "sell", "symbol": "MSFT", "qty": 5,         "rationale": "..." },
+    { "action": "hold", "symbol": "NVDA",                   "rationale": "..." }
+  ]
 }
 ```
 
-Wraps the existing internal `executeBet()` (`predictor.ts:1368`),
-which already enforces min-edge, dynamic edge by days-to-close,
-Kelly sizing, RSA-signed Kalshi order placement, and the
-`predictor_bets` insert. Skips the broken AI council loop because
-the verdict comes from the request body.
+Server-side hard constraints (all decisions checked, violators rejected):
+- `maxPositions = 10` total open
+- `maxPositionPct = 15` (notional ≤ 15% of equity)
+- `maxDrawdown7dPct = 10` — if breached, rejects ALL buy decisions in the run
+- `noEarningsWithinDays = 3` — buy on a symbol with earnings within 3d requires `earnings_aware: true` to acknowledge
 
-**Server-side secrets (already set on Railway):**
-- `KALSHI_KEY_ID_LIVE`, `KALSHI_PRIVATE_KEY_LIVE` ✅
-- `KALSHI_MODE` ✅
+Survivors execute via Alpaca (paper or live per `trader_settings.alpaca_paper`) and write a `trader_trades` row. Rejected decisions return `{ status: "rejected", reasons: [...] }` in the response.
 
----
-
-### 5.2 Claude Trader (Alpaca stocks) — `/api/trader`
-
-**Source:** `server/trader.ts`
-
-**Tables:** `trader_settings`, `trader_chat`, `trader_trades`,
-`trader_logs`, `trader_snapshots`, `trader_pipelines`
-
-**Endpoints (read-only):**
-- `GET /alpaca-config`, `GET /health`
-- `GET /market-signals`, `GET /stock-bars/:ticker`,
-  `GET /insider-trades`
-- `GET /history`, `GET /run-summaries`
-- `GET /performance`, `GET /agent-activity`
-- `GET /chat`, `GET /settings`
-
-**Existing mutating:**
-- `POST /alpaca-paper` — toggle paper/live
-- `POST /alpaca-proxy`, `POST /alpaca-data-proxy` — passthrough
-- `POST /sync-pnl` — refresh equity/PnL snapshot
-- `POST /history`, `POST /chat`, `POST /chat/execute-task`,
-  `POST /settings`
-- `POST /cron/run` — existing entrypoint, auth via `x-cron-secret`
-  (currently bypassed because `CRON_SECRET` isn't set). Internally
-  uses dead modelfarm Claude calls — needs replacement, see below.
-
-**New endpoint to add:**
-
-```
-POST /api/trader/place-trade
-```
+### Response shape
 
 ```json
 {
-  "symbol":    "AAPL",
-  "side":      "buy" | "sell",
-  "qty":       10,
-  "type":      "market" | "limit",
-  "limit_price": 175.50,
-  "time_in_force": "day" | "gtc",
-  "rationale": "...",
-  "risk":      "low" | "medium" | "high",
-  "mode":      "day" | "swing"
+  "executed": 2,
+  "rejected": 1,
+  "results": [{ "symbol": "AAPL", "action": "buy", "status": "executed", "orderId": "..." }, ...]
 }
 ```
 
-Wraps the existing internal `alpacaReq(keys, '/v2/orders', 'POST', body)`
-call (around `trader.ts:1269` and `:1426-1435`) and writes a
-`trader_trades` row.
+---
 
-Also strip the dead Claude calls from `/cron/run` since the routine
-takes over that loop.
+## 5. Cadence
 
-**Server-side secrets (paper trading present, live missing):**
-- `CRON_ALPACA_KEY_PAPER` ✅, `CRON_ALPACA_SECRET_PAPER` ✅
-- `CRON_ALPACA_PAPER` ✅
-- `CRON_ALPACA_KEY_LIVE` ❌, `CRON_ALPACA_SECRET_LIVE` ❌
+Code intent (per `trader-agent.ts` header comment): every 4 hours
+during US market hours. The first GET in the routine checks
+`isPaper` + Alpaca account access; if Alpaca is closed for the
+session, the run completes with `decisions: []` and a "market closed"
+thesis.
 
-Trader can run paper mode immediately. Live mode needs the LIVE keys.
+Recommended cron (UTC): `0 14,18,21 * * 1-5` — fires at 14:00, 18:00,
+21:00 UTC, M–F. That maps roughly to 09:00 / 13:00 / 16:00 ET in
+winter, 10:00 / 14:00 / 17:00 ET in summer. Adjust after a week of
+runs.
 
 ---
 
-### 5.3 Cross-market Arbitrage (Kalshi+Polymarket) — `/api/arbitrage`
+## 6. Routine prompt
 
-**Source:** `server/arbitrage.ts`
-
-**Tables:** `arb_settings`, `arb_opportunities`, `arb_executions`,
-`arb_matched_markets`, `arb_scans`, `arb_logs`
-
-**Endpoints (read-only):**
-- `GET /health`, `GET /matched-markets`, `GET /history`,
-  `GET /stats`, `GET /settings`
-
-**Existing mutating, all BROKEN (use modelfarm):**
-- `POST /run`, `POST /scan`, `POST /council`, `POST /claude`,
-  `POST /settings`
-
-**New endpoint to add:**
+Paste this into `/schedule`. Substitute `{{BOT_API_BASE}}` (e.g.
+`https://www.jdcoredev.com/api`) and `{{JDCD_AGENT_KEY}}` at schedule
+time.
 
 ```
-POST /api/arbitrage/place-arb
-```
-
-```json
-{
-  "matched_market_id": 123,
-  "kalshi_ticker": "KX...",
-  "kalshi_side":   "yes" | "no",
-  "kalshi_contracts": 10,
-  "kalshi_price":  0.42,
-  "poly_token_id": "...",
-  "poly_side":     "BUY" | "SELL",
-  "poly_size":     10,
-  "poly_price":    0.55,
-  "expected_edge": 0.13,
-  "council_transcript": {...}
-}
-```
-
-Places paired orders on both sides. Writes `arb_executions` row.
-
-**Server-side secrets:**
-- `KALSHI_KEY_ID_LIVE`, `KALSHI_PRIVATE_KEY_LIVE` ✅
-- `POLY_API_KEY` ✅, `POLY_PRIVATE_KEY` ✅, `POLY_FUNDER` ✅
-- `POLY_API_SECRET` ❌, `POLY_API_PASSPHRASE` ❌ — **block this routine until added**
-
----
-
-### 5.4 Crypto Arbitrage — `/api/crypto-arb`
-
-**Source:** `server/crypto-arb.ts`
-
-**Tables:** `crypto_arb_settings`, `crypto_arb_opportunities`,
-`crypto_arb_executions`, `crypto_arb_scans`, `crypto_arb_logs`
-
-**Endpoints (read-only):**
-- `GET /health`, `GET /spot-prices`, `GET /history`, `GET /stats`,
-  `GET /settings`
-
-**Existing mutating, all BROKEN:**
-- `POST /run`, `POST /scan`, `POST /settings`
-
-**New endpoint to add:**
-
-```
-POST /api/crypto-arb/place-hedge
-```
-
-```json
-{
-  "kalshi_ticker": "KX...",
-  "kalshi_side":   "yes" | "no",
-  "kalshi_contracts": 10,
-  "kalshi_price":  0.42,
-  "alpaca_symbol": "BTC/USD",
-  "alpaca_side":   "buy" | "sell",
-  "alpaca_qty":    0.01,
-  "expected_edge": 0.07,
-  "council_transcript": {...}
-}
-```
-
-Places the Kalshi crypto contract and the offsetting Alpaca crypto
-spot order. Writes `crypto_arb_executions` row.
-
-**Server-side secrets:**
-- `KALSHI_KEY_ID_LIVE`, `KALSHI_PRIVATE_KEY_LIVE` ✅
-- `CRON_ALPACA_KEY_PAPER` ✅, `CRON_ALPACA_SECRET_PAPER` ✅ (paper)
-- Live Alpaca keys ❌ — paper-only until added
-
----
-
-## 6. Schedule recommendations per system
-
-These are **starting points**, not gospel. Adjust after watching one
-week of runs and token spend. All cadences expressed for the
-`/schedule` skill.
-
-| System | Recommended cadence | Why |
-|---|---|---|
-| **Predictor** (Kalshi) | every **4 hours**, 24/7 | Markets resolve over days; over-frequent runs waste tokens. Matches existing `cron_interval_hours = 2` ballpark but a bit slower because Claude routines are pricier per run than direct SDK. |
-| **Trader** (Alpaca stocks) | every **30 minutes, M-F, 09:30–16:00 ET** | NYSE hours only — outside that the Alpaca clock returns `is_open=false` and the run skips. Frequent enough to react intraday, infrequent enough to keep cost reasonable. |
-| **Arbitrage** (Kalshi+Poly) | every **2 hours**, 24/7 | Cross-platform pricing edges close quickly. Dormant until POLY secrets are added. |
-| **Crypto-arb** | every **1 hour**, 24/7 | Crypto is 24/7. BTC/ETH spot moves faster than Kalshi resubmissions, so 1h catches most divergence. |
-
-For `/schedule`, those become:
-- Predictor: `0 */4 * * *`
-- Trader: `*/30 13-21 * * 1-5` (UTC equivalent of 09:00–17:00 ET, slightly padded)
-- Arbitrage: `0 */2 * * *`
-- Crypto-arb: `0 * * * *`
-
-A shared "Run Now" button on each admin page hits its routine's
-trigger URL — no cadence change needed for ad-hoc runs.
-
----
-
-## 7. The four routine prompts
-
-Each routine is created via `/schedule` with a self-contained
-prompt. Substitute `{{BOT_API_BASE}}` (e.g.
-`https://your-railway-domain/api`) and `{{BOT_API_SECRET}}` at
-schedule time. Every API call carries `x-bot-secret: {{BOT_API_SECRET}}`.
-
-### 7.1 Predictor routine
-
-```
-You are the JD CoreDev Kalshi Prediction Bot.
+You are the JD CoreDev Claude Trader (Alpaca stocks, swing mode).
 
 Each run:
-1. GET {{BOT_API_BASE}}/predictor/settings, .../markets, .../positions, .../stats
-2. Score live Kalshi markets for mispricing.
-3. For candidates, run a five-agent council in your own context
-   (bear, bull, devil, risk, judge) producing JSON in this shape:
-   { market_ticker, market_title, side, yes_price, your_estimate,
-     edge, confidence, verdict ∈ {BET_YES,BET_NO,PASS},
-     council_transcript: { bear, bull, devil, risk, judge } }
-4. POST that JSON to /predictor/place-bet for each non-PASS verdict.
-5. POST /predictor/sync-orders, then /predictor/check-resolutions.
-6. Write a one-paragraph summary of the run.
+1. GET {{BOT_API_BASE}}/trader/agent/state
+   Header: x-jdcd-agent-key: {{JDCD_AGENT_KEY}}
+   This is your snapshot of the world: account, positions, drawdown,
+   recent decisions, recent trades, current risk setting, hard
+   constraints, and pointers to public market-data endpoints.
 
-Constraints:
-- Never exceed settings.max_bet_usd per bet, settings.max_positions overall.
-- Skip markets clustered with ≥ settings.max_correlated_bets existing
-  open bets (Iran, Israel, Trump-cabinet, etc.).
-- Markets closing in <24h need 2× normal edge.
-- 3-retry max on API errors, then abort the run cleanly.
-- Trade Kalshi only. Polymarket leg is dormant.
+2. If state.account is null OR Alpaca is closed for the session
+   (positions empty + you have no buy candidates), POST a no-op run:
+     thesis: "Market closed / Alpaca unavailable — no trades."
+     decisions: []
+   Then exit.
 
-Trust the server: /place-bet enforces min-edge floors, Kelly sizing,
-and refuses bets that violate constraints.
-```
+3. For research, optionally GET (no auth header needed):
+   - {{BOT_API_BASE}}/trader/market-signals?mode=swing
+   - {{BOT_API_BASE}}/trader/stock-bars/{SYMBOL}?limit=60&timeframe=1Day
+     — for each ticker you're seriously considering.
 
-### 7.2 Trader routine
-
-```
-You are the JD CoreDev Claude Trader (Alpaca stocks).
-
-Each run:
-1. GET {{BOT_API_BASE}}/trader/health to confirm market open.
-   If is_open=false, write "market closed" log and exit.
-2. GET .../market-signals, .../insider-trades, .../performance,
-   .../history?limit=20, .../settings
-3. Identify 0-3 candidate symbols based on:
-   - Recent insider buying that hasn't been priced in
+4. Identify 0-3 candidate symbols based on:
+   - Recent insider buying surfaced in market-signals
    - Earnings within 5 trading days where IV is mispriced
-   - Setting ${settings.risk}-appropriate technical setups
-4. For each candidate, GET .../stock-bars/{ticker} for the last
-   30 days and reason about entry price.
-5. Run a four-agent council (analyst, contrarian, risk, judge)
-   producing JSON:
-   { symbol, side, qty, type, limit_price, time_in_force,
-     rationale, risk, mode }
-6. POST to /trader/place-trade.
-7. POST /trader/sync-pnl.
-8. Write a summary including current equity, today's P&L, and
-   any open positions you reviewed.
+   - Setting state.currentRisk-appropriate technical setups
+   - Symbols already in state.positions where stop/take is hit
 
-Constraints:
-- Honour settings.risk (low / medium / high) for position size.
-- Never use more than 25% of buying power on a single trade.
-- No new entries within 30min of close unless mode='day' and TIF='day'.
-- No averaging down — if a position is red, hold or exit, never add.
-- Treat paper mode the same as live mode (settings.alpaca_paper
-  controls which Alpaca keys the server uses, not your behaviour).
-```
+5. Run a four-agent council in your context (analyst, contrarian,
+   risk, judge) to debate each candidate. Output a single thesis
+   string (1-3 sentences) summarising the run.
 
-### 7.3 Arbitrage routine
+6. POST {{BOT_API_BASE}}/trader/agent/decisions
+   Header: x-jdcd-agent-key: {{JDCD_AGENT_KEY}}
+   Body: {
+     thesis: "<your run thesis>",
+     decisions: [
+       { action: "buy",  symbol: "AAPL", notional: 1000, rationale: "...", earnings_aware: <bool> },
+       { action: "sell", symbol: "MSFT", qty: 5,         rationale: "..." },
+       { action: "hold", symbol: "NVDA",                 rationale: "..." }
+     ]
+   }
+   The server enforces all hard constraints and rejects violators.
+   Read the response — anything with status:"rejected" is your signal
+   that you proposed something the server refused (read `reasons` to
+   learn why).
 
-```
-You are the JD CoreDev Cross-Market Arbitrage Bot
-(Kalshi vs Polymarket).
+7. Final: write a one-paragraph summary that includes:
+   - Current equity and 7d drawdown from state
+   - Number of decisions executed vs rejected
+   - Any rejected decisions and why (from response)
+   - Open positions you reviewed
 
-Each run:
-1. GET {{BOT_API_BASE}}/arbitrage/matched-markets, .../settings,
-   .../stats
-2. For each matched pair, fetch live yes/no prices on both venues.
-3. Compute the round-trip edge: (1 - kalshi_yes_price) +
-   poly_no_price < 1 ⇒ short Kalshi NO + buy Poly NO is a guaranteed
-   spread (and the symmetric case for YES).
-4. Council debate (bear, bull, liquidity, settlement, judge)
-   producing JSON:
-   { matched_market_id, kalshi_ticker, kalshi_side, kalshi_contracts,
-     kalshi_price, poly_token_id, poly_side, poly_size, poly_price,
-     expected_edge, council_transcript: {...} }
-5. POST /arbitrage/place-arb for each non-PASS verdict.
-6. Summary paragraph.
+Constraints baked into your reasoning (server enforces these too):
+- Honour state.currentRisk for sizing. Low risk → notional ≤ 5% of
+  equity per trade; medium → 10%; high → 15% (the server cap).
+- Never propose more than 3 buys per run.
+- No averaging down — if a position is red and not at stop, propose
+  hold, never buy more.
+- For symbols with earnings within 3 trading days, set
+  earnings_aware: true on the buy decision to acknowledge.
+- 3-retry max on transient API errors, then abort the run cleanly.
 
-Constraints:
-- Skip pairs where either leg has < $500 visible liquidity at
-  desired size.
-- Settlement-time mismatch beyond 7 days between venues = auto-PASS.
-- Never run if Polymarket auth is missing — POST /arbitrage/place-arb
-  will refuse anyway, but check .../health first to fail fast.
-```
-
-### 7.4 Crypto-arb routine
-
-```
-You are the JD CoreDev Crypto Arb Bot (Kalshi crypto contracts
-hedged with Alpaca crypto spot).
-
-Each run:
-1. GET {{BOT_API_BASE}}/crypto-arb/settings, .../spot-prices,
-   .../stats
-2. Fetch the active Kalshi crypto markets (BTC, ETH price-target
-   contracts, monthly close ranges, etc.).
-3. For each, compute fair YES probability from current spot,
-   implied volatility, and time to settle. Compare to Kalshi yes_price.
-4. If divergence > settings.crypto_min_edge, design a hedge:
-   - If Kalshi YES is overpriced and you go SHORT (NO), buy spot to
-     hedge upside.
-   - Vice versa for SHORT YES.
-5. Council debate (analyst, hedge, risk, judge) producing JSON:
-   { kalshi_ticker, kalshi_side, kalshi_contracts, kalshi_price,
-     alpaca_symbol, alpaca_side, alpaca_qty, expected_edge,
-     council_transcript: {...} }
-6. POST /crypto-arb/place-hedge.
-7. Summary.
-
-Constraints:
-- Hedge sizing: notional matched within ±10%. The point is delta
-  neutrality, not directional bets.
-- Settlement timing: if Kalshi market closes in <2h, PASS — too
-  little room to unwind hedge.
-- Paper Alpaca means paper hedge — fine for now; flag in summary
-  if you would have wanted live execution.
+Trust the server: it will reject any decision that violates portfolio
+caps, drawdown limits, or sizing rules — read the rejection reasons
+and adapt next run.
 ```
 
 ---
 
-## 8. Run Now buttons (per system)
+## 7. Required secrets
 
-Same pattern across all four. Each routine, when created via
-`/schedule`, exposes a trigger URL bound to that routine. Add four
-small server endpoints, one per system:
+**Set on Railway, no action needed:**
+- `JDCD_AGENT_KEY` ✅ — what the routine sends in `x-jdcd-agent-key`
+- `ANTHROPIC_API_KEY` ✅ — for the routine's inference quota
+- `CRON_ALPACA_KEY_PAPER` ✅, `CRON_ALPACA_SECRET_PAPER` ✅ — paper mode ready
+- `CRON_ALPACA_PAPER` ✅ — defaults to paper
 
-```
-POST /api/predictor/trigger-routine   → calls Predictor trigger URL
-POST /api/trader/trigger-routine      → calls Trader trigger URL
-POST /api/arbitrage/trigger-routine   → calls Arbitrage trigger URL
-POST /api/crypto-arb/trigger-routine  → calls Crypto-arb trigger URL
-```
-
-Each endpoint:
-- Reads `req.body` (optional override params)
-- POSTs to the routine's trigger URL with the Anthropic API key
-- Returns 202 immediately
-
-The existing **Run Now** buttons in
-`client/src/pages/admin/trader-predictions.tsx:2491` (and equivalent
-on other admin pages) repoint from `/run` to `/trigger-routine`.
-
-**Tradeoff to flag in the UI:** today's `/run` streams SSE
-stage-by-stage. Trigger-routine is fire-and-forget. Compensate by
-polling `/{system}/runs` (or `/run-summaries` for trader) every few
-seconds and surfacing the latest entry as soon as it appears. Alternatively, have each routine
-write incremental progress into the existing `*_logs` table that
-the UI already reads.
+**Missing — add only when going live:**
+- `CRON_ALPACA_KEY_LIVE`, `CRON_ALPACA_SECRET_LIVE` — live mode is
+  blocked until both are added. Paper mode runs fine without them.
 
 ---
 
-## 9. Safety controls (apply to all four)
+## 8. Run Now button
 
-1. **Server is authoritative**, not the routine. Each `place-*`
-   endpoint enforces:
-   - Per-trade max size from settings
-   - Portfolio caps (max positions, max cash committed)
-   - Min edge / minimum confidence floors
-   - Whitelist of acceptable markets/symbols if relevant
-2. **Kill switch per system.** Add a setting `bot_enabled` (default
-   `false`) that each `place-*` endpoint checks first. Lets you
-   disable trading without unscheduling routines.
-3. **Daily loss cap.** Setting `daily_max_loss_usd`. The endpoint
-   refuses new trades once the trailing-24h loss exceeds it.
-4. **Rate limit `/place-*`** to 30 req/min per source IP — protects
-   against runaway prompts.
-5. **No cross-system budget today.** If you ever want a single
-   "fleet stops if total day-loss > $X", introduce a `system_state`
-   table that all four endpoints check. Worth flagging early even
-   if you don't build it now.
+The admin page's existing "Run Now" can either:
+
+1. **Hit the Anthropic routine trigger URL** directly. Cleanest — no
+   extra server code. Routine ID + trigger URL come from `/schedule`
+   when you create the routine.
+2. **Add a `POST /api/trader/agent/run-now` endpoint** that proxies
+   to the trigger URL with `ANTHROPIC_API_KEY`. Slightly more code
+   but keeps the secret server-side only.
+
+Either way, the existing `/cron/run` endpoint in `trader.ts` (which
+calls dead modelfarm Claude) should be retired once the routine has
+been live for a couple of weeks.
 
 ---
 
-## 10. Required secrets summary
+## 9. Safety controls
 
-**Already on Railway, no action:**
-- `KALSHI_KEY_ID_LIVE`, `KALSHI_PRIVATE_KEY_LIVE`, `KALSHI_MODE`
-- `CRON_ALPACA_KEY_PAPER`, `CRON_ALPACA_SECRET_PAPER`, `CRON_ALPACA_PAPER`
-- `ANTHROPIC_API_KEY` (for the trigger-routine endpoints to call
-  Claude's API; not for in-server SDK use)
-- `POLY_API_KEY`, `POLY_PRIVATE_KEY`, `POLY_FUNDER`
-- DB / object storage / general infra
+Server is authoritative — the routine cannot bypass these:
 
-**New secrets to add:**
-- `BOT_API_SECRET` — shared header secret for routine ↔ server auth
-- `ANTHROPIC_TRIGGER_API_KEY` — if separate from `ANTHROPIC_API_KEY`,
-  used only by `/trigger-routine` endpoints
-
-**Add only if you're enabling the corresponding system in live mode:**
-- `CRON_ALPACA_KEY_LIVE`, `CRON_ALPACA_SECRET_LIVE` — Trader live
-- `POLY_API_SECRET`, `POLY_API_PASSPHRASE` — Arbitrage at all (paper or live)
-
-**Safe to delete:**
-- `AI_INTEGRATIONS_ANTHROPIC_API_KEY`, `AI_INTEGRATIONS_ANTHROPIC_BASE_URL`
-- `AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL`
-
-(Keep them for now if you want a one-step rollback path; remove once
-the new fleet is stable for ~2 weeks.)
+1. **Hard constraints** in `AGENT_CONSTRAINTS` (`trader-agent.ts:43-50`).
+2. **Earnings gate** — buys on symbols with earnings within 3 days
+   require explicit acknowledgement (`earnings_aware: true`).
+3. **Drawdown circuit breaker** — 7-day drawdown >10% blocks all new
+   entries until equity recovers.
+4. **Paper-vs-live split** — `trader_settings.alpaca_paper` decides
+   which Alpaca keys the server uses for execution; the routine
+   doesn't see this distinction directly.
+5. **Kill switch (TODO)** — there's no `bot_enabled` flag yet. If you
+   want to disable trading without unscheduling the routine, add one
+   to `trader_settings` and check it at the top of `/agent/decisions`.
 
 ---
 
-## 11. Migration order
+## 10. To-do (not yet done)
 
-Recommended sequence — finish each step on **all four systems**
-before moving to the next:
-
-1. Add `BOT_API_SECRET` to Railway. Add the shared `requireBotSecret`
-   middleware in `server/routes.ts:700-712`. Update the admin UI's
-   `apiRequest` helper to inject `x-bot-secret`.
-2. For each system, add the new execution endpoint (`/place-bet`,
-   `/place-trade`, `/place-arb`, `/place-hedge`) wrapping the
-   already-tested order-placement code paths. Add `bot_enabled` and
-   `daily_max_loss_usd` to each system's settings table; enforce in
-   the new endpoints.
-3. Stub the broken Claude SDK calls. In each system's source, replace
-   `callClaude` / `callClaudeFast` (and the OpenAI `gpt-4o-mini`
-   paths in `predictor.ts:2174` / `:2711` and `trader.ts:1200`) with
-   functions that throw "use scheduled routine instead" — keep the
-   exports so order plumbing still compiles.
-4. Add four `POST /trigger-routine` endpoints, one per router.
-5. Repoint the four Run Now UI buttons from `/run` to
-   `/trigger-routine`. Add a "latest run summary" panel polling the
-   `*_logs` / `runs` endpoints.
-6. Create the four scheduled routines via `/schedule` using the
-   prompts in §7 and the cadences in §6. Run each at least once
-   manually before letting the cron loop unattended.
-7. Remove the legacy `cron_enabled` settings flags in each system
-   (or repurpose as the kill switch).
-8. After two weeks of stable operation, remove `AI_INTEGRATIONS_*`
-   from Railway.
-
----
-
-## 12. Out of scope here
-
-- The Lead Engine and other non-trading routes — unaffected.
-- Kalshi demo mode (`KALSHI_KEY_ID_DEMO`, `KALSHI_PASSWORD_DEMO`):
-  not needed for live trading. Add only if you want to test in demo.
-- Polymarket and Alpaca *live* trading — both have non-AI blockers
-  (missing secrets) and are explicitly gated above.
-- Any rewrite of the council reasoning algorithm itself — the prompts
-  in §7 are starting points, refine after seeing real run output.
+- Migrate predictor (`/api/predictor`) onto the same routine pattern.
+  Copy the trader-agent design: a single `state` GET, a single
+  `decisions` POST, hard constraints in code, Anthropic-hosted
+  routine driving it. The `predictor.ts` Claude SDK calls are dead
+  (modelfarm proxy), so the cron flag is currently a no-op.
+- Delete `server/arbitrage.ts` and `server/crypto-arb.ts` — they're
+  orphan files. Two stale references remain in `server/routes.ts`
+  (lines ~760 + ~805 in the automation master-control endpoint)
+  pointing to a `arb_settings` table that may not exist; will quietly
+  return "false" but is misleading. Worth a follow-up cleanup.
+- Add the `bot_enabled` kill switch above.
+- Add `CRON_ALPACA_KEY_LIVE` + `CRON_ALPACA_SECRET_LIVE` to Railway
+  when ready to flip from paper to live.
