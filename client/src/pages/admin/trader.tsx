@@ -455,28 +455,48 @@ export default function TraderDashboard() {
   },[positions,account,placeOrder,fetchPositions,fetchOrders,fetchAccount,log]);
 
   const startAgent = useCallback(async()=>{
+    // Swing mode now fires the Anthropic-hosted Claude routine instead of
+    // running an in-browser polling loop. The routine uses the user's Claude
+    // subscription quota, runs WebSearch + 4-agent council, and POSTs decisions
+    // back to /api/trader/agent/decisions when complete (decisions land in
+    // trader_pipelines with source="agent-routine" — visible after a refresh).
+    if(mode==="swing"){
+      agentActive.current=true; setAgentStatus("analyzing");
+      log("Dispatching Claude routine…","info");
+      try{
+        const r = await fetch("/api/trader/agent/run", {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ note: `risk=${risk}` }),
+        });
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok){
+          const detail = d?.hint || d?.error || `HTTP ${r.status}`;
+          log(`Dispatch failed: ${detail}`,"error");
+          agentActive.current=false; setAgentStatus("idle");
+          return;
+        }
+        log("Routine dispatched ✓ — Claude will analyze and submit decisions in a few minutes. Refresh to see new pipeline run.","success");
+        agentActive.current=false; setAgentStatus("idle");
+      }catch(e:any){
+        log(`Dispatch error: ${e.message}`,"error");
+        agentActive.current=false; setAgentStatus("idle");
+      }
+      return;
+    }
+
+    // Legacy in-browser pipeline retained for any future non-swing modes.
     agentActive.current=true; setAgentStatus("monitoring");
     log(`${mcfg.label} agent started`,"success");
     const cycle=async()=>{
       if(!agentActive.current) return;
       await fetchAccount(); await fetchPositions();
-      if(mode==="day"){
-        const now=new Date(); const etH=now.getUTCHours()-4; const etM=now.getUTCMinutes();
-        if(etH>=15&&etM>=45){
-          const dayBuys=[...new Set(tradeLog.filter(t=>t.mode==="day"&&t.side==="buy").map(t=>t.symbol))];
-          if(dayBuys.length){
-            log(`3:45 PM ET — closing ${dayBuys.length} day trade position(s): ${dayBuys.join(", ")}`, "warn");
-            for(const sym of dayBuys){ try{ await alpacaReq(keys,`/v2/positions/${sym}`,"DELETE"); }catch{} await new Promise(r=>setTimeout(r,300)); }
-          } else { log("3:45 PM ET — no day trade positions to close","warn"); }
-          await fetchPositions(); agentActive.current=false; setAgentStatus("stopped"); return;
-        }
-      }
       const pipe=await runPipeline();
       if(agentActive.current&&pipe?.validation?.pass&&pipe?.positions?.length) await executeTrades(pipe);
       if(agentActive.current){ log(`Next cycle in ${mcfg.cronMinutes}m`); setAgentStatus("monitoring"); cycleTimer.current=setTimeout(cycle,mcfg.cronMinutes*60000); }
     };
     await cycle();
-  },[risk,mode,mcfg,keys,fetchAccount,fetchPositions,runPipeline,executeTrades,log]);
+  },[risk,mode,mcfg,fetchAccount,fetchPositions,runPipeline,executeTrades,log]);
 
   const stopAgent=useCallback(()=>{ agentActive.current=false; clearTimeout(cycleTimer.current); setAgentStatus("stopped"); log("Agent stopped","warn"); },[]);
 

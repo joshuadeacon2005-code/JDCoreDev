@@ -406,3 +406,78 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
 traderAgentRouter.get("/ping", requireAgentKey, (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
+
+// ── POST /api/trader/agent/run ────────────────────────────────────────────
+// Fires the Anthropic-hosted trader routine on demand (the "Start Agent"
+// button on /admin/trader). Uses the routine's per-trigger API token, not an
+// Anthropic API key — costs subscription quota, not metered API spend.
+//
+// One-time setup:
+//   1. Open https://claude.ai/code/routines/{CLAUDE_ROUTINE_TRADER_ID}
+//   2. Add another trigger → API → Generate token (shown once)
+//   3. Paste into Railway env CLAUDE_ROUTINE_TRADER_TOKEN
+const DEFAULT_ROUTINE_ID = "trig_01RdmE8PHaQyfruhHQeheDDb";
+const ROUTINE_FIRE_BETA  = "experimental-cc-routine-2026-04-01";
+
+traderAgentRouter.post("/run", async (req, res) => {
+  const token     = process.env.CLAUDE_ROUTINE_TRADER_TOKEN;
+  const routineId = process.env.CLAUDE_ROUTINE_TRADER_ID || DEFAULT_ROUTINE_ID;
+
+  if (!token) {
+    return res.status(503).json({
+      error: "CLAUDE_ROUTINE_TRADER_TOKEN not configured",
+      hint:  "Generate an API trigger token at https://claude.ai/code/routines/" +
+             routineId + " and set it in Railway env.",
+    });
+  }
+
+  const note = (req.body?.note || "").toString().slice(0, 200);
+  const text = note
+    ? `Manual fire from JDCoreDev admin UI — ${note}`
+    : `Manual fire from JDCoreDev admin UI at ${new Date().toISOString()}`;
+
+  try {
+    const upstream = await fetch(
+      `https://api.anthropic.com/v1/claude_code/routines/${routineId}/fire`,
+      {
+        method:  "POST",
+        headers: {
+          "Authorization":   `Bearer ${token}`,
+          "anthropic-beta":  ROUTINE_FIRE_BETA,
+          "Content-Type":    "application/json",
+        },
+        body: JSON.stringify({ text }),
+      }
+    );
+    const bodyText = await upstream.text();
+    let bodyJson: any = null;
+    try { bodyJson = JSON.parse(bodyText); } catch {}
+
+    if (!upstream.ok) {
+      await pool.query(
+        `INSERT INTO trader_logs (message, type) VALUES ($1, $2)`,
+        [`[agent-run] dispatch failed (${upstream.status}): ${bodyText.slice(0, 200)}`, "warn"]
+      ).catch(() => {});
+      return res.status(upstream.status).json({
+        error:    "Anthropic routine-fire rejected the request",
+        status:   upstream.status,
+        upstream: bodyJson ?? bodyText,
+      });
+    }
+
+    await pool.query(
+      `INSERT INTO trader_logs (message, type) VALUES ($1, $2)`,
+      [`[agent-run] routine ${routineId} dispatched manually`, "info"]
+    ).catch(() => {});
+
+    res.status(202).json({
+      status:    "dispatched",
+      routineId,
+      dispatchedAt: new Date().toISOString(),
+      note:      "Routine queued — decisions land in trader_pipelines (source: agent-routine) when it completes.",
+      upstream:  bodyJson ?? bodyText,
+    });
+  } catch (e: any) {
+    res.status(502).json({ error: `Failed to reach Anthropic API: ${e.message}` });
+  }
+});
