@@ -296,7 +296,7 @@ export default function AutomationPage() {
           </div>
         )}
 
-        {/* Lead Engine card — manual run, no cron toggle */}
+        {/* Lead Engine card — routine-driven (Anthropic-hosted) */}
         <Card className="border border-teal-500/20">
           <CardHeader className="pb-3 pt-4">
             <div className="flex items-start justify-between gap-3">
@@ -308,50 +308,63 @@ export default function AutomationPage() {
                   <CardTitle className="text-sm font-semibold leading-tight">Lead Engine</CardTitle>
                   <div className="flex items-center gap-1.5 mt-1">
                     <Clock className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground">Manual run</span>
+                    <span className="text-[10px] text-muted-foreground">Daily 06:00 SGT M–F — Anthropic-hosted Claude routine</span>
                   </div>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-500 bg-amber-500/5">
-                  High API cost
+                <Badge variant="outline" className="text-[10px] border-violet-500/30 text-violet-600 dark:text-violet-400 bg-violet-500/5">
+                  Subscription quota
                 </Badge>
-                <Badge variant="outline" className={cn("text-[10px]", leStatus.running
-                  ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5"
-                  : "border-muted text-muted-foreground"
-                )}>
-                  {leStatus.running ? "Running" : "Idle"}
-                </Badge>
+                <a
+                  href="https://claude.ai/code/routines"
+                  target="_blank"
+                  rel="noreferrer"
+                  data-testid="manage-routine-lead_engine"
+                  className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium transition-colors hover:bg-muted border-violet-500/30 text-violet-600 dark:text-violet-400 bg-violet-500/5"
+                >
+                  Manage routine <ExternalLink className="h-2.5 w-2.5" />
+                </a>
               </div>
             </div>
           </CardHeader>
           <CardContent className="pb-4 pt-0">
             <p className="text-xs text-muted-foreground leading-relaxed mb-3">
-              Researches target companies, generates personalised audit pages, and writes AI-powered outreach emails and DMs. Run manually when you want to process new leads.
+              Researches target companies, generates personalised audit pages live at <code className="text-[11px] bg-muted px-1 py-0.5 rounded">jdcoredev.com/audits/&lt;slug&gt;</code>, and writes outreach emails + DMs into your draft queue for review. Runs on subscription quota — no metered API spend.
             </p>
-            {leStatus.running && (
-              <div className="mb-3">
-                <div className="flex justify-between text-[10px] text-muted-foreground mb-1">
-                  <span>{leStatus.stage || "Processing…"}</span>
-                  <span>{leStatus.percent}%</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full bg-teal-500 transition-all duration-500 rounded-full" style={{ width: `${leStatus.percent}%` }} />
-                </div>
-              </div>
-            )}
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-muted-foreground/70 italic">Claude API + web research per lead</span>
+              <span className="text-[10px] text-muted-foreground/70 italic">Routine in claude.ai · drafts persist to <code className="text-[10px]">lead_drafts</code></span>
               <div className="flex items-center gap-2">
-                {leStatus.running ? (
-                  <Button size="sm" variant="destructive" className="h-6 text-[10px] px-2" onClick={stopLeadEngine} disabled={leActing}>
-                    <Square className="h-2.5 w-2.5 mr-1" />Stop
-                  </Button>
-                ) : (
-                  <Button size="sm" className="h-6 text-[10px] px-2 bg-teal-600 hover:bg-teal-700" onClick={runLeadEngine} disabled={leActing}>
-                    <Play className="h-2.5 w-2.5 mr-1" />Run
-                  </Button>
-                )}
+                <Button
+                  size="sm"
+                  className="h-6 text-[10px] px-2 bg-teal-600 hover:bg-teal-700"
+                  onClick={async () => {
+                    setLeActing(true);
+                    try {
+                      const r = await fetch("/api/lead-engine/agent/run", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ note: "manual fire from /admin/automation" }),
+                      });
+                      const d = await r.json().catch(() => ({}));
+                      if (!r.ok) {
+                        toast({ title: "Could not fire routine", description: d?.hint || d?.error || `HTTP ${r.status}`, variant: "destructive" });
+                      } else {
+                        const sessionUrl = d?.upstream?.claude_code_session_url;
+                        toast({
+                          title: "Lead Engine routine dispatched",
+                          description: sessionUrl ? "Watch in claude.ai — audits land in 5–10 minutes." : "Audits land at /audits/<slug> when complete.",
+                        });
+                      }
+                    } catch (e: any) {
+                      toast({ title: "Dispatch error", description: e.message, variant: "destructive" });
+                    }
+                    setLeActing(false);
+                  }}
+                  disabled={leActing}
+                >
+                  <Play className="h-2.5 w-2.5 mr-1" />Run now
+                </Button>
                 <Link href="/admin/lead-engine">
                   <button className="flex items-center gap-1 text-[10px] text-teal-500 transition-colors hover:underline" data-testid="link-lead_engine">
                     Open page <ExternalLink className="h-2.5 w-2.5" />

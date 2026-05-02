@@ -27,6 +27,7 @@ import crypto from "crypto";
 import path from "path";
 import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
+import { leadEngineAgentRouter } from "./lead-engine-agent";
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
@@ -497,6 +498,9 @@ export async function registerRoutes(
   // requireAdmin was tried here but fails — this mount runs before passport.initialize
   // so req.isAuthenticated is undefined. The router's own requireSecret is sufficient.
   app.use("/api/lead-engine", leadEngineRouter);
+  // Agent-routine endpoints (called by an Anthropic-hosted scheduled routine
+  // — replaces the legacy /run server-side Anthropic API pipeline).
+  app.use("/api/lead-engine/agent", leadEngineAgentRouter);
 
   // Dev-logs ingest (API-key auth, called by Claude Code hook scripts on dev machines).
   // Writes into maintenance_logs so entries count toward project_hosting_terms budgets.
