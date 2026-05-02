@@ -215,7 +215,7 @@ async function initPredictorTables() {
 
 // ── DB helpers ───────────────────────────────────────────────────────────────
 
-async function getSetting(key: string): Promise<string | null> {
+export async function getSetting(key: string): Promise<string | null> {
   const r = await pool.query("SELECT value FROM predictor_settings WHERE key=$1", [key]);
   return r.rows[0]?.value ?? null;
 }
@@ -240,7 +240,7 @@ interface KalshiKeys {
   isDemo: boolean;
 }
 
-async function getKalshiKeys(): Promise<KalshiKeys> {
+export async function getKalshiKeys(): Promise<KalshiKeys> {
   // DB "mode" setting is the source of truth (controlled by the UI toggle).
   // Fall back to KALSHI_MODE env var, then default to "live" when live keys exist.
   const dbMode = await getSetting("mode").catch(() => null);
@@ -350,7 +350,7 @@ function kalshiSign(privateKeyPem: string, timestamp: string, method: string, pa
   return sig.toString("base64");
 }
 
-async function kalshiReq(path: string, method = "GET", body: any = null): Promise<any> {
+export async function kalshiReq(path: string, method = "GET", body: any = null): Promise<any> {
   const keys = await getKalshiKeys();
   const base = keys.isDemo ? KALSHI_BASE.demo : KALSHI_BASE.prod;
 
@@ -383,7 +383,7 @@ async function kalshiReq(path: string, method = "GET", body: any = null): Promis
 }
 
 // Public endpoints (no auth needed for market data)
-async function kalshiPublicReq(path: string): Promise<any> {
+export async function kalshiPublicReq(path: string): Promise<any> {
   const keys = await getKalshiKeys();
   const base = keys.isDemo ? KALSHI_BASE.demo : KALSHI_BASE.prod;
   try {
@@ -403,7 +403,7 @@ async function kalshiPublicReq(path: string): Promise<any> {
 const POLY_GAMMA = "https://gamma-api.polymarket.com";
 
 
-function getPolyCredentials() {
+export function getPolyCredentials() {
   const apiKey      = process.env.POLY_API_KEY        || "";
   const apiSecret   = process.env.POLY_API_SECRET     || "";
   const passphrase  = process.env.POLY_API_PASSPHRASE || "";
@@ -413,7 +413,7 @@ function getPolyCredentials() {
 }
 
 // Build a fully-authenticated ClobClient using official @polymarket/clob-client
-async function getPolyClobClient(): Promise<ClobClient | null> {
+export async function getPolyClobClient(): Promise<ClobClient | null> {
   const { privateKey, apiKey, apiSecret, passphrase, funder } = getPolyCredentials();
   if (!privateKey) return null;
 

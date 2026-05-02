@@ -30,6 +30,7 @@ import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
+import { predictorAgentRouter } from "./predictor-agent";
 import { devLogsIngestRouter } from "./dev-logs-ingest";
 import { z } from "zod";
 import { ObjectStorageService, ObjectNotFoundError, verifyUploadToken } from "./replit_integrations/object_storage";
@@ -748,6 +749,9 @@ export async function registerRoutes(
 
   // Claude Predictor API routes
   app.use("/api/predictor", predictorRouter);
+  // Agent-routine endpoints (called by an Anthropic-hosted scheduled routine
+  // — replaces the legacy server-side cron + Claude API pipeline).
+  app.use("/api/predictor/agent", predictorAgentRouter);
   initPredictor().catch(e => console.error('[predictor] init error:', e));
 
   // ── Automation Master Control ─────────────────────────────────────────────
