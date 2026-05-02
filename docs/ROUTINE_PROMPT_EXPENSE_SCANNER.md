@@ -13,14 +13,22 @@ Endpoints (require x-jdcd-agent-key: b2f8f4ec15ebfa118c3d925b2234d3d09f69f62a17b
   GET  https://www.jdcoredev.com/api/expenses/agent/state
   POST https://www.jdcoredev.com/api/expenses/agent/decisions
 
-Inboxes to scan (state.configuredInboxes):
+Connected Gmail account (the only one the MCP can read directly):
+  - JoshuaD@JDcoredev.com       (business, primary)
+
+Forwarded sources (Gmail filters in each of these auto-forward receipts/invoices into JoshuaD@JDcoredev.com):
   - joshuadeacon888@gmail.com   (personal — mixed signal)
   - josh@bloomandgrowgroup.com  (business)
   - Joshuadeacon2005@gmail.com  (personal — mixed signal)
-  - JoshuaD@JDcoredev.com       (business)
 ```
 
-If your Gmail MCP can only reach a subset of these accounts, scan the reachable ones and skip the rest with a clear log line — don't fail the whole run.
+claude.ai's Gmail connector accepts only one Google account at a time, so the other three inboxes forward into the primary. When you read a message, infer the **original receiving inbox** from these headers in this order of preference:
+1. `X-Forwarded-For: <original-recipient>` — most reliable
+2. `Delivered-To: <original-recipient>` (the original, before forwarding rewrote it)
+3. `Received: ... for <original-recipient>` chain — first real recipient before the forwarding hop
+4. The body sometimes has `---------- Forwarded message ----------\nFrom: ...\nTo: <original>` — fall back here only if headers are stripped
+
+Set the `gmail_account` field in the decision to the **original receiving inbox** you found in headers, NOT `JoshuaD@JDcoredev.com`. If a message wasn't forwarded (i.e. genuinely sent to JoshuaD@), use that. If you can't determine the origin at all, set `gmail_account: "unknown"` and reduce confidence by 0.10.
 
 ## Each run
 
