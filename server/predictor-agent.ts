@@ -336,8 +336,9 @@ predictorAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
   }
 });
 
-// ── POST /api/predictor/agent/run ─────────────────────────────────────────
-// Fires the Anthropic-hosted predictor routine on demand.
+// ── /api/predictor/agent/run handler ──────────────────────────────────────
+// Mounted at app-level (NOT on predictorAgentRouter) in routes.ts so it can
+// be gated by requireAdmin — the router-level mount runs before passport.
 //
 // One-time setup:
 //   1. Open https://claude.ai/code/routines (no routine yet — create one)
@@ -345,7 +346,7 @@ predictorAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
 //   3. Set Railway env CLAUDE_ROUTINE_PREDICTOR_TOKEN + CLAUDE_ROUTINE_PREDICTOR_ID
 const ROUTINE_FIRE_BETA = "experimental-cc-routine-2026-04-01";
 
-predictorAgentRouter.post("/run", async (req, res) => {
+export async function firePredictorRoutine(req: Request, res: Response) {
   const token     = process.env.CLAUDE_ROUTINE_PREDICTOR_TOKEN;
   const routineId = process.env.CLAUDE_ROUTINE_PREDICTOR_ID;
 
@@ -408,7 +409,7 @@ predictorAgentRouter.post("/run", async (req, res) => {
   } catch (e: any) {
     res.status(502).json({ error: `Failed to reach Anthropic API: ${e.message}` });
   }
-});
+}
 
 // ── GET /api/predictor/agent/ping ─────────────────────────────────────────
 predictorAgentRouter.get("/ping", requireAgentKey, (_req, res) => {

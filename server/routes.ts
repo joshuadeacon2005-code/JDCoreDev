@@ -32,7 +32,7 @@ import { expensesAgentRouter, expensesRouter, fireExpenseScannerRoutine } from "
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
-import { predictorAgentRouter } from "./predictor-agent";
+import { predictorAgentRouter, firePredictorRoutine } from "./predictor-agent";
 import { devLogsIngestRouter } from "./dev-logs-ingest";
 import { z } from "zod";
 import { ObjectStorageService, ObjectNotFoundError, verifyUploadToken } from "./replit_integrations/object_storage";
@@ -1070,6 +1070,9 @@ export async function registerRoutes(
   // (The expensesAgentRouter mount runs before passport, so the /run route
   // lives here at app-level instead of on the router itself.)
   app.post("/api/expenses/agent/run", requireAdmin, fireExpenseScannerRoutine);
+
+  // Predictor manual fire — same pattern as the expense scanner.
+  app.post("/api/predictor/agent/run", requireAdmin, firePredictorRoutine);
 
   // Clients
   app.get("/api/admin/clients", requireAdmin, async (req, res, next) => {
