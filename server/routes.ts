@@ -28,7 +28,7 @@ import path from "path";
 import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { leadEngineAgentRouter } from "./lead-engine-agent";
-import { expensesAgentRouter, expensesRouter } from "./expenses-agent";
+import { expensesAgentRouter, expensesRouter, fireExpenseScannerRoutine } from "./expenses-agent";
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
@@ -1065,7 +1065,12 @@ export async function registerRoutes(
   });
 
   // ============ Admin Routes ============
-  
+
+  // Expense Scanner manual fire — gated by admin session.
+  // (The expensesAgentRouter mount runs before passport, so the /run route
+  // lives here at app-level instead of on the router itself.)
+  app.post("/api/expenses/agent/run", requireAdmin, fireExpenseScannerRoutine);
+
   // Clients
   app.get("/api/admin/clients", requireAdmin, async (req, res, next) => {
     try {

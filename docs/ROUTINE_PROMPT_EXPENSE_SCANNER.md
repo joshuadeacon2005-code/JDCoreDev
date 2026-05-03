@@ -91,6 +91,8 @@ Build the request:
 }
 ```
 
+**Always POST, even if `decisions` is empty.** The server records every fire (with the thesis) into `expense_agent_runs` and uses the latest `scanned_at` as the next run's window start. Skipping the POST on a clean fire would freeze the scan window at "last 24h" forever. On an empty fire, set `decisions: []` and write a thesis like "Scanned X messages across Y inboxes — 0 candidates after promo/newsletter filtering."
+
 POST to `/api/expenses/agent/decisions` via `Bash` + `curl` (WebFetch is GET-only):
 
 ```

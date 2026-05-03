@@ -96,6 +96,23 @@ async function ensureSchema(): Promise<void> {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_expense_queue_status ON expense_queue (status, created_at DESC)
     `);
+    // Per-fire audit: records every routine fire (even empty ones) so the
+    // scan-window cursor advances and we have a heartbeat trail.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS expense_agent_runs (
+        id           SERIAL PRIMARY KEY,
+        scanned_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        thesis       TEXT,
+        approved     INTEGER NOT NULL DEFAULT 0,
+        queued       INTEGER NOT NULL DEFAULT 0,
+        duplicates   INTEGER NOT NULL DEFAULT 0,
+        rejected     INTEGER NOT NULL DEFAULT 0,
+        decisions_n  INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_expense_agent_runs_scanned_at ON expense_agent_runs (scanned_at DESC)
+    `);
   })();
   return schemaReady;
 }
@@ -140,7 +157,7 @@ expensesAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
       pool.query(`SELECT vendor_norm, decision, category FROM vendor_decisions ORDER BY decided_at DESC LIMIT 200`),
       pool.query(`SELECT gmail_message_id, vendor, amount, dated_at FROM business_expenses WHERE gmail_message_id IS NOT NULL ORDER BY created_at DESC LIMIT 100`),
       pool.query(`SELECT gmail_message_id, vendor, amount, dated_at, status FROM expense_queue WHERE gmail_message_id IS NOT NULL ORDER BY created_at DESC LIMIT 100`),
-      pool.query(`SELECT MAX(created_at) AS last_scan FROM business_expenses WHERE source = 'gmail-routine'`),
+      pool.query(`SELECT MAX(scanned_at) AS last_scan FROM expense_agent_runs`),
     ]);
     const messageIds = new Set<string>();
     for (const r of recentExpenses.rows) if (r.gmail_message_id) messageIds.add(r.gmail_message_id);
@@ -184,9 +201,6 @@ expensesAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
     const decisions: any[] = Array.isArray(body.decisions) ? body.decisions : [];
     const thesis = (body.thesis || "").toString().slice(0, 4000);
 
-    if (decisions.length === 0) {
-      return res.status(400).json({ error: "non-empty decisions array required" });
-    }
     if (decisions.length > MAX_DECISIONS_PER_RUN) {
       return res.status(400).json({
         error: `Too many decisions (${decisions.length}); max per run is ${MAX_DECISIONS_PER_RUN}.`,
@@ -322,8 +336,16 @@ expensesAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
 
     console.log(`[expenses-agent] thesis: "${thesis.slice(0, 80)}" — approved=${approvedCount} queued=${queuedCount} duplicates=${dupCount} rejected=${rejectedCount}`);
 
+    // Always record the fire — even empty ones — so lastRoutineScan advances
+    // and we have a heartbeat trail even for clean (zero-candidate) runs.
+    await pool.query(
+      `INSERT INTO expense_agent_runs (thesis, approved, queued, duplicates, rejected, decisions_n)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [thesis || null, approvedCount, queuedCount, dupCount, rejectedCount, decisions.length]
+    ).catch((e) => console.error("[expenses-agent] failed to record agent_run:", e.message));
+
     res.status(201).json({
-      status: approvedCount + queuedCount > 0 ? "ok" : "rejected",
+      status: "ok",
       approved:   approvedCount,
       queued:     queuedCount,
       duplicates: dupCount,
@@ -335,9 +357,11 @@ expensesAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
   }
 });
 
-// ── POST /api/expenses/agent/run ──────────────────────────────────────────
+// ── /api/expenses/agent/run handler ───────────────────────────────────────
+// Mounted at app-level (NOT on expensesAgentRouter) in routes.ts so it can
+// be gated by requireAdmin — the router-level mount runs before passport.
 const ROUTINE_FIRE_BETA = "experimental-cc-routine-2026-04-01";
-expensesAgentRouter.post("/run", async (req, res) => {
+export async function fireExpenseScannerRoutine(req: Request, res: Response) {
   const token     = process.env.CLAUDE_ROUTINE_EXPENSE_SCANNER_TOKEN;
   const routineId = process.env.CLAUDE_ROUTINE_EXPENSE_SCANNER_ID;
   if (!token || !routineId) {
@@ -381,7 +405,7 @@ expensesAgentRouter.post("/run", async (req, res) => {
   } catch (e: any) {
     res.status(502).json({ error: `Failed to reach Anthropic API: ${e.message}` });
   }
-});
+}
 
 expensesAgentRouter.get("/ping", requireAgentKey, (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
