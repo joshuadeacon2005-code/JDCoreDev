@@ -401,8 +401,9 @@ function applyAuditDefaults(audit: any): any {
   return a;
 }
 
-// ── POST /api/lead-engine/agent/run ───────────────────────────────────────
-// Fires the Anthropic-hosted lead-engine routine on demand.
+// ── /api/lead-engine/agent/run handler ────────────────────────────────────
+// Mounted at app-level (NOT on leadEngineAgentRouter) in routes.ts so it can
+// be gated by requireAdmin — the router-level mount runs before passport.
 //
 // One-time setup:
 //   1. Open the routine at https://claude.ai/code/routines/{ROUTINE_ID}
@@ -410,7 +411,7 @@ function applyAuditDefaults(audit: any): any {
 //   3. Set Railway env CLAUDE_ROUTINE_LEAD_ENGINE_TOKEN + _ID
 const ROUTINE_FIRE_BETA = "experimental-cc-routine-2026-04-01";
 
-leadEngineAgentRouter.post("/run", async (req, res) => {
+export async function fireLeadEngineRoutine(req: Request, res: Response) {
   const token     = process.env.CLAUDE_ROUTINE_LEAD_ENGINE_TOKEN;
   const routineId = process.env.CLAUDE_ROUTINE_LEAD_ENGINE_ID;
 
@@ -464,7 +465,7 @@ leadEngineAgentRouter.post("/run", async (req, res) => {
   } catch (e: any) {
     res.status(502).json({ error: `Failed to reach Anthropic API: ${e.message}` });
   }
-});
+}
 
 // ── GET /api/lead-engine/agent/ping ───────────────────────────────────────
 leadEngineAgentRouter.get("/ping", requireAgentKey, (_req, res) => {

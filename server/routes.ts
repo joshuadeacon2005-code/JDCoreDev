@@ -27,7 +27,7 @@ import crypto from "crypto";
 import path from "path";
 import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
-import { leadEngineAgentRouter } from "./lead-engine-agent";
+import { leadEngineAgentRouter, fireLeadEngineRoutine } from "./lead-engine-agent";
 import { expensesAgentRouter, expensesRouter, fireExpenseScannerRoutine } from "./expenses-agent";
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
@@ -1073,6 +1073,9 @@ export async function registerRoutes(
 
   // Predictor manual fire — same pattern as the expense scanner.
   app.post("/api/predictor/agent/run", requireAdmin, firePredictorRoutine);
+
+  // Lead Engine manual fire — same pattern.
+  app.post("/api/lead-engine/agent/run", requireAdmin, fireLeadEngineRoutine);
 
   // Clients
   app.get("/api/admin/clients", requireAdmin, async (req, res, next) => {
