@@ -82,6 +82,11 @@ export default function AdminProjectDetail() {
     queryKey: ["/api/admin/projects", projectId],
   });
 
+  // Used to resolve parent name + sub-project list for nesting display.
+  const { data: allProjects } = useQuery<Array<{ id: number; name: string; parentProjectId: number | null }>>({
+    queryKey: ["/api/admin/projects"],
+  });
+
   if (isLoading) {
     return (
       <AdminLayout>
@@ -123,12 +128,26 @@ export default function AdminProjectDetail() {
 
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
+            {project.parentProjectId && (() => {
+              const parent = allProjects?.find(p => p.id === project.parentProjectId);
+              return parent ? (
+                <Link
+                  href={`/admin/projects/${parent.id}`}
+                  className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-1"
+                  data-testid="link-parent-project"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                  Sub-project of {parent.name}
+                </Link>
+              ) : null;
+            })()}
             <h1 className="text-2xl font-semibold flex items-center gap-2">
+              {project.parentProjectId && <span className="text-muted-foreground text-xl">↳</span>}
               {project.name}
               <StatusBadge status={project.status} />
               <StatusBadge status={project.riskState} />
             </h1>
-            <Link 
+            <Link
               href={`/admin/clients/${project.client.id}`}
               className="text-muted-foreground hover:text-foreground flex items-center gap-1 mt-1"
             >
@@ -1829,8 +1848,38 @@ function MilestoneProgressCard({ milestones }: { milestones: Milestone[] }) {
 
 function OverviewTab({ project, projectId }: { project: ProjectDetailData; projectId: number }) {
   const paidCents = project.milestones.filter((m) => m.status === "paid").reduce((s, m) => s + m.amountCents, 0);
+
+  const { data: allProjects } = useQuery<Array<{ id: number; name: string; status: string; parentProjectId: number | null }>>({
+    queryKey: ["/api/admin/projects"],
+  });
+  const subProjects = allProjects?.filter(p => p.parentProjectId === projectId) || [];
+
   return (
     <div className="space-y-6">
+      {subProjects.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Sub-projects ({subProjects.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {subProjects.map(sp => (
+                <Link
+                  key={sp.id}
+                  href={`/admin/projects/${sp.id}`}
+                  className="flex items-center gap-2 p-2 rounded hover-elevate"
+                  data-testid={`link-subproject-${sp.id}`}
+                >
+                  <span className="text-muted-foreground">↳</span>
+                  <span className="font-medium">{sp.name}</span>
+                  <StatusBadge status={sp.status as any} />
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <MilestoneProgressCard milestones={project.milestones} />
 
       <ProjectCostsPanel

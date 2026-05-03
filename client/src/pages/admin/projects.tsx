@@ -28,6 +28,7 @@ const projectSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
   clientId: z.number({ required_error: "Client is required" }),
+  parentProjectId: z.number().nullable().optional(),
   status: z.enum(["lead", "active", "paused", "completed", "hosting"]),
   billingModel: z.enum(["fixed", "retainer", "day_rate"]),
   riskState: z.enum(["on_track", "at_risk", "blocked"]),
@@ -273,27 +274,34 @@ export default function AdminProjects() {
   const renderProjectCard = (project: Project, showTransferOptions: boolean = false) => {
     const projectMilestones = getProjectMilestones(project.id);
     const client = clients?.find(c => c.id === project.clientId);
+    const parentProject = project.parentProjectId
+      ? projects?.find(p => p.id === project.parentProjectId)
+      : null;
     const totalAmount = projectMilestones.reduce((sum, m) => sum + m.amountCents, 0);
     const paidAmount = projectMilestones.filter(m => m.status === "paid").reduce((sum, m) => sum + m.amountCents, 0);
     const hasOverdue = projectMilestones.some(m => m.status === "overdue");
     const progressPercent = totalAmount > 0 ? Math.round((paidAmount / totalAmount) * 100) : 0;
     const accentColor = getProjectAccentColor(project);
-    
+
     if (viewMode === "list") {
       return (
         <Card className="hover-elevate relative" data-testid={`card-project-${project.id}`}>
           <Link href={`/admin/projects/${project.id}`}>
             <div className="flex items-center gap-4 p-4 cursor-pointer">
-              <div 
+              <div
                 className="w-1 h-12 rounded-full shrink-0"
                 style={{ backgroundColor: accentColor }}
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
+                  {parentProject && <span className="text-muted-foreground text-sm shrink-0">↳</span>}
                   <h3 className="font-semibold truncate">{project.name}</h3>
                   <StatusBadge status={project.status} />
                   {project.status !== "hosting" && <StatusBadge status={project.riskState} />}
                 </div>
+                {parentProject && (
+                  <p className="text-xs text-muted-foreground truncate">Sub-project of {parentProject.name}</p>
+                )}
                 {client && (
                   <p className="text-sm text-muted-foreground truncate">{client.companyName || client.name}</p>
                 )}
@@ -554,7 +562,13 @@ export default function AdminProjects() {
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between gap-2 pr-8">
                 <div>
-                  <CardTitle className="text-lg">{project.name}</CardTitle>
+                  <CardTitle className="text-lg flex items-center gap-1.5">
+                    {parentProject && <span className="text-muted-foreground text-base">↳</span>}
+                    {project.name}
+                  </CardTitle>
+                  {parentProject && (
+                    <p className="text-xs text-muted-foreground">Sub-project of {parentProject.name}</p>
+                  )}
                   {client && (
                     <p className="text-sm text-muted-foreground">{client.companyName || client.name}</p>
                   )}
@@ -692,6 +706,26 @@ export default function AdminProjects() {
                   {form.formState.errors.clientId && (
                     <p className="text-sm text-destructive">{form.formState.errors.clientId.message}</p>
                   )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Parent project <span className="text-muted-foreground text-xs">(optional — makes this a sub-project)</span></Label>
+                  <Select
+                    value={form.watch("parentProjectId")?.toString() || "none"}
+                    onValueChange={(v) => form.setValue("parentProjectId", v === "none" ? null : parseInt(v))}
+                    disabled={!form.watch("clientId")}
+                  >
+                    <SelectTrigger data-testid="select-project-parent">
+                      <SelectValue placeholder={form.watch("clientId") ? "(None — top-level project)" : "Pick a client first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">(None — top-level project)</SelectItem>
+                      {projects
+                        ?.filter(p => p.clientId === form.watch("clientId") && !p.parentProjectId)
+                        .map((p) => (
+                          <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">

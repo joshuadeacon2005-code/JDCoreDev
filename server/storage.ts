@@ -74,6 +74,7 @@ export interface IStorage {
   getProject(id: number): Promise<Project | undefined>;
   createProject(project: InsertProject): Promise<Project>;
   updateProject(id: number, data: Partial<InsertProject>): Promise<Project | undefined>;
+  getSubProjects(parentId: number): Promise<Project[]>;
 
   // Availability Rules
   getAvailabilityRules(): Promise<AvailabilityRules | undefined>;
@@ -422,6 +423,10 @@ export class DatabaseStorage implements IStorage {
   async updateProject(id: number, data: Partial<InsertProject>): Promise<Project | undefined> {
     const [updated] = await db.update(projects).set(data).where(eq(projects.id, id)).returning();
     return updated;
+  }
+
+  async getSubProjects(parentId: number): Promise<Project[]> {
+    return db.select().from(projects).where(eq(projects.parentProjectId, parentId)).orderBy(desc(projects.createdAt));
   }
 
   // Availability Rules

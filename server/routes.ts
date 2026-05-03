@@ -1135,6 +1135,12 @@ export async function registerRoutes(
   app.post("/api/admin/projects", requireAdmin, async (req, res, next) => {
     try {
       const data = insertProjectSchema.parse(req.body);
+      if (data.parentProjectId) {
+        const parent = await storage.getProject(data.parentProjectId);
+        if (!parent) return res.status(400).json({ message: "Parent project not found" });
+        if (parent.clientId !== data.clientId) return res.status(400).json({ message: "Parent project must belong to the same client" });
+        if (parent.parentProjectId) return res.status(400).json({ message: "Sub-projects cannot themselves have a parent (single-level only)" });
+      }
       const project = await storage.createProject(data);
       await storage.createActivityEvent({
         entityType: "project",
@@ -1154,6 +1160,27 @@ export async function registerRoutes(
       const projectId = parseInt(req.params.id);
       const oldProject = await storage.getProject(projectId);
       const incoming: any = { ...req.body };
+
+      // Validate parent_project_id if it's being set/changed.
+      if (incoming.parentProjectId !== undefined && incoming.parentProjectId !== null) {
+        if (incoming.parentProjectId === projectId) {
+          return res.status(400).json({ message: "A project cannot be its own parent" });
+        }
+        const parent = await storage.getProject(incoming.parentProjectId);
+        if (!parent) return res.status(400).json({ message: "Parent project not found" });
+        const targetClientId = incoming.clientId ?? oldProject?.clientId;
+        if (parent.clientId !== targetClientId) {
+          return res.status(400).json({ message: "Parent project must belong to the same client" });
+        }
+        if (parent.parentProjectId) {
+          return res.status(400).json({ message: "Sub-projects cannot themselves have a parent (single-level only)" });
+        }
+        // If THIS project already has sub-projects of its own, it can't become a child.
+        const ownChildren = await storage.getSubProjects(projectId);
+        if (ownChildren.length > 0) {
+          return res.status(400).json({ message: "This project has sub-projects of its own; remove them before nesting it under a parent" });
+        }
+      }
 
       // When the project flips to "completed", stamp completedAt so the
       // partner-tail clock has an explicit anchor distinct from a planned

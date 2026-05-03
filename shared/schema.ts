@@ -126,6 +126,11 @@ export const contacts = pgTable("contacts", {
 export const projects = pgTable("projects", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  // Optional parent project: a sub-project tracks its own budget/billing/scope
+  // but rolls up visually under the parent on the projects list. Single-level
+  // only — the API rejects nested chains. on delete set null so deleting a
+  // parent doesn't cascade-kill its sub-projects.
+  parentProjectId: integer("parent_project_id").references((): any => projects.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   description: text("description"),
   status: projectStatusEnum("status").notNull().default("lead"),
