@@ -684,6 +684,7 @@ leadEngineRouter.get("/status", requireSecret, async (req, res) => {
       auditUrl: d.auditUrl || null,
       subject: d.subject,
       body: d.body,
+      angle: d.angle || null,
       sent: !!d.sent,
       sentAt: d.sentAt || null,
       date: d.date || new Date().toISOString(),

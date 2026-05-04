@@ -25,6 +25,7 @@ function saveQueue(queue) {
 }
 
 export async function saveDraft(lead, outreach, auditUrl) {
+  const angle = (outreach && outreach.angle) || null; // creative | system | rebuild
   const queue = loadQueue();
   queue.push({
     id: Date.now(),
@@ -38,6 +39,7 @@ export async function saveDraft(lead, outreach, auditUrl) {
     auditUrl,
     subject: outreach.subject,
     body: outreach.body,
+    angle,
     sent: false,
   });
   saveQueue(queue);
@@ -52,6 +54,7 @@ export async function saveDraft(lead, outreach, auditUrl) {
     auditUrl: auditUrl || null,
     subject: outreach.subject,
     body: outreach.body,
+    angle,
     sent: false,
     sentAt: null,
   });

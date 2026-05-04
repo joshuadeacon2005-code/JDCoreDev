@@ -1095,6 +1095,11 @@ export const leadDrafts = pgTable("lead_drafts", {
   auditUrl: text("audit_url"),
   subject: text("subject").notNull(),
   body: text("body").notNull(),
+  // angle: which JDCoreDev service the agent classified the lead under —
+  // "creative" | "system" | "rebuild". Drives coloured badges + filtering in
+  // /admin/lead-engine. Nullable for legacy drafts written before this column
+  // existed.
+  angle: text("angle"),
   sent: boolean("sent").notNull().default(false),
   sentAt: timestamp("sent_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

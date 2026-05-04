@@ -554,6 +554,13 @@ export async function registerRoutes(
         ADD COLUMN IF NOT EXISTS primary_pain_point TEXT,
         ADD COLUMN IF NOT EXISTS linkedin TEXT
     `);
+    // angle: classification the Lead Engine routine assigns to each draft —
+    // "creative" | "system" | "rebuild". Drives coloured badges + filtering in
+    // /admin/lead-engine. Idempotent so old prod DBs pick it up on boot.
+    await pool.query(`
+      ALTER TABLE lead_drafts
+        ADD COLUMN IF NOT EXISTS angle TEXT
+    `).catch(() => {}); // table may not exist yet on first boot — Drizzle migrations create it
   })();
 
   const leadsImportCors = (_req: Request, res: Response, next: NextFunction) => {

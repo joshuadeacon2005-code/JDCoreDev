@@ -80,7 +80,24 @@ function regenStageColor(stage: string) {
 }
 
 interface Lead { id?: number; name: string; domain: string; status: string; channel: string; contactedAt: string; auditUrl: string; hasHtml?: boolean; }
-interface Draft { id: number; company: string; email: string | null; instagram: string | null; whatsapp: string | null; subject: string; body: string; sent: boolean; sentAt?: string; date: string; auditUrl?: string | null; domain?: string | null; }
+interface Draft { id: number; company: string; email: string | null; instagram: string | null; whatsapp: string | null; subject: string; body: string; sent: boolean; sentAt?: string; date: string; auditUrl?: string | null; domain?: string | null; angle?: "creative" | "system" | "rebuild" | string | null; }
+
+const ANGLE_STYLES: Record<string, string> = {
+  creative: "bg-purple-500/10 text-purple-500 border-purple-500/30",
+  system:   "bg-blue-500/10 text-blue-500 border-blue-500/30",
+  rebuild:  "bg-amber-500/10 text-amber-500 border-amber-500/30",
+};
+function AngleBadge({ angle }: { angle: string }) {
+  const cls = ANGLE_STYLES[angle.toLowerCase()] ?? "bg-muted text-muted-foreground border-border";
+  return (
+    <span
+      className={`inline-flex items-center text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${cls}`}
+      data-testid={`badge-angle-${angle}`}
+    >
+      {angle}
+    </span>
+  );
+}
 interface Progress { running: boolean; percent: number; stage: string; lines: string[]; done: boolean; }
 interface EngineSettings {
   industries: string[]; count: number;
@@ -932,7 +949,10 @@ export default function LeadEngine() {
                   <div key={draft.id} className="border border-border/60 rounded-lg p-4 space-y-3">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div>
-                        <p className="font-medium text-sm">{draft.company}</p>
+                        <p className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                          <span>{draft.company}</span>
+                          {draft.angle && <AngleBadge angle={draft.angle} />}
+                        </p>
                         <p className="text-xs text-muted-foreground font-mono mt-0.5">{draft.subject}</p>
                         <div className="flex items-center gap-3 mt-1.5">
                           {draft.domain && !draft.domain.startsWith("ig_") && (
@@ -1216,7 +1236,10 @@ export default function LeadEngine() {
                     {[...sentDrafts].reverse().map(draft => (
                       <tr key={draft.id} className="border-b border-border/30 hover:bg-muted/20 transition-colors">
                         <td className="px-4 py-3">
-                          <p className="font-medium">{draft.company}</p>
+                          <p className="font-medium flex items-center gap-2 flex-wrap">
+                            <span>{draft.company}</span>
+                            {draft.angle && <AngleBadge angle={draft.angle} />}
+                          </p>
                           <div className="flex items-center gap-3 mt-1">
                             {draft.domain && !draft.domain.startsWith("ig_") && (
                               <a href={`https://${draft.domain}`} target="_blank" rel="noopener noreferrer"
