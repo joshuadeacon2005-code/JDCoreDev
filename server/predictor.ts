@@ -1779,10 +1779,53 @@ predictorRouter.get("/key-check", async (_req, res) => {
 // Proxy for Kalshi public market data (CORS workaround)
 predictorRouter.get("/markets", async (req, res) => {
   try {
-    const limit = parseInt((req.query.limit as string) || "100");
+    const limit = Math.min(parseInt((req.query.limit as string) || "100"), 1000);
     const status = (req.query.status as string) || "open";
-    const data = await kalshiPublicReq(`/markets?status=${status}&limit=${limit}`);
-    res.json(data);
+    // KXMVE = Kalshi multi-leg parlay markets (sports compounds). They flood
+    // the default sort and are almost never tradeable for a research-driven
+    // agent (every leg multiplies edge requirements; liquidity is thin). Skip
+    // by default; pass ?include_parlays=true to include them.
+    const includeParlays = req.query.include_parlays === "true";
+
+    if (includeParlays) {
+      const data = await kalshiPublicReq(`/markets?status=${status}&limit=${Math.min(limit, 1000)}`);
+      return res.json(data);
+    }
+
+    // Paginate Kalshi until we accumulate `limit` non-parlay markets, capped
+    // at 10 page-fetches (5000 raw markets) to bound cost.
+    const collected: any[] = [];
+    let cursor: string | undefined;
+    let totalScanned = 0;
+    const PAGE_SIZE = 500;
+    const MAX_PAGES = 10;
+    for (let i = 0; i < MAX_PAGES && collected.length < limit; i++) {
+      const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+      const data: any = await kalshiPublicReq(`/markets?status=${status}&limit=${PAGE_SIZE}${cursorParam}`);
+      if (data?.error) {
+        return res.status(502).json({ error: data.message || "Kalshi proxy error" });
+      }
+      const ms: any[] = Array.isArray(data?.markets) ? data.markets : [];
+      totalScanned += ms.length;
+      for (const m of ms) {
+        const t: string = m?.ticker || "";
+        if (t.startsWith("KXMVE")) continue; // parlay
+        collected.push(m);
+        if (collected.length >= limit) break;
+      }
+      cursor = data?.cursor;
+      if (!cursor || ms.length === 0) break;
+    }
+
+    res.json({
+      markets: collected,
+      cursor: null,
+      meta: {
+        scanned: totalScanned,
+        returned: collected.length,
+        filter: "KXMVE parlays excluded — pass ?include_parlays=true to include",
+      },
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

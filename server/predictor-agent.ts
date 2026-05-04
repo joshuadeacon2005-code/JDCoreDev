@@ -175,11 +175,38 @@ predictorAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
     const thesis   = (body.thesis || "").toString().slice(0, 4000);
     const decisions: any[] = Array.isArray(body.decisions) ? body.decisions : [];
 
-    if (!thesis || decisions.length === 0) {
-      return res.status(400).json({ error: "thesis and non-empty decisions array required" });
+    if (!thesis) {
+      return res.status(400).json({ error: "thesis required" });
     }
 
     const constraints = await loadConstraints();
+
+    // Empty-decision fire — log it as a no-op run and exit early. Matches the
+    // routine spec ("always POST, even if decisions: []") so the agent can
+    // record a clean scan-with-no-edge as a successful fire instead of being
+    // forced to fabricate skip-decisions to satisfy the old non-empty rule.
+    if (decisions.length === 0) {
+      await pool.query(
+        `INSERT INTO predictor_scans (markets_scanned, candidates_found, bets_placed, rounds, result_summary, scan_json)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          0, 0, 0, 1,
+          `[agent-routine] noop (no decisions). ${thesis.slice(0, 120)}`,
+          JSON.stringify({ source: "agent-routine", thesis, decisions: [], results: [], noop: true }),
+        ]
+      ).catch(() => {});
+      await pool.query(
+        `INSERT INTO predictor_logs (message, type) VALUES ($1, $2)`,
+        [`[agent-routine] noop fire. ${thesis.slice(0, 200)}`, "info"]
+      ).catch(() => {});
+      return res.status(200).json({
+        status:   "noop",
+        executed: 0,
+        rejected: 0,
+        results:  [],
+        thesis,
+      });
+    }
 
     if (decisions.length > constraints.maxDecisions) {
       return res.status(400).json({
