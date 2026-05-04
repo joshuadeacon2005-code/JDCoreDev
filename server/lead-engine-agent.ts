@@ -26,6 +26,9 @@ import { generateAuditPage } from "../pipeline/generate-page.js";
 import { saveDraft } from "../pipeline/draft-queue.js";
 import { alreadyContacted, markContacted } from "../pipeline/db.js";
 import { dbGetSettings, dbGetAllAudits } from "../pipeline/db-bridge.js";
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 
 export const leadEngineAgentRouter = Router();
 
@@ -43,9 +46,9 @@ function requireAgentKey(req: Request, res: Response, next: NextFunction) {
 }
 
 // Hard cap — even if /state surfaces more, the routine can't process more
-// than this in one fire (subscription quota cost + run time). The trader has
-// 3, predictor has 5, lead engine work is heavier so 3 is the right cap.
-const MAX_DECISIONS_PER_RUN = 3;
+// than this in one fire (subscription quota cost + run time). 5 = up to 5
+// pending leads OR up to 5 newly-discovered prospects (or any mix).
+const MAX_DECISIONS_PER_RUN = 5;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function normaliseDomain(raw: string | null | undefined): string | null {
@@ -140,17 +143,18 @@ leadEngineAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
       pendingCount: pendingLeads.length,
       totalLeadsInDb: leadsRes.rows.length,
       existingAuditCount: existingAudits.length,
+      existingDomains, // dedup blacklist — never pitch a domain in this list
       settings: settings || {},
       auditSchema: AUDIT_SCHEMA_DESCRIPTION,
       outreachSchema: OUTREACH_SCHEMA_DESCRIPTION,
       hint:
-        "For each lead in pendingLeads, do your own research via WebSearch + " +
-        "WebFetch (this is the work that used to happen in pipeline/audit.js + " +
-        "pipeline/outreach.js). Produce one decision per lead matching the " +
-        "auditSchema and outreachSchema, then POST to /api/lead-engine/agent/decisions. " +
-        "Server will call generateAuditPage so the audit lands at " +
-        "jdcoredev.com/audits/<slug>, save to the draft queue, and mark the " +
-        "lead contacted.",
+        "Process pendingLeads first (existing leads in the table). " +
+        "If you have remaining slots (cap = maxDecisionsPerRun), DISCOVER fresh " +
+        "prospects via WebSearch matching settings.industries + settings.signals " +
+        "and submit them via the new_lead path on /agent/decisions. " +
+        "Always check candidates against existingDomains before drafting. " +
+        "Each decision must include audit, outreach (with subject/body/dm/angle), " +
+        "and either lead_id (existing) OR new_lead (discovered).",
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -238,13 +242,16 @@ leadEngineAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
     let rejectedCount = 0;
 
     for (const d of decisions) {
-      const leadId = (d.lead_id || "").toString();
+      const leadId       = (d.lead_id || "").toString();
+      const newLead      = d.new_lead || null;
       const submittedLead = d.lead || {};
       const audit         = d.audit || null;
       const outreach      = d.outreach || null;
 
       const reasons: string[] = [];
-      if (!leadId) reasons.push("lead_id required");
+      if (!leadId && !newLead) reasons.push("either lead_id (existing) or new_lead (discovered) required");
+      if (leadId && newLead)   reasons.push("decision must have lead_id OR new_lead, not both");
+      if (newLead && !newLead.name) reasons.push("new_lead.name required");
       if (!audit)  reasons.push("audit object required");
       if (!outreach || !outreach.subject || !outreach.body) {
         reasons.push("outreach.subject and outreach.body required");
@@ -252,25 +259,83 @@ leadEngineAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
 
       if (reasons.length > 0) {
         rejectedCount++;
-        results.push({ leadId, status: "rejected", reasons });
+        results.push({ leadId: leadId || newLead?.name || "(unknown)", status: "rejected", reasons });
         continue;
       }
 
-      // Pull canonical lead from DB so we can't be tricked by a malformed
-      // submitted.lead. Also gives us the real domain + name for dedup.
-      const dbRow = await pool.query("SELECT * FROM leads WHERE id = $1", [leadId]);
-      if (dbRow.rows.length === 0) {
-        rejectedCount++;
-        results.push({ leadId, status: "rejected", reasons: ["lead_id not found in leads table"] });
-        continue;
+      // Resolve the lead row — either pull existing or insert discovered.
+      let dbLead: any;
+      let resolvedLeadId: string;
+
+      if (leadId) {
+        const dbRow = await pool.query("SELECT * FROM leads WHERE id = $1", [leadId]);
+        if (dbRow.rows.length === 0) {
+          rejectedCount++;
+          results.push({ leadId, status: "rejected", reasons: ["lead_id not found in leads table"] });
+          continue;
+        }
+        dbLead = dbRow.rows[0];
+        resolvedLeadId = leadId;
+      } else {
+        // Discovered prospect — dedup, then INSERT.
+        const newDomain = normaliseDomain(newLead.website) || normaliseDomain(newLead.domain);
+        const dupCheck = await pool.query(
+          `SELECT id FROM leads WHERE LOWER(business_name) = LOWER($1)
+            OR (website IS NOT NULL AND $2 IS NOT NULL AND LOWER(website) = LOWER($2))
+           LIMIT 1`,
+          [newLead.name, newLead.website || null]
+        );
+        if (dupCheck.rows.length > 0) {
+          rejectedCount++;
+          results.push({
+            leadId: dupCheck.rows[0].id,
+            status: "rejected",
+            reasons: ["new_lead duplicates an existing leads row — use lead_id path instead"],
+          });
+          continue;
+        }
+        if (newDomain && (await alreadyContacted(newDomain, newLead.name))) {
+          rejectedCount++;
+          results.push({
+            leadId: "(new)",
+            status: "rejected",
+            reasons: ["new_lead domain/name already audited (in dedup blacklist)"],
+          });
+          continue;
+        }
+        resolvedLeadId = crypto.randomUUID();
+        const now = new Date().toISOString();
+        await pool.query(
+          `INSERT INTO leads (
+            id, business_name, industry, location, owner_name, phone, email,
+            website, instagram, facebook, linkedin, channel, created_at
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [
+            resolvedLeadId,
+            newLead.name,
+            newLead.industry || null,
+            newLead.location || null,
+            newLead.ownerName || null,
+            newLead.phone || null,
+            newLead.email || null,
+            newLead.website || null,
+            newLead.instagram || null,
+            newLead.facebook || null,
+            newLead.linkedin || null,
+            "agent-discovery",
+            now,
+          ]
+        );
+        const inserted = await pool.query("SELECT * FROM leads WHERE id = $1", [resolvedLeadId]);
+        dbLead = inserted.rows[0];
       }
-      const dbLead = dbRow.rows[0];
+
       const normDomain = normaliseDomain(dbLead.website) || normaliseDomain(submittedLead.domain);
 
       // Dedup gate — skip if already audited (race against another fire / cron).
       if (await alreadyContacted(normDomain || "", dbLead.business_name)) {
         rejectedCount++;
-        results.push({ leadId, status: "rejected", reasons: ["already audited"] });
+        results.push({ leadId: resolvedLeadId, status: "rejected", reasons: ["already audited"] });
         continue;
       }
 
@@ -315,21 +380,23 @@ leadEngineAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
             outreach.subject,
             outreach.body,
             outreach.dm || null,
-            leadId,
+            resolvedLeadId,
           ]
         ).catch(() => {});
 
         executedCount++;
         results.push({
-          leadId,
-          status: "executed",
+          leadId:  resolvedLeadId,
+          status:  "executed",
+          source:  leadId ? "pending" : "discovered",
+          angle:   outreach.angle || null,
           auditUrl,
           overallScore: safeAudit.overallScore,
-          name: dbLead.business_name,
+          name:    dbLead.business_name,
         });
       } catch (e: any) {
         rejectedCount++;
-        results.push({ leadId, status: "error", reasons: [e.message] });
+        results.push({ leadId: resolvedLeadId, status: "error", reasons: [e.message] });
       }
     }
 
@@ -470,4 +537,52 @@ export async function fireLeadEngineRoutine(req: Request, res: Response) {
 // ── GET /api/lead-engine/agent/ping ───────────────────────────────────────
 leadEngineAgentRouter.get("/ping", requireAgentKey, (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+// ── POST /api/lead-engine/agent/reset ─────────────────────────────────────
+// Destructive: wipes all audits + drafts and clears audit-derived fields on
+// the leads table. Live audit URLs (jdcoredev.com/audits/<slug>) will 404
+// after this. Used to start over with a clean dedup blacklist.
+//
+// Does NOT delete rows from the `leads` table itself — just resets their
+// audit/draft state so they re-enter the pendingLeads queue.
+leadEngineAgentRouter.post("/reset", requireAgentKey, async (_req, res) => {
+  const summary: any = { startedAt: new Date().toISOString() };
+  try {
+    const auditCountBefore = await pool.query("SELECT COUNT(*)::int AS n FROM lead_audits").catch(() => ({ rows: [{ n: 0 }] }));
+    const draftCountBefore = await pool.query("SELECT COUNT(*)::int AS n FROM lead_drafts").catch(() => ({ rows: [{ n: 0 }] }));
+    summary.auditsBefore = auditCountBefore.rows[0]?.n ?? 0;
+    summary.draftsBefore = draftCountBefore.rows[0]?.n ?? 0;
+
+    await pool.query("DELETE FROM lead_audits").catch((e: any) => { summary.auditDeleteError = e.message; });
+    await pool.query("DELETE FROM lead_drafts").catch((e: any) => { summary.draftDeleteError = e.message; });
+
+    const leadsClear = await pool.query(
+      `UPDATE leads
+       SET overall_score = NULL,
+           recommendations_json = NULL,
+           draft_email_subject = NULL,
+           draft_email_body = NULL,
+           draft_dm = NULL`
+    ).catch((e: any) => { summary.leadsClearError = e.message; return { rowCount: 0 }; });
+    summary.leadsCleared = leadsClear.rowCount ?? 0;
+
+    // Wipe disk-rendered audit pages so /audits/:slug 404s don't fall through
+    // to stale HTML (the route prioritises DB html_content but falls back to
+    // pipeline/data/audits/ on disk).
+    const auditsDir = path.join(process.cwd(), "pipeline", "data", "audits");
+    if (fs.existsSync(auditsDir)) {
+      const before = fs.readdirSync(auditsDir).length;
+      fs.rmSync(auditsDir, { recursive: true, force: true });
+      fs.mkdirSync(auditsDir, { recursive: true });
+      summary.diskAuditsCleared = before;
+    } else {
+      summary.diskAuditsCleared = 0;
+    }
+
+    summary.completedAt = new Date().toISOString();
+    res.json({ ok: true, ...summary });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message, partial: summary });
+  }
 });
