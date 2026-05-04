@@ -42,9 +42,9 @@ function requireAgentKey(req: Request, res: Response, next: NextFunction) {
 // is rejected at submission time regardless of what the routine proposes.
 const AGENT_CONSTRAINTS = {
   maxPositions:         10,
-  maxPositionPct:       15,    // % of equity per position
-  stopLossPct:          4,
-  takeProfitPct:        8,
+  maxPositionPct:       10,    // % of equity per position — tighter for small/mid-cap diversification
+  stopLossPct:          8,     // wider stop — small/mid-caps need room to breathe through intraday noise
+  takeProfitPct:        18,    // let catalyst-driven winners run
   maxDrawdown7dPct:     10,
   noEarningsWithinDays: 3,
 } as const;
