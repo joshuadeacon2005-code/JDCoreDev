@@ -404,6 +404,133 @@ export async function registerRoutes(
     }
   });
 
+  // ── SEO: robots.txt ─────────────────────────────────────────────────────
+  // Explicitly allow crawling of public content; deny private surfaces.
+  // (If Cloudflare's content-signals layer is intercepting /robots.txt at the
+  // edge, this Express response will be ignored — Cloudflare → Customize →
+  // robots.txt to disable the managed default.)
+  app.get("/robots.txt", (_req, res) => {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.send([
+      "User-agent: *",
+      "Allow: /",
+      "Disallow: /admin",
+      "Disallow: /api",
+      "Disallow: /lead-engine",
+      "",
+      "Sitemap: https://www.jdcoredev.com/sitemap.xml",
+      "",
+    ].join("\n"));
+  });
+
+  // ── SEO: sitemap.xml ────────────────────────────────────────────────────
+  // Dynamic — lists homepage, key static pages, and every published audit.
+  // Google fetches this on a recurring crawl; updating the audit table is
+  // automatically reflected on next fetch.
+  app.get("/sitemap.xml", async (_req, res) => {
+    const SITE = "https://www.jdcoredev.com";
+    type SitemapEntry = { loc: string; priority: string; changefreq: string; lastmod?: string };
+    const staticUrls: SitemapEntry[] = [
+      { loc: SITE + "/",         priority: "1.0", changefreq: "weekly" },
+      { loc: SITE + "/audits",   priority: "0.8", changefreq: "daily"  },
+    ];
+    const auditUrls: SitemapEntry[] = [];
+    try {
+      const audits = await storage.getAllLeadAudits();
+      for (const a of (audits || [])) {
+        if (!a.auditUrl) continue;
+        const slug = String(a.auditUrl).split("/audits/")[1]?.replace(/\/$/, "");
+        if (!slug) continue;
+        auditUrls.push({
+          loc: `${SITE}/audits/${slug}`,
+          priority: "0.6",
+          changefreq: "monthly",
+          lastmod: a.contactedAt ? new Date(a.contactedAt).toISOString().slice(0, 10) : undefined,
+        });
+      }
+    } catch { /* empty audit table — sitemap only contains static URLs */ }
+
+    const all: SitemapEntry[] = [...staticUrls, ...auditUrls];
+    const xml = [
+      `<?xml version="1.0" encoding="UTF-8"?>`,
+      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`,
+      ...all.map((u) =>
+        `  <url><loc>${u.loc}</loc>${u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : ""}<changefreq>${u.changefreq}</changefreq><priority>${u.priority}</priority></url>`
+      ),
+      `</urlset>`,
+    ].join("\n");
+    res.setHeader("Content-Type", "application/xml; charset=utf-8");
+    res.send(xml);
+  });
+
+  // ── Public audits index page ────────────────────────────────────────────
+  // Server-rendered HTML so Google has a crawl entry point that links to
+  // every audit. Deliberately simple — purpose is internal linking + SEO,
+  // not a marketing page.
+  app.get("/audits", async (_req, res) => {
+    type AuditRow = { name: string; slug: string; location: string | null; industry: string | null; date: string };
+    const rows: AuditRow[] = [];
+    try {
+      const audits = await storage.getAllLeadAudits();
+      for (const a of (audits || [])) {
+        if (!a.auditUrl) continue;
+        const slug = String(a.auditUrl).split("/audits/")[1]?.replace(/\/$/, "");
+        if (!slug) continue;
+        rows.push({
+          name:     a.name || slug,
+          slug,
+          location: a.location || null,
+          industry: a.industry || null,
+          date:     a.contactedAt ? new Date(a.contactedAt).toISOString().slice(0, 10) : "",
+        });
+      }
+      rows.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    } catch { /* empty list */ }
+    const esc = (s: string) =>
+      String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hong Kong Small Business Audits | JD CoreDev</title>
+<meta name="description" content="Free digital audits of Hong Kong small businesses — website, social, infrastructure, growth scoring. Updated daily by JD CoreDev.">
+<link rel="canonical" href="https://www.jdcoredev.com/audits">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Hong Kong Small Business Audits | JD CoreDev">
+<meta property="og:description" content="Free digital audits of Hong Kong small businesses — updated daily by JD CoreDev.">
+<meta property="og:url" content="https://www.jdcoredev.com/audits">
+<meta property="og:image" content="https://www.jdcoredev.com/og-default.png">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; max-width: 880px; margin: 0 auto; padding: 48px 24px; color: #1a1a1a; line-height: 1.6; background: #fafaf8; }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  .lead { color: #555; margin-bottom: 32px; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 16px 0; border-bottom: 1px solid #eaeaea; }
+  li a { font-size: 17px; font-weight: 500; color: #1a1a1a; text-decoration: none; }
+  li a:hover { color: #2d7a6b; }
+  .meta { font-size: 13px; color: #888; margin-top: 4px; }
+  .empty { color: #888; padding: 40px 0; text-align: center; }
+  footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid #eaeaea; font-size: 14px; color: #888; }
+  footer a { color: #2d7a6b; text-decoration: none; }
+</style>
+</head>
+<body>
+<h1>Hong Kong Small Business Audits</h1>
+<p class="lead">${rows.length} audits and counting. Each one is a free assessment of a real Hong Kong small business — website, social, infrastructure, growth — by <a href="/">JD CoreDev</a>.</p>
+${rows.length === 0
+  ? `<p class="empty">No published audits yet. Check back soon.</p>`
+  : `<ul>${rows.map(r => `<li><a href="/audits/${esc(r.slug)}">${esc(r.name)}</a><div class="meta">${[esc(r.industry || ""), esc(r.location || "")].filter(Boolean).join(" · ")}${r.date ? " · " + r.date : ""}</div></li>`).join("")}</ul>`
+}
+<footer>
+  Want one for your business? <a href="/">Get in touch with JD CoreDev →</a>
+</footer>
+</body>
+</html>`;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  });
+
   // Lead engine dashboard (ENGINE_SECRET required in API calls from the UI)
   app.get("/lead-engine", (_req, res) => {
     res.sendFile(path.join(process.cwd(), "pipeline/lead-engine-dashboard.html"));

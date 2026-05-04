@@ -117,7 +117,58 @@ function buildWebsiteSection(audit) {
 
 // ── Main populate function ────────────────────────────────────────────────────
 
-function populate(template, lead, audit) {
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildMetaDescription(lead, audit) {
+  // Use auditSummary if present and decent; else synthesise from top recommendation.
+  const raw = (audit && audit.auditSummary)
+    || (audit && audit.recommendations && audit.recommendations[0]
+        ? `${audit.recommendations[0].title}: ${audit.recommendations[0].description}`
+        : '')
+    || `Digital audit for ${lead.name}${lead.location ? ' in ' + lead.location : ''} — website, social, infrastructure, and growth scoring by JD CoreDev.`;
+  // Strip newlines, truncate to ~155 chars (Google standard).
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  return escapeHtml(flat.length > 155 ? flat.slice(0, 152).trimEnd() + '...' : flat);
+}
+
+function buildJsonLd(lead, audit, slug) {
+  const url = `https://www.jdcoredev.com/audits/${slug}`;
+  const ld = {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": `${lead.name} — Digital Audit`,
+    "description": (audit && audit.auditSummary ? String(audit.auditSummary).slice(0, 250) : `Digital audit for ${lead.name}.`),
+    "author":  { "@type": "Organization", "name": "JD CoreDev", "url": "https://www.jdcoredev.com" },
+    "publisher": {
+      "@type": "Organization",
+      "name": "JD CoreDev",
+      "url":  "https://www.jdcoredev.com",
+      "logo": { "@type": "ImageObject", "url": "https://www.jdcoredev.com/favicon.png" },
+    },
+    "datePublished": new Date().toISOString().slice(0, 10),
+    "dateModified":  new Date().toISOString().slice(0, 10),
+    "mainEntityOfPage": { "@type": "WebPage", "@id": url },
+    "about": {
+      "@type": "LocalBusiness",
+      "name": lead.name,
+      ...(lead.location ? { "address": { "@type": "PostalAddress", "addressLocality": lead.location, "addressCountry": "HK" } } : {}),
+      ...(audit && typeof audit.overallScore === 'number'
+        ? { "aggregateRating": { "@type": "AggregateRating", "ratingValue": Math.round(audit.overallScore / 10), "bestRating": 10, "ratingCount": 1 } }
+        : {}),
+    },
+  };
+  // JSON.stringify handles escaping for the JSON content; we then make it safe to embed in <script>.
+  return JSON.stringify(ld, null, 2).replace(/<\/script/gi, '<\\/script');
+}
+
+function populate(template, lead, audit, slug) {
   const date = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
@@ -128,6 +179,9 @@ function populate(template, lead, audit) {
     '{{LOCATION}}':            lead.location,
     '{{WEBSITE}}':             audit.websiteUrl || lead.domain || 'No website found',
     '{{AUDIT_DATE}}':          date,
+    '{{META_DESCRIPTION}}':    buildMetaDescription(lead, audit),
+    '{{CANONICAL_URL}}':       `https://www.jdcoredev.com/audits/${slug}`,
+    '{{JSON_LD}}':             buildJsonLd(lead, audit, slug),
 
     // Overall score ring
     '{{OVERALL_SCORE}}':       audit.overallScore,
@@ -217,7 +271,7 @@ export async function generateAuditPage(lead, audit) {
   fs.mkdirSync(auditDir, { recursive: true });
 
   const template = fs.readFileSync(TEMPLATE_PATH, 'utf-8');
-  const html = populate(template, lead, audit);
+  const html = populate(template, lead, audit, slug);
 
   fs.writeFileSync(path.join(auditDir, 'index.html'), html, 'utf-8');
 
