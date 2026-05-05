@@ -45,19 +45,27 @@ curl -s "https://www.jdcoredev.com/api/predictor/markets?status=open&limit=200"
 This returns Kalshi markets. If `state.polymarket.enabled === true`, you can also research Polymarket markets — there's no equivalent JDCoreDev endpoint, so use WebSearch / WebFetch directly against `polymarket.com` or `gamma-api.polymarket.com` to find candidates.
 
 Skip:
-- Markets that close in <2 hours (no time for the price to converge to your thesis)
+- Markets that close in <30 minutes (no time to even submit a fill)
 - Markets you already hold a position in (check `state.kalshi.positions[].market_ticker`)
 - Markets where the spread between yes_bid and yes_ask is >5¢ (illiquid — your fill price will be worse than the model says)
 - Markets in the same series as one you already analysed this run (don't double-up on correlated bets)
 
-### Step 3. Generate candidates
-Pick 5–15 candidate markets that look mispriced. Think across categories — politics, sports, crypto, weather, climate, science, entertainment. Don't filter by category at this stage — the constraint is "where's the edge", not "where's the topic familiar".
+### Step 3. Generate candidates — STRONGLY PREFER SHORT-DATED, NEWS-DRIVEN MARKETS
+**Bias hard toward markets resolving within ~7 days** where today's news cycle gives you a real informational edge. Multi-month "will X happen by Q3" markets price in too many unknowns and tie up capital — small short-dated bets where you have a current-news read are better expected value.
+
+Concrete rules:
+- **Prefer markets resolving in 0.5h – 168h (7 days).** Inside that window, news from the last 24-48h is directly actionable.
+- **Be very selective on markets resolving >14 days out.** Only bet long-dated if there's a clear structural mispricing (not "I think X will happen eventually" — those tie capital up for months for tiny edge).
+- **Bias hardest toward 6h–72h resolution windows** — long enough that your thesis can play out, short enough that price discovery responds to news rather than vibes.
+
+Pick 5–15 candidate markets that look mispriced. Think across categories — politics, sports, crypto, weather, climate, science, entertainment. Don't filter by category at this stage — the constraint is "where's the edge", not "where's the topic familiar". But within a category, pick the soonest-resolving viable market.
 
 For each candidate, gather evidence with WebSearch + WebFetch:
-- Latest news on the underlying event (last 24–48h)
+- **Last 24-48h news on the underlying event** — this is the primary signal for short-dated markets
 - Polling, prediction model outputs, or domain-expert commentary if applicable
 - Counter-evidence — what would a smart bear say?
 - Cross-reference at least 2 independent sources before scoring
+- For markets resolving in <12h, prioritize wire/breaking news over week-old analysis
 
 ### Step 4. Council debate per candidate
 For each candidate that survives initial research, run a four-agent council in your context:
@@ -124,7 +132,7 @@ End the run with one paragraph:
 - **NEVER bet NO above `state.constraints.noPriceCeiling`.** Asymmetric loss — payoff capped, downside is the cost.
 - **NEVER propose more than `state.constraints.maxDecisions` (5) bets per fire.** Server enforces too.
 - **NEVER average down.** If you already hold a position in a market and price has moved against you, do nothing — don't propose another buy on the same ticker.
-- **NEVER bet on markets closing within 2 hours.** Not enough time for thesis to play out.
+- **NEVER bet on markets closing within 30 minutes.** Even a fast-resolving thesis needs time for the order to fill and the price to converge.
 - **NEVER bet on markets with yes_bid–yes_ask spread > 5¢.** Illiquid → poor fill.
 - **NEVER trust a single source for a probability call.** Cross-reference at minimum two; the contrarian must search beyond the analyst's sources.
 - **Transient API errors — retry up to 5 times with backoff**: 5s, 15s, 30s, 60s, 90s (cumulative ~3 min). 502/503/504 are usually a Railway redeploy or upstream Kalshi blip — both resolve within ~90s. Earlier 35s budget aborted runs unnecessarily during deploy windows. Only abort if all 5 retries fail; the run cost is small relative to a missed signal.
@@ -137,5 +145,6 @@ End the run with one paragraph:
 - **Edge is `our_probability − market_probability`** (for YES bets) or `(1 − our_probability) − (1 − market_probability)` (for NO bets — equivalently, `market_probability − our_probability`). The server uses `Math.abs(edge)` against `minEdge` so sign matters only for action direction.
 - **Correlated bets count.** Don't propose `bet_yes` on "Trump wins" AND `bet_yes` on "Vance VP" — they're the same bet twice. Pick the one with bigger edge and skip the other.
 - **Time-of-day matters less than news-of-day.** The 6-hour cron means you'll catch most news within a fire's window; don't worry that you might miss a 3am announcement. Worry that you'll over-bet a stale narrative.
+- **Capital efficiency: $1 in a 24h market that resolves to your prediction beats $5 tied up in a 90-day market with the same edge.** Short-dated bets recycle the bankroll. Past long-dated NO bets at $0.85+ on "will X happen by July" were capital sinks — ~$10 staked for $1.50 max profit, capital locked for months. The current $0.80 NO ceiling rule prevents repeats; bias toward short-dated bets prevents the underlying capital-efficiency mistake.
 - **Polymarket sizing is different from Kalshi.** Polymarket cost = `contracts × price` capped at `polyMaxBetUsd`; Kalshi cost = `contracts × price` capped at `maxBetUsd`. The server enforces both.
 - **Recent rejection patterns are signal.** If your last 3 fires all had `edge below minEdge` rejections, your model is too generous — tighten your `our_probability` estimates next run.
