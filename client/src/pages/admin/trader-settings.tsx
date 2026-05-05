@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
+import { TraderTabs } from "@/components/TraderTabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -108,6 +109,7 @@ export default function TraderSettings() {
 
   return (
     <AdminLayout>
+      <TraderTabs />
       <div className="max-w-3xl space-y-4">
         <div className="mb-6">
           <p className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Claude Trader</p>

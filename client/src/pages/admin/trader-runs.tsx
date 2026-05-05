@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
+import { TraderTabs } from "@/components/TraderTabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -448,6 +449,7 @@ export default function TraderRuns() {
 
   return (
     <AdminLayout>
+      <TraderTabs />
       <div>
 
         <div className="flex items-start justify-between mb-5">

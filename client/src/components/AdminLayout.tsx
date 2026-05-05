@@ -49,6 +49,7 @@ import {
   FlaskConical,
   Zap,
   Handshake,
+  ScrollText,
 } from "lucide-react";
 import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
@@ -57,18 +58,18 @@ const mainNavItems = [
   { title: "Dashboard",     icon: LayoutDashboard, href: "/admin" },
   { title: "Analytics",     icon: BarChart3,       href: "/admin/analytics" },
   { title: "Clients",       icon: Users,           href: "/admin/clients" },
-  { title: "Partners",      icon: Handshake,       href: "/admin/partners" },
   { title: "Projects",      icon: Briefcase,       href: "/admin/projects" },
   { title: "Invoice Reminders", icon: Mail,        href: "/admin/invoice-reminders" },
-  { title: "Crypto Tracker", icon: Bitcoin,        href: "/admin/crypto" },
   { title: "Lead Engine",   icon: Radar,           href: "/admin/lead-engine" },
   { title: "Claude Trader", icon: TrendingUp,      href: "/admin/trader" },
   { title: "Predictions",   icon: Scale,           href: "/admin/trader/predictions" },
-  { title: "Automation",    icon: Zap,             href: "/admin/automation" },
   { title: "Expenses",      icon: Receipt,         href: "/admin/expenses" },
+  { title: "Auto-Logs",     icon: ScrollText,      href: "/admin/dev-logs" },
 ];
 
 const moreNavItems = [
+  { title: "Partners",          icon: Handshake,    href: "/admin/partners" },
+  { title: "Automation",        icon: Zap,          href: "/admin/automation" },
   { title: "Milestones",        icon: Target,       href: "/admin/milestones" },
   { title: "Invoices",          icon: Receipt,      href: "/admin/invoices" },
   { title: "Scheduling",        icon: Calendar,     href: "/admin/scheduling" },
@@ -77,13 +78,18 @@ const moreNavItems = [
   { title: "Payment Settings",  icon: DollarSign,   href: "/admin/payment-settings" },
 ];
 
-const traderMoreItems = [
-  { title: "Trader Runs",       icon: TrendingUp,   href: "/admin/trader/runs" },
-  { title: "Trader Analytics",  icon: BarChart3,    href: "/admin/trader/analytics" },
-  { title: "Performance",       icon: Activity,     href: "/admin/trader/performance" },
-  { title: "Trader Chat",       icon: MessageSquare, href: "/admin/trader/chat" },
-  { title: "Watchlist",         icon: Star,         href: "/admin/trader/watchlist" },
-  { title: "Trader Settings",   icon: Settings,     href: "/admin/trader/settings" },
+// Trader sub-pages — exposed as tabs INSIDE /admin/trader (see TraderTabs
+// component) instead of cluttering the More dropdown with one icon each.
+// Kept here as the source of truth for both the route list and the tab
+// component; AdminLayout itself no longer renders these in the dropdown.
+export const traderTabs = [
+  { title: "Trader",            icon: TrendingUp,   href: "/admin/trader" },
+  { title: "Runs",              icon: Activity,     href: "/admin/trader/runs" },
+  { title: "Analytics",         icon: BarChart3,    href: "/admin/trader/analytics" },
+  { title: "Performance",       icon: Star,         href: "/admin/trader/performance" },
+  { title: "Chat",              icon: MessageSquare, href: "/admin/trader/chat" },
+  { title: "Watchlist",         icon: Brain,        href: "/admin/trader/watchlist" },
+  { title: "Settings",          icon: Settings,     href: "/admin/trader/settings" },
   { title: "Backtest",          icon: FlaskConical, href: "/admin/trader/backtest" },
 ];
 
@@ -105,7 +111,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
     href === "/admin" ? location === "/admin" :
     location.startsWith(href);
 
-  const anyMoreActive = [...moreNavItems, ...traderMoreItems].some(item => isActive(item.href));
+  const anyMoreActive = moreNavItems.some(item => isActive(item.href));
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -174,28 +180,6 @@ export function AdminLayout({ children }: AdminLayoutProps) {
                 More
               </p>
               {moreNavItems.map((item) => {
-                const active = isActive(item.href);
-                return (
-                  <button
-                    key={item.title}
-                    onClick={() => { setLocation(item.href); setMoreOpen(false); }}
-                    className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg text-sm transition-all ${
-                      active
-                        ? "bg-teal-500/15 text-teal-400"
-                        : "text-muted-foreground hover:text-teal-400 hover:bg-teal-500/10"
-                    }`}
-                    data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
-                  >
-                    <item.icon className="h-4 w-4 shrink-0" />
-                    {item.title}
-                  </button>
-                );
-              })}
-              <div className="my-1.5 border-t border-white/10" />
-              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-2 pb-1.5">
-                Trader
-              </p>
-              {traderMoreItems.map((item) => {
                 const active = isActive(item.href);
                 return (
                   <button

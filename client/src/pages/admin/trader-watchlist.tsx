@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
+import { TraderTabs } from "@/components/TraderTabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -220,6 +221,7 @@ export default function TraderWatchlist() {
 
   return (
     <AdminLayout>
+      <TraderTabs />
       <div className="max-w-5xl space-y-5">
 
         <div className="mb-2">

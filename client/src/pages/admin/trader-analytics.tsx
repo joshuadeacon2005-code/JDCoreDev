@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import { useLocation } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
+import { TraderTabs } from "@/components/TraderTabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -306,6 +307,7 @@ export default function TraderAnalytics() {
 
   return (
     <AdminLayout>
+      <TraderTabs />
       <div>
         <div className="flex items-start justify-between mb-5">
           <div>

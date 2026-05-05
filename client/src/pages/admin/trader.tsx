@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
+import { TraderTabs } from "@/components/TraderTabs";
 import { TradingPageHeader, pnlColor } from "@/components/TradingPageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -636,6 +637,7 @@ export default function TraderDashboard() {
   // ── CONFIG SCREEN ────────────────────────────────────────────────────────────
   if(screen==="config") return (
     <AdminLayout>
+      <TraderTabs />
       <div className="max-w-2xl">
         <div className="mb-8">
           <p className="text-[10px] text-muted-foreground uppercase tracking-widest mb-2">Autonomous Execution Engine</p>
@@ -735,6 +737,7 @@ export default function TraderDashboard() {
   // ── DASHBOARD ────────────────────────────────────────────────────────────────
   return (
     <AdminLayout>
+      <TraderTabs />
       <div>
 
         <MarketBanner/>
