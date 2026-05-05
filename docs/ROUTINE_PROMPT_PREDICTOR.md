@@ -127,7 +127,7 @@ End the run with one paragraph:
 - **NEVER bet on markets closing within 2 hours.** Not enough time for thesis to play out.
 - **NEVER bet on markets with yes_bid–yes_ask spread > 5¢.** Illiquid → poor fill.
 - **NEVER trust a single source for a probability call.** Cross-reference at minimum two; the contrarian must search beyond the analyst's sources.
-- 3-retry max on transient API errors, then abort the run cleanly.
+- **Transient API errors — retry up to 5 times with backoff**: 5s, 15s, 30s, 60s, 90s (cumulative ~3 min). 502/503/504 are usually a Railway redeploy or upstream Kalshi blip — both resolve within ~90s. Earlier 35s budget aborted runs unnecessarily during deploy windows. Only abort if all 5 retries fail; the run cost is small relative to a missed signal.
 - If `state.kalshi.balance` is null OR has an `error` field, exit cleanly with thesis "Kalshi unreachable — no decisions" and `decisions: []`.
 
 ## Operating notes
