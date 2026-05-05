@@ -272,23 +272,10 @@ function InvoiceDetailDialog({
             </p>
           </div>
 
-          {/* Line items breakdown */}
-          <div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Breakdown</p>
-            <div className="rounded-md border border-border/50 divide-y divide-border/40">
-              {invoice.lineItems.map(li => (
-                <div key={li.id} className="px-3 py-2 flex items-start justify-between gap-3 text-sm">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium truncate">{li.projectName}</p>
-                    {li.description && <p className="text-xs text-muted-foreground">{li.description}</p>}
-                  </div>
-                  <span className="font-mono shrink-0">
-                    ${(li.amountCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* Line items breakdown — collapsible. Default: priced lines
+              only (hosting fees + overage). Expand to see informational
+              maintenance log entries (amountCents=0). */}
+          <BreakdownDropdown invoice={invoice} />
 
           {/* Reminder timeline */}
           <div>
@@ -337,6 +324,56 @@ function InvoiceDetailDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function BreakdownDropdown({ invoice }: { invoice: InvoiceWithDetails }) {
+  const [showAll, setShowAll] = useState(false);
+  const priced = invoice.lineItems.filter(li => li.amountCents > 0);
+  const informational = invoice.lineItems.filter(li => li.amountCents === 0);
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-2">
+        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Breakdown</p>
+        {informational.length > 0 && (
+          <button
+            onClick={() => setShowAll(s => !s)}
+            className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+            data-testid={`toggle-breakdown-${invoice.id}`}
+          >
+            {showAll ? "Hide" : "Show"} {informational.length} log{informational.length === 1 ? "" : "s"}
+            <span className="text-[10px]">{showAll ? "▾" : "▸"}</span>
+          </button>
+        )}
+      </div>
+      <div className="rounded-md border border-border/50 divide-y divide-border/40">
+        {priced.map(li => (
+          <div key={li.id} className="px-3 py-2 flex items-start justify-between gap-3 text-sm">
+            <div className="min-w-0 flex-1">
+              <p className="font-medium truncate">{li.projectName}</p>
+              {li.description && <p className="text-xs text-muted-foreground">{li.description}</p>}
+            </div>
+            <span className="font-mono shrink-0">
+              ${(li.amountCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        ))}
+        {showAll && informational.length > 0 && (
+          <div className="bg-muted/20 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Maintenance log entries (informational)</p>
+            <div className="space-y-0.5">
+              {informational.map(li => (
+                <div key={li.id} className="flex items-start gap-2 text-[11px]">
+                  <span className="text-muted-foreground/70 shrink-0 w-32 truncate">{li.projectName}</span>
+                  <span className="text-foreground/80 flex-1">{li.description}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
