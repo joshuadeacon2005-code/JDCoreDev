@@ -1998,16 +1998,27 @@ predictorRouter.get("/markets", async (req, res) => {
 
     // Paginate Kalshi until we accumulate `limit` non-parlay markets, capped
     // at 10 page-fetches (5000 raw markets) to bound cost.
+    //
+    // If a SINGLE page errors (Kalshi rate-limit, transient blip), we used
+    // to 502 the whole request — even when earlier pages already succeeded.
+    // That made the predictor routine fail catastrophically on every
+    // intermittent Kalshi hiccup. Now: log + break out, return what we
+    // collected. Only 502 if EVERY page fails AND we have zero markets.
     const collected: any[] = [];
     let cursor: string | undefined;
     let totalScanned = 0;
+    let lastError: string | null = null;
+    let pagesAttempted = 0;
     const PAGE_SIZE = 500;
     const MAX_PAGES = 10;
     for (let i = 0; i < MAX_PAGES && collected.length < limit; i++) {
+      pagesAttempted++;
       const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
       const data: any = await kalshiPublicReq(`/markets?status=${status}&limit=${PAGE_SIZE}${cursorParam}`);
       if (data?.error) {
-        return res.status(502).json({ error: data.message || "Kalshi proxy error" });
+        lastError = data.message || "Kalshi proxy error";
+        console.warn(`[predictor /markets] Kalshi page ${i + 1} failed: ${lastError} — returning ${collected.length} collected so far`);
+        break;
       }
       const ms: any[] = Array.isArray(data?.markets) ? data.markets : [];
       totalScanned += ms.length;
@@ -2021,13 +2032,21 @@ predictorRouter.get("/markets", async (req, res) => {
       if (!cursor || ms.length === 0) break;
     }
 
+    if (collected.length === 0 && lastError) {
+      // Every attempt failed AND we collected nothing — only now is it a
+      // real outage worth surfacing as 502.
+      return res.status(502).json({ error: lastError });
+    }
+
     res.json({
       markets: collected,
       cursor: null,
       meta: {
         scanned: totalScanned,
         returned: collected.length,
+        pagesAttempted,
         filter: "KXMVE parlays excluded — pass ?include_parlays=true to include",
+        ...(lastError ? { warning: `partial result — Kalshi errored on a later page: ${lastError}` } : {}),
       },
     });
   } catch (e: any) {
