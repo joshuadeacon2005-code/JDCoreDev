@@ -204,6 +204,7 @@ async function initPredictorTables() {
     ["max_spread",                "0.12"],
     ["max_correlated_bets",       "2"],
     ["dynamic_edge",              "true"],
+    ["risk_profile",              "balanced"],
   ];
   for (const [k, v] of defaults) {
     await pool.query(
@@ -1727,6 +1728,72 @@ async function saveScan(
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
+
+// Risk profile presets — map a single profile choice to the four numeric
+// gates the executor reads. Changing the profile updates all four settings
+// atomically; the predictor reads them on each fire so changes take effect
+// next run with no restart.
+const RISK_PROFILES = {
+  conservative: { min_edge: "0.08", max_bet_usd: "10", max_positions: "5",  max_correlated_bets: "1", kelly_fraction: "0.15" },
+  balanced:     { min_edge: "0.05", max_bet_usd: "25", max_positions: "10", max_correlated_bets: "2", kelly_fraction: "0.25" },
+  aggressive:   { min_edge: "0.03", max_bet_usd: "50", max_positions: "20", max_correlated_bets: "4", kelly_fraction: "0.40" },
+} as const;
+type RiskProfile = keyof typeof RISK_PROFILES;
+
+predictorRouter.get("/risk-profile", async (_req, res) => {
+  try {
+    const profile = (await getSetting("risk_profile")) || "balanced";
+    const [minEdge, maxBet, maxPos, maxCorr, kelly] = await Promise.all([
+      getSetting("min_edge"),
+      getSetting("max_bet_usd"),
+      getSetting("max_positions"),
+      getSetting("max_correlated_bets"),
+      getSetting("kelly_fraction"),
+    ]);
+    res.json({
+      profile,
+      presets: RISK_PROFILES,
+      currentSettings: {
+        min_edge: minEdge,
+        max_bet_usd: maxBet,
+        max_positions: maxPos,
+        max_correlated_bets: maxCorr,
+        kelly_fraction: kelly,
+      },
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+predictorRouter.post("/risk-profile", async (req, res) => {
+  try {
+    const profile = String(req.body?.profile || "").toLowerCase() as RiskProfile;
+    if (!RISK_PROFILES[profile]) {
+      return res.status(400).json({
+        error: "profile must be one of: conservative, balanced, aggressive",
+      });
+    }
+    const preset = RISK_PROFILES[profile];
+    // Persist profile + each derived setting in one transaction-ish loop.
+    // setSetting upserts so order doesn't matter.
+    await pool.query(
+      `INSERT INTO predictor_settings (key, value) VALUES ('risk_profile', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [profile]
+    );
+    for (const [k, v] of Object.entries(preset)) {
+      await pool.query(
+        `INSERT INTO predictor_settings (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [k, v]
+      );
+    }
+    res.json({ profile, applied: preset });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // Diagnostic — answers "why hasn't the agent placed a bet recently?" by
 // returning the live state of every gate the executor checks. Surfaces

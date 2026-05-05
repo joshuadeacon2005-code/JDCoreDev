@@ -316,6 +316,10 @@ export default function TraderDashboard() {
   const [envConfig,   setEnvConfig]   = useState<{configured:boolean,isPaper:boolean}|null>(null);
   const [autoConnecting, setAutoConnecting] = useState(true);
   const [risk,        setRisk]        = useState("medium");
+  // Tracks whether the routine's risk profile is currently being persisted
+  // server-side, so the UI can show a syncing indicator + disable rapid clicks.
+  const [routineRiskSyncing, setRoutineRiskSyncing] = useState(false);
+  const [routineRiskProfile, setRoutineRiskProfile] = useState<string | null>(null);
   const [mode,        setMode]        = useState("swing");
   const [connErr,     setConnErr]     = useState("");
   const [account,     setAccount]     = useState<any>(null);
@@ -566,6 +570,48 @@ export default function TraderDashboard() {
       })
       .catch(()=>setAutoConnecting(false));
   },[]);
+
+  // ── Routine risk profile ────────────────────────────────────────────────
+  // The Conservative/Balanced/Aggressive selector below changes BOTH the
+  // local in-browser Claude calls AND the Kalshi/Polymarket predictor
+  // routine. We load the routine's current profile on mount so the UI
+  // reflects what's actually active.
+  const RISK_TO_PROFILE: Record<string, "conservative" | "balanced" | "aggressive"> = {
+    low: "conservative",
+    medium: "balanced",
+    high: "aggressive",
+  };
+
+  useEffect(() => {
+    fetch("/api/predictor/risk-profile")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.profile) setRoutineRiskProfile(d.profile);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleRiskChange = async (riskId: string) => {
+    setRisk(riskId);
+    const profile = RISK_TO_PROFILE[riskId];
+    if (!profile) return;
+    setRoutineRiskSyncing(true);
+    try {
+      const res = await fetch("/api/predictor/risk-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setRoutineRiskProfile(d.profile);
+      }
+    } catch (e) {
+      // Silent — local state already updated; routine will catch up next sync.
+    } finally {
+      setRoutineRiskSyncing(false);
+    }
+  };
 
   const handleModeChange = (newMode: string) => {
     if(agentActive.current){ stopAgent(); }
@@ -1099,14 +1145,25 @@ export default function TraderDashboard() {
                         </div>
                         <Separator className="mb-3"/>
 
-                        {/* Risk selector (not shown for crypto — always high) */}
+                        {/* Risk selector (not shown for crypto — always high).
+                            Persisted server-side so the Kalshi/Polymarket
+                            routine reads the same profile on each fire. */}
                         {m.id!=="crypto"&&(
                           <div className="mb-3">
-                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Risk Profile</p>
+                            <div className="flex items-baseline justify-between mb-2">
+                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Risk Profile</p>
+                              {routineRiskProfile && (
+                                <p className="text-[9px] text-muted-foreground/70">
+                                  Routine: <span className="font-medium">{routineRiskProfile}</span>
+                                  {routineRiskSyncing && <span className="ml-1 opacity-60">· syncing…</span>}
+                                </p>
+                              )}
+                            </div>
                             <div className="space-y-1.5">
                               {Object.values(RISK_CONFIGS).map((r:any)=>(
-                                <button key={r.id} onClick={()=>setRisk(r.id)}
+                                <button key={r.id} onClick={()=>handleRiskChange(r.id)} disabled={routineRiskSyncing}
                                   className={cn("w-full flex items-center gap-2 p-2 rounded-md text-xs border transition-colors text-left",
+                                    routineRiskSyncing && "opacity-60 cursor-not-allowed",
                                     risk===r.id?"border-primary/40 bg-primary/10 text-primary":"border-border text-muted-foreground hover:text-foreground hover:border-border")}>
                                   <r.Icon className="h-3 w-3 flex-shrink-0"/>
                                   <span className="font-medium">{r.label}</span>
@@ -1114,6 +1171,9 @@ export default function TraderDashboard() {
                                 </button>
                               ))}
                             </div>
+                            <p className="text-[9px] text-muted-foreground/60 mt-2 leading-relaxed">
+                              Changes apply to the predictor routine on its next fire (min edge, max bet, position cap, cluster cap).
+                            </p>
                           </div>
                         )}
 
