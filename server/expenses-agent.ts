@@ -18,6 +18,7 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { pool } from "./db";
+import { convertToUsd } from "./fx";
 
 export const expensesAgentRouter = Router();
 export const expensesRouter = Router();
@@ -87,6 +88,12 @@ async function ensureSchema(): Promise<void> {
         reviewed_count INTEGER NOT NULL DEFAULT 1
       )
     `);
+    // USD baseline columns — snapshot at insert time so historical totals
+    // don't drift when FX moves. Original amount + currency stays authoritative.
+    await pool.query(`ALTER TABLE business_expenses ADD COLUMN IF NOT EXISTS amount_usd NUMERIC(14,2)`);
+    await pool.query(`ALTER TABLE business_expenses ADD COLUMN IF NOT EXISTS fx_rate_to_usd NUMERIC(18,8)`);
+    await pool.query(`ALTER TABLE expense_queue     ADD COLUMN IF NOT EXISTS amount_usd NUMERIC(14,2)`);
+    await pool.query(`ALTER TABLE expense_queue     ADD COLUMN IF NOT EXISTS fx_rate_to_usd NUMERIC(18,8)`);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_business_expenses_dated_at ON business_expenses (dated_at DESC)
     `);
@@ -270,16 +277,19 @@ expensesAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
           aiConfidence >= AUTO_APPROVE_FLOOR     ? "approve" :
           /* else */                                "queue";
 
+        const { amountUsd, fxRateToUsd } = await convertToUsd(amount, currency, datedAt);
+
         if (route === "approve") {
           const ins = await pool.query(
             `INSERT INTO business_expenses
-             (vendor, amount, currency, category, frequency, dated_at, notes,
+             (vendor, amount, currency, amount_usd, fx_rate_to_usd,
+              category, frequency, dated_at, notes,
               source, gmail_account, gmail_message_id, gmail_message_url,
               ai_confidence, ai_rationale, possible_duplicate_of)
-             VALUES ($1,$2,$3,$4,'one_off',$5,$6,'gmail-routine',$7,$8,$9,$10,$11,$12)
+             VALUES ($1,$2,$3,$4,$5,$6,'one_off',$7,$8,'gmail-routine',$9,$10,$11,$12,$13,$14)
              RETURNING id`,
             [
-              vendor, amount, currency,
+              vendor, amount, currency, amountUsd, fxRateToUsd,
               vendorRow.rows[0]?.category || suggCategory || null,
               datedAt, aiRationale,
               account, messageId, messageUrl, aiConfidence, aiRationale, softDupExpId,
@@ -299,14 +309,16 @@ expensesAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
         } else {
           const ins = await pool.query(
             `INSERT INTO expense_queue
-             (vendor, amount, currency, suggested_category, dated_at, notes,
+             (vendor, amount, currency, amount_usd, fx_rate_to_usd,
+              suggested_category, dated_at, notes,
               gmail_account, gmail_message_id, gmail_message_url, raw_excerpt,
               ai_confidence, ai_rationale,
               possible_duplicate_of_expense, possible_duplicate_of_queue)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
              RETURNING id`,
             [
-              vendor, amount, currency, suggCategory, datedAt, aiRationale,
+              vendor, amount, currency, amountUsd, fxRateToUsd,
+              suggCategory, datedAt, aiRationale,
               account, messageId, messageUrl, rawExcerpt,
               aiConfidence, aiRationale,
               softDupExpId, softDupQueueId,
@@ -411,6 +423,66 @@ expensesAgentRouter.get("/ping", requireAgentKey, (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
+// ── Backfill USD snapshot on existing rows ────────────────────────────────
+// Mounted in routes.ts at /api/expenses/backfill-fx behind requireAdmin.
+// Walks business_expenses + expense_queue rows where amount_usd IS NULL,
+// fetches the rate at each row's dated_at via the FX cache, and writes the
+// snapshot. Idempotent — re-running only touches still-NULL rows.
+export async function backfillFx(req: Request, res: Response) {
+  try {
+    await ensureSchema();
+    const limit = Math.min(Math.max(parseInt(String(req.body?.limit ?? "500"), 10) || 500, 1), 5000);
+    const dryRun = Boolean(req.body?.dryRun);
+
+    const targets = await pool.query(
+      `SELECT id, amount, currency, dated_at, 'expense' AS table_name
+         FROM business_expenses
+        WHERE amount_usd IS NULL
+        UNION ALL
+       SELECT id, amount, currency, dated_at, 'queue' AS table_name
+         FROM expense_queue
+        WHERE amount_usd IS NULL AND status = 'pending'
+        ORDER BY dated_at ASC
+        LIMIT $1`,
+      [limit]
+    );
+
+    let patched = 0, failed = 0;
+    const failures: any[] = [];
+    for (const row of targets.rows) {
+      const { amountUsd, fxRateToUsd } = await convertToUsd(
+        Number(row.amount), row.currency, new Date(row.dated_at)
+      );
+      if (amountUsd === null) {
+        failed++;
+        failures.push({ table: row.table_name, id: row.id, currency: row.currency, datedAt: row.dated_at });
+        continue;
+      }
+      if (!dryRun) {
+        const table = row.table_name === "expense" ? "business_expenses" : "expense_queue";
+        await pool.query(
+          `UPDATE ${table} SET amount_usd = $1, fx_rate_to_usd = $2 WHERE id = $3`,
+          [amountUsd, fxRateToUsd, row.id]
+        );
+      }
+      patched++;
+    }
+    res.json({
+      candidates: targets.rows.length,
+      patched: dryRun ? 0 : patched,
+      wouldPatch: dryRun ? patched : undefined,
+      failed,
+      failures: failures.slice(0, 20),
+      remaining: Math.max(0, targets.rows.length - patched - failed),
+      hint: targets.rows.length === limit
+        ? `Hit batch limit (${limit}). Re-run to continue.`
+        : "All eligible rows processed.",
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PUBLIC EXPENSE CRUD (mounted at /api/expenses, no agent-key required —
 // these are called by the admin UI).
@@ -419,7 +491,8 @@ expensesRouter.get("/", async (_req, res) => {
   try {
     await ensureSchema();
     const r = await pool.query(`
-      SELECT id, vendor, amount, currency, category, frequency, dated_at,
+      SELECT id, vendor, amount, currency, amount_usd, fx_rate_to_usd,
+             category, frequency, dated_at,
              period_started_at, period_ended_at, notes, source, gmail_account,
              gmail_message_id, gmail_message_url, ai_confidence,
              possible_duplicate_of, created_at
@@ -442,19 +515,25 @@ expensesRouter.post("/", async (req, res) => {
     if (!vendor || !Number.isFinite(amount) || amount <= 0) {
       return res.status(400).json({ error: "vendor and positive amount required" });
     }
+    const currency = (b.currency || "HKD").toString().toUpperCase().slice(0, 3);
+    const datedAt = b.dated_at ? new Date(b.dated_at) : new Date();
+    const { amountUsd, fxRateToUsd } = await convertToUsd(amount, currency, datedAt);
     const r = await pool.query(
       `INSERT INTO business_expenses
-       (vendor, amount, currency, category, frequency, dated_at,
+       (vendor, amount, currency, amount_usd, fx_rate_to_usd,
+        category, frequency, dated_at,
         period_started_at, period_ended_at, notes, source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'manual')
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'manual')
        RETURNING *`,
       [
         vendor,
         amount,
-        (b.currency || "HKD").toString().toUpperCase().slice(0, 3),
+        currency,
+        amountUsd,
+        fxRateToUsd,
         (b.category || null),
         (b.frequency || "one_off"),
-        b.dated_at ? new Date(b.dated_at) : new Date(),
+        datedAt,
         b.period_started_at ? new Date(b.period_started_at) : null,
         b.period_ended_at   ? new Date(b.period_ended_at)   : null,
         b.notes || null,
@@ -482,6 +561,27 @@ expensesRouter.patch("/:id", async (req, res) => {
       }
     }
     if (fields.length === 0) return res.status(400).json({ error: "no updatable fields" });
+    // If anything affecting USD changed, recompute the snapshot from the
+    // post-update row values (fall back to existing values for unchanged fields).
+    if (b.amount !== undefined || b.currency !== undefined || b.dated_at !== undefined) {
+      const [existing] = (await pool.query(
+        `SELECT amount, currency, dated_at FROM business_expenses WHERE id = $1`,
+        [id]
+      )).rows;
+      if (existing) {
+        const newAmount   = b.amount   !== undefined ? Number(b.amount)                 : Number(existing.amount);
+        const newCurrency = b.currency !== undefined ? String(b.currency).toUpperCase().slice(0,3) : existing.currency;
+        const newDatedAt  = b.dated_at !== undefined ? new Date(b.dated_at)             : new Date(existing.dated_at);
+        const { amountUsd, fxRateToUsd } = await convertToUsd(newAmount, newCurrency, newDatedAt);
+        // Don't overwrite an existing snapshot with NULL on FX-lookup failure
+        // — leaves the row temporarily stale but recoverable via backfill,
+        // rather than degrading data we already had.
+        if (amountUsd !== null) {
+          fields.push(`amount_usd = $${i++}`);     vals.push(amountUsd);
+          fields.push(`fx_rate_to_usd = $${i++}`); vals.push(fxRateToUsd);
+        }
+      }
+    }
     fields.push(`updated_at = NOW()`);
     vals.push(id);
     const r = await pool.query(
@@ -551,20 +651,30 @@ expensesRouter.post("/queue/:id/approve", async (req, res) => {
     }
 
     const overrides = req.body || {};
+    const finalVendor   = overrides.vendor || q.vendor;
+    const finalAmount   = Number(overrides.amount ?? q.amount);
+    const finalCurrency = (overrides.currency || q.currency || "HKD").toString().toUpperCase().slice(0, 3);
+    const finalDatedAt  = overrides.dated_at ? new Date(overrides.dated_at) : new Date(q.dated_at);
+    // Recompute USD snapshot — overrides may change amount/currency/date,
+    // and the queue row's snapshot may be stale or NULL.
+    const { amountUsd, fxRateToUsd } = await convertToUsd(finalAmount, finalCurrency, finalDatedAt);
     const ins = await pool.query(
       `INSERT INTO business_expenses
-       (vendor, amount, currency, category, frequency, dated_at, notes,
+       (vendor, amount, currency, amount_usd, fx_rate_to_usd,
+        category, frequency, dated_at, notes,
         source, gmail_account, gmail_message_id, gmail_message_url,
         ai_confidence, ai_rationale, possible_duplicate_of)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'manual-approved',$8,$9,$10,$11,$12,$13)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'manual-approved',$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
-        overrides.vendor || q.vendor,
-        overrides.amount ?? q.amount,
-        overrides.currency || q.currency,
+        finalVendor,
+        finalAmount,
+        finalCurrency,
+        amountUsd,
+        fxRateToUsd,
         overrides.category || q.suggested_category,
         overrides.frequency || "one_off",
-        overrides.dated_at ? new Date(overrides.dated_at) : q.dated_at,
+        finalDatedAt,
         overrides.notes ?? q.notes,
         q.gmail_account, q.gmail_message_id, q.gmail_message_url,
         q.ai_confidence, q.ai_rationale, q.possible_duplicate_of_expense,
@@ -630,17 +740,24 @@ expensesRouter.post("/import", async (req, res) => {
     let imported = 0, dups = 0, errors = 0;
     for (const it of items) {
       try {
+        const amount   = Number(it.amount);
+        const currency = (it.currency || "HKD").toString().toUpperCase().slice(0, 3);
+        const datedAt  = it.dated_at ? new Date(it.dated_at) : new Date();
+        const { amountUsd, fxRateToUsd } = await convertToUsd(amount, currency, datedAt);
         await pool.query(
           `INSERT INTO business_expenses
-           (vendor, amount, currency, category, frequency, dated_at, notes, source)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,'manual-import')`,
+           (vendor, amount, currency, amount_usd, fx_rate_to_usd,
+            category, frequency, dated_at, notes, source)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'manual-import')`,
           [
             (it.vendor || "").toString().trim(),
-            Number(it.amount),
-            (it.currency || "HKD").toString().toUpperCase().slice(0, 3),
+            amount,
+            currency,
+            amountUsd,
+            fxRateToUsd,
             it.category || null,
             it.frequency || "one_off",
-            it.dated_at ? new Date(it.dated_at) : new Date(),
+            datedAt,
             it.notes || null,
           ]
         );
@@ -660,7 +777,8 @@ expensesRouter.post("/import", async (req, res) => {
 expensesRouter.get("/summary", async (_req, res) => {
   try {
     await ensureSchema();
-    const [byMonth, byCategory, totalsByFrequency, queuePending] = await Promise.all([
+    const [byMonth, byCategory, totalsByFrequency, queuePending,
+           byMonthUsd, byCategoryUsd, totalsByFrequencyUsd, fxCoverage] = await Promise.all([
       pool.query(`
         SELECT TO_CHAR(dated_at, 'YYYY-MM') AS month,
                currency,
@@ -685,12 +803,47 @@ expensesRouter.get("/summary", async (_req, res) => {
         GROUP BY 1
       `),
       pool.query(`SELECT COUNT(*)::int AS n FROM expense_queue WHERE status = 'pending'`),
+      // USD-baseline aggregates (snapshot at expense's dated_at).
+      pool.query(`
+        SELECT TO_CHAR(dated_at, 'YYYY-MM') AS month,
+               SUM(amount_usd)::numeric(14,2) AS total_usd
+        FROM business_expenses
+        WHERE dated_at > NOW() - INTERVAL '12 months' AND amount_usd IS NOT NULL
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `),
+      pool.query(`
+        SELECT COALESCE(category, 'uncategorised') AS category,
+               SUM(amount_usd)::numeric(14,2) AS total_usd
+        FROM business_expenses
+        WHERE dated_at > NOW() - INTERVAL '12 months' AND amount_usd IS NOT NULL
+        GROUP BY 1
+        ORDER BY 2 DESC
+      `),
+      pool.query(`
+        SELECT frequency,
+               COUNT(*)::int AS n,
+               SUM(amount_usd)::numeric(14,2) AS total_usd
+        FROM business_expenses
+        WHERE amount_usd IS NOT NULL
+        GROUP BY 1
+      `),
+      pool.query(`
+        SELECT COUNT(*)::int AS total_rows,
+               COUNT(amount_usd)::int AS rows_with_usd,
+               COUNT(*) FILTER (WHERE amount_usd IS NULL)::int AS rows_missing_usd
+        FROM business_expenses
+      `),
     ]);
     res.json({
       byMonth:    byMonth.rows,
       byCategory: byCategory.rows,
       totalsByFrequency: totalsByFrequency.rows,
       queuePending: queuePending.rows[0]?.n ?? 0,
+      byMonthUSD:    byMonthUsd.rows,
+      byCategoryUSD: byCategoryUsd.rows,
+      totalsByFrequencyUSD: totalsByFrequencyUsd.rows,
+      fxCoverage: fxCoverage.rows[0] ?? { total_rows: 0, rows_with_usd: 0, rows_missing_usd: 0 },
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

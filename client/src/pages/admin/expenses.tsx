@@ -18,6 +18,8 @@ type Expense = {
   vendor: string;
   amount: string;
   currency: string;
+  amount_usd: string | null;
+  fx_rate_to_usd: string | null;
   category: string | null;
   frequency: string;
   dated_at: string;
@@ -36,6 +38,8 @@ type QueueItem = {
   vendor: string;
   amount: string;
   currency: string;
+  amount_usd: string | null;
+  fx_rate_to_usd: string | null;
   suggested_category: string | null;
   dated_at: string;
   notes: string | null;
@@ -56,11 +60,22 @@ type Summary = {
   byCategory: { category: string; currency: string; total: string }[];
   totalsByFrequency: { frequency: string; n: number; total: string }[];
   queuePending: number;
+  byMonthUSD?: { month: string; total_usd: string }[];
+  byCategoryUSD?: { category: string; total_usd: string }[];
+  totalsByFrequencyUSD?: { frequency: string; n: number; total_usd: string }[];
+  fxCoverage?: { total_rows: number; rows_with_usd: number; rows_missing_usd: number };
 };
 
 const fmtCurrency = (amount: string | number, currency: string) => {
   const n = typeof amount === "string" ? parseFloat(amount) : amount;
   return `${currency} ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+const fmtUsd = (amount: string | number | null | undefined) => {
+  if (amount === null || amount === undefined) return null;
+  const n = typeof amount === "string" ? parseFloat(amount) : amount;
+  if (!Number.isFinite(n)) return null;
+  return `≈ USD ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
@@ -94,6 +109,28 @@ export default function AdminExpenses() {
   }, [toast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const backfillFx = async () => {
+    try {
+      const r = await fetch("/api/expenses/backfill-fx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 1000 }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        toast({ title: "Backfill failed", description: d?.error || `HTTP ${r.status}`, variant: "destructive" });
+        return;
+      }
+      toast({
+        title: "FX backfill done",
+        description: `${d.patched} row${d.patched === 1 ? "" : "s"} patched · ${d.failed} failed · ${d.remaining ?? 0} remaining`,
+      });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Backfill error", description: e.message, variant: "destructive" });
+    }
+  };
 
   const fireScanner = async () => {
     setScanning(true);
@@ -179,12 +216,12 @@ export default function AdminExpenses() {
     }
   };
 
-  const thisMonthTotal = useMemo(() => {
-    if (!summary?.byMonth) return 0;
+  const thisMonthTotalUsd = useMemo(() => {
+    if (!summary?.byMonthUSD) return 0;
     const yyyymm = new Date().toISOString().slice(0, 7);
-    return summary.byMonth
+    return summary.byMonthUSD
       .filter(r => r.month === yyyymm)
-      .reduce((s, r) => s + parseFloat(r.total), 0);
+      .reduce((s, r) => s + parseFloat(r.total_usd || "0"), 0);
   }, [summary]);
 
   return (
@@ -206,6 +243,11 @@ export default function AdminExpenses() {
               <RefreshCw className={cn("h-3 w-3 mr-1.5", loading && "animate-spin")} />
               Refresh
             </Button>
+            {summary?.fxCoverage?.rows_missing_usd ? (
+              <Button variant="outline" size="sm" onClick={backfillFx} className="h-8 text-xs border-amber-500/30 text-amber-600 dark:text-amber-400">
+                Backfill USD ({summary.fxCoverage.rows_missing_usd})
+              </Button>
+            ) : null}
             <Button size="sm" onClick={fireScanner} disabled={scanning} className="h-8 text-xs bg-violet-600 hover:bg-violet-700">
               <Play className="h-3 w-3 mr-1.5" />
               {scanning ? "Dispatching…" : "Run scanner now"}
@@ -222,8 +264,13 @@ export default function AdminExpenses() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pb-4">
-              <p className="text-2xl font-bold font-mono">HKD {thisMonthTotal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              <p className="text-[10px] text-muted-foreground/70 mt-0.5">Confirmed business expenses</p>
+              <p className="text-2xl font-bold font-mono">USD {thisMonthTotalUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                Confirmed business expenses · USD baseline
+                {summary?.fxCoverage?.rows_missing_usd ? (
+                  <span className="text-amber-600 dark:text-amber-400"> · {summary.fxCoverage.rows_missing_usd} row{summary.fxCoverage.rows_missing_usd === 1 ? "" : "s"} missing FX</span>
+                ) : null}
+              </p>
             </CardContent>
           </Card>
 
@@ -248,10 +295,10 @@ export default function AdminExpenses() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pb-4">
-              {summary?.byCategory?.slice(0, 3).map((c, i) => (
+              {summary?.byCategoryUSD?.slice(0, 3).map((c, i) => (
                 <p key={i} className="text-[11px] flex justify-between">
                   <span className="text-muted-foreground">{c.category}</span>
-                  <span className="font-mono">{fmtCurrency(c.total, c.currency)}</span>
+                  <span className="font-mono">USD {parseFloat(c.total_usd || "0").toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </p>
               )) || <p className="text-xs text-muted-foreground">—</p>}
             </CardContent>
@@ -290,6 +337,9 @@ export default function AdminExpenses() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-sm font-semibold">{q.vendor}</p>
                             <span className="font-mono text-sm">{fmtCurrency(q.amount, q.currency)}</span>
+                            {q.currency !== "USD" && fmtUsd(q.amount_usd) && (
+                              <span className="font-mono text-[11px] text-muted-foreground">{fmtUsd(q.amount_usd)}</span>
+                            )}
                             <Badge variant="outline" className="text-[10px]">
                               {Math.round((q.ai_confidence ?? 0) * 100)}% confidence
                             </Badge>
@@ -349,7 +399,12 @@ export default function AdminExpenses() {
                               {fmtDate(e.dated_at)} · {e.category || "uncategorised"} · {e.frequency} · via {e.source}
                             </p>
                           </div>
-                          <span className="font-mono text-sm shrink-0">{fmtCurrency(e.amount, e.currency)}</span>
+                          <div className="shrink-0 text-right">
+                            <div className="font-mono text-sm">{fmtCurrency(e.amount, e.currency)}</div>
+                            {e.currency !== "USD" && fmtUsd(e.amount_usd) && (
+                              <div className="font-mono text-[10px] text-muted-foreground">{fmtUsd(e.amount_usd)}</div>
+                            )}
+                          </div>
                           <div className="flex gap-1.5 shrink-0">
                             {e.gmail_message_url && (
                               <a href={e.gmail_message_url} target="_blank" rel="noreferrer" className="text-[11px] text-violet-500 hover:underline inline-flex items-center gap-1">
