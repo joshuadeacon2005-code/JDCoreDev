@@ -168,13 +168,44 @@ function buildJsonLd(lead, audit, slug) {
   return JSON.stringify(ld, null, 2).replace(/<\/script/gi, '<\\/script');
 }
 
+// Build the headline-finding hero block. The audit prompt now returns a
+// `headline` string — a one-sentence company-specific finding. If it's
+// missing or generic, we synthesise from recommendations[0] / no-website
+// state so the page never falls back to a bland hero.
+function buildHeadlineFindingBlock(audit) {
+  const escapeHtml = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  let text = (audit.headline || '').trim();
+  // Discard model-generated fillers that defeat the purpose.
+  if (/^(your\s+digital\s+presence|several\s+improvements|mixed\s+results|room\s+to\s+grow)/i.test(text)) {
+    text = '';
+  }
+  if (!text) {
+    if (!audit.hasWebsite) {
+      text = `No website detected — invisible to anyone searching for ${audit && audit.industry ? audit.industry : 'this'} in the area.`;
+    } else if (audit.recommendations && audit.recommendations[0]) {
+      const r = audit.recommendations[0];
+      text = (r.title || '') + (r.description ? ` — ${r.description.split(/[.!?]\s/)[0]}` : '');
+    }
+  }
+  if (!text) return ''; // No usable headline → render nothing rather than empty styled block.
+
+  return `<div class="headline-finding fade-up delay-1">
+    <span class="headline-finding-label">The headline finding</span>
+    <p class="headline-finding-text">${escapeHtml(text)}</p>
+  </div>`;
+}
+
 function populate(template, lead, audit, slug) {
   const date = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
 
   const replacements = {
-    '{{COMPANY_NAME}}':        lead.name,
+    '{{COMPANY_NAME}}':           lead.name,
+    '{{HEADLINE_FINDING_BLOCK}}': buildHeadlineFindingBlock({ ...audit, industry: lead.industry }),
     '{{INDUSTRY}}':            lead.industry,
     '{{LOCATION}}':            lead.location,
     '{{WEBSITE}}':             audit.websiteUrl || lead.domain || 'No website found',

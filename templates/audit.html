@@ -91,6 +91,30 @@
     margin-bottom: 30px; max-width: 800px;
   }
   .company-name span { color: var(--brand-green); }
+  .headline-finding {
+    margin: 16px 0 32px;
+    padding: 20px 24px;
+    border-left: 3px solid var(--accent);
+    background: linear-gradient(90deg, rgba(232,255,71,0.06), transparent);
+    max-width: 760px;
+  }
+  .headline-finding-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 6px;
+    display: block;
+  }
+  .headline-finding-text {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(18px, 2.4vw, 26px);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.35;
+    color: var(--white);
+  }
   .hero-meta { display: flex; gap: 40px; flex-wrap: wrap; margin-top: 40px; }
   .meta-item { display: flex; flex-direction: column; gap: 4px; }
   .meta-label { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--grey3); }
@@ -285,6 +309,7 @@
 <section class="hero">
   <div class="brand-tag fade-up">JD CoreDev · <span class="green">Digital Audit Report</span></div>
   <h1 class="company-name fade-up delay-1">{{COMPANY_NAME}}<span>.</span></h1>
+  {{HEADLINE_FINDING_BLOCK}}
   <div class="hero-meta fade-up delay-2">
     <div class="meta-item"><span class="meta-label">Industry</span><span class="meta-value">{{INDUSTRY}}</span></div>
     <div class="meta-item"><span class="meta-label">Location</span><span class="meta-value">{{LOCATION}}</span></div>

@@ -274,6 +274,7 @@ export async function auditCompany(lead) {
   audit.overallScore   = audit.overallScore   ?? 30;
   audit.recommendations= audit.recommendations?? [];
   audit.auditSummary   = audit.auditSummary   ?? '';
+  audit.headline       = audit.headline       ?? null;
 
   return audit;
 }
