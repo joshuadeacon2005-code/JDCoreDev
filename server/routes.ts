@@ -30,6 +30,7 @@ import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { leadEngineAgentRouter, fireLeadEngineRoutine } from "./lead-engine-agent";
 import { expensesAgentRouter, expensesRouter, fireExpenseScannerRoutine, backfillFx } from "./expenses-agent";
+import { socialSignalsRouter } from "./social-signals";
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
@@ -634,6 +635,11 @@ ${rows.length === 0
   // Business expense tracker — Gmail scanner routine + admin CRUD.
   app.use("/api/expenses", expensesRouter);
   app.use("/api/expenses/agent", expensesAgentRouter);
+
+  // Social trader signal ingestion — admin-only review queue for posts
+  // from tracked Instagram (etc.) traders. Auto-scraping deferred; manual
+  // paste-in flow with Claude extraction.
+  app.use("/api/social-signals", requireAdmin, socialSignalsRouter);
 
   // Dev-logs ingest (API-key auth, called by Claude Code hook scripts on dev machines).
   // Writes into maintenance_logs so entries count toward project_hosting_terms budgets.

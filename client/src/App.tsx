@@ -50,6 +50,7 @@ import AdminTraderWatchlist from "@/pages/admin/trader-watchlist";
 import AdminTraderPredictions from "@/pages/admin/trader-predictions";
 import AdminAutomation from "@/pages/admin/automation";
 import AdminExpenses from "@/pages/admin/expenses";
+import AdminSocialSignals from "@/pages/admin/social-signals";
 
 // Client portal pages
 import PortalDashboard from "@/pages/portal/dashboard";
@@ -103,6 +104,7 @@ function Router() {
       <ProtectedRoute path="/admin/trader/predictions" component={AdminTraderPredictions} requiredRole="admin" />
       <ProtectedRoute path="/admin/automation" component={AdminAutomation} requiredRole="admin" />
       <ProtectedRoute path="/admin/expenses" component={AdminExpenses} requiredRole="admin" />
+      <ProtectedRoute path="/admin/social-signals" component={AdminSocialSignals} requiredRole="admin" />
 
       {/* Client portal routes */}
       <ProtectedRoute path="/portal" component={PortalDashboard} requiredRole="client" />
