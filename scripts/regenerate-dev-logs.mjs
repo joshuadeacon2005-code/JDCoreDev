@@ -28,12 +28,17 @@ import { pathToFileURL } from "node:url";
 
 // Dynamic import — the hook lib lives outside the repo at ~/.claude/hooks/jdcd/lib.mjs.
 const hookLibPath = path.join(os.homedir(), ".claude", "hooks", "jdcd", "lib.mjs");
-const { readTranscript, summarizeTranscript, buildDescription } =
+const { readTranscript, summarizeTranscript, buildDescription, looksLikeSecret } =
   await import(pathToFileURL(hookLibPath).href);
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const DRY_RUN = process.argv.includes("--dry-run");
 const VERBOSE = process.argv.includes("--verbose");
+// --rebuild reprocesses every claude-code-session log, not just ones in the
+// old broken shape. Used to retroactively re-tighten the secret filter — an
+// already-fixed entry still gets re-built and re-PATCHed if its current
+// description contains a credential.
+const REBUILD = process.argv.includes("--rebuild");
 const INGEST_BASE =
   process.env.JDCD_DEV_LOG_INGEST_BASE
   || (process.env.JDCD_DEV_LOG_ENDPOINT
@@ -135,9 +140,15 @@ async function main() {
   const { logs } = await api("GET", "/sessions");
   console.log(`Fetched ${logs.length} claude-code-session log rows`);
 
-  // Pre-filter to broken-looking entries and group by session prefix.
-  const broken = logs.filter(l => looksBroken(l.description));
-  console.log(`${broken.length} look like the old broken fallback shape`);
+  // Pre-filter to candidates. By default: broken-shape entries only.
+  // --rebuild: every claude-code-session entry is a candidate (idempotent —
+  // re-emitting the same description short-circuits via the unchanged guard).
+  const broken = REBUILD
+    ? logs.slice()
+    : logs.filter(l => looksBroken(l.description));
+  console.log(REBUILD
+    ? `${broken.length} entries will be reprocessed (--rebuild)`
+    : `${broken.length} look like the old broken fallback shape`);
 
   const bySession = new Map();
   let unknownSession = 0;
@@ -149,7 +160,7 @@ async function main() {
   }
   if (unknownSession) console.log(`(${unknownSession} broken entries had no session prefix in footer — skipped)`);
 
-  let patched = 0, missingTranscript = 0, unchanged = 0, errors = 0;
+  let patched = 0, missingTranscript = 0, unchanged = 0, errors = 0, secretBlocked = 0;
 
   for (const [sid, sessionLogs] of bySession) {
     sessionLogs.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
@@ -190,6 +201,15 @@ async function main() {
         cwd: transcript.dir, // approximate — used only for path display
       });
 
+      // Final guard: if anything in the regenerated description still looks
+      // like a credential, skip — never persist secret-shaped output to the DB.
+      if (looksLikeSecret(newDesc)) {
+        secretBlocked++;
+        if (VERBOSE) console.log(`  · log ${log.id}: secret-shaped content detected, skipped`);
+        prevEndMs = endMs;
+        continue;
+      }
+
       // Skip if regenerated description is identical (idempotent reruns).
       if (newDesc.trim() === log.description.trim()) {
         unchanged++;
@@ -224,6 +244,7 @@ async function main() {
   console.log(`  patched              : ${DRY_RUN ? "(dry run)" : patched}`);
   console.log(`  unchanged            : ${unchanged}`);
   console.log(`  missing transcripts  : ${missingTranscript}`);
+  console.log(`  secret-blocked       : ${secretBlocked}`);
   console.log(`  errors               : ${errors}`);
 }
 
