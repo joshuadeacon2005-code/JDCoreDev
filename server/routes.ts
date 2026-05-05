@@ -28,7 +28,7 @@ import path from "path";
 import fs from "fs";
 import { leadEngineRouter, initDbBridge } from "../pipeline/route.js";
 import { leadEngineAgentRouter, fireLeadEngineRoutine } from "./lead-engine-agent";
-import { expensesAgentRouter, expensesRouter, fireExpenseScannerRoutine } from "./expenses-agent";
+import { expensesAgentRouter, expensesRouter, fireExpenseScannerRoutine, backfillFx } from "./expenses-agent";
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
@@ -1204,6 +1204,9 @@ ${rows.length === 0
   // (The expensesAgentRouter mount runs before passport, so the /run route
   // lives here at app-level instead of on the router itself.)
   app.post("/api/expenses/agent/run", requireAdmin, fireExpenseScannerRoutine);
+
+  // Backfill USD snapshot on rows where amount_usd IS NULL. Idempotent.
+  app.post("/api/expenses/backfill-fx", requireAdmin, backfillFx);
 
   // Predictor manual fire — same pattern as the expense scanner.
   app.post("/api/predictor/agent/run", requireAdmin, firePredictorRoutine);
@@ -4363,39 +4366,39 @@ JD CoreDev System`,
         return res.status(400).json({ error: "Selected projects have no hosting fees configured" });
       }
 
-      // Time-based maintenance overage, computed against the *current billing
-      // cycle* (project_hosting_terms.current_cycle_start_date) which the user
-      // resets manually after each payment. Charged at $30/hr above the time
-      // budget — this represents JD's own time. External pass-through dev
-      // costs are billed to the client through their own line items and do
-      // not offset this overage.
+      // Combined-budget maintenance overage. Each client's projects share a
+      // collective time allowance — under-utilised projects subsidise
+      // over-utilised ones. We sum every selected project's logged minutes and
+      // budgets across the cycle window, then compute ONE overage on the
+      // combined difference. (Earlier per-project sum was a bug — it billed
+      // overage on Project A even when Project B had unused budget.)
       const HOSTING_OVERAGE_RATE_CENTS_PER_HOUR = 3000; // $30/hr
-      let totalOverageCents = 0;
-      const projectOverages: Record<
-        number,
-        { amount: number; cycleStart: string; overtimeMinutes: number }
-      > = {};
       const cycleEnd = invoiceDate || new Date().toISOString().split("T")[0];
+      let combinedActualMinutes = 0;
+      let combinedBudgetMinutes = 0;
+      let earliestCycleStart: string | null = null;
+      const perProjectMinutes: Record<number, number> = {};
       for (const project of selectedProjects) {
         const terms = await storage.getProjectHostingTerms(project.id);
         const budgetMinutes = terms?.maintenanceBudgetMinutes ?? null;
-        if (budgetMinutes === null) continue;
         const cycleStart =
           terms?.currentCycleStartDate ||
           (billingYear && billingMonth
             ? `${billingYear}-${String(billingMonth).padStart(2, "0")}-01`
             : cycleEnd);
-        const logs = await storage.getMaintenanceLogsByDateRange(project.id, cycleStart, cycleEnd);
-        const totalMinutes = logs.reduce((sum, log) => sum + log.minutesSpent, 0);
-        const overtimeMinutes = Math.max(0, totalMinutes - budgetMinutes);
-        const overage = Math.round(
-          (overtimeMinutes * HOSTING_OVERAGE_RATE_CENTS_PER_HOUR) / 60,
-        );
-        if (overage > 0) {
-          projectOverages[project.id] = { amount: overage, cycleStart, overtimeMinutes };
-          totalOverageCents += overage;
+        if (!earliestCycleStart || cycleStart < earliestCycleStart) {
+          earliestCycleStart = cycleStart;
         }
+        const logs = await storage.getMaintenanceLogsByDateRange(project.id, cycleStart, cycleEnd);
+        const minutes = logs.reduce((sum, log) => sum + log.minutesSpent, 0);
+        perProjectMinutes[project.id] = minutes;
+        combinedActualMinutes += minutes;
+        if (budgetMinutes !== null) combinedBudgetMinutes += budgetMinutes;
       }
+      const combinedOvertimeMinutes = Math.max(0, combinedActualMinutes - combinedBudgetMinutes);
+      const totalOverageCents = Math.round(
+        (combinedOvertimeMinutes * HOSTING_OVERAGE_RATE_CENTS_PER_HOUR) / 60,
+      );
 
       const totalAmountCents = hostingFeesTotal + totalOverageCents;
 
@@ -4418,7 +4421,9 @@ JD CoreDev System`,
         createdByUserId: req.user!.id,
       });
 
-      // Create line items for each project
+      // One hosting line item per project; ONE combined overage line item
+      // attached to the first project (overage is now client-level, not
+      // per-project — a sub-row is just where it lives in the table).
       for (const project of selectedProjects) {
         await storage.createHostingInvoiceLineItem({
           invoiceId: invoice.id,
@@ -4427,19 +4432,18 @@ JD CoreDev System`,
           amountCents: project.hostingTerms?.monthlyFeeCents || 0,
           description: "Monthly Hosting & Support",
         });
-
-        // Add overage line item if applicable
-        const overage = projectOverages[project.id];
-        if (overage && overage.amount > 0) {
-          const hours = (overage.overtimeMinutes / 60).toFixed(2);
-          await storage.createHostingInvoiceLineItem({
-            invoiceId: invoice.id,
-            projectId: project.id,
-            projectName: project.name,
-            amountCents: overage.amount,
-            description: `Maintenance Overage — ${hours}h over budget @ $30/hr (cycle since ${overage.cycleStart})`,
-          });
-        }
+      }
+      if (totalOverageCents > 0) {
+        const overageHours = (combinedOvertimeMinutes / 60).toFixed(2);
+        const budgetHours  = (combinedBudgetMinutes / 60).toFixed(1);
+        const cycleStartLabel = earliestCycleStart || cycleEnd;
+        await storage.createHostingInvoiceLineItem({
+          invoiceId: invoice.id,
+          projectId: selectedProjects[0].id,
+          projectName: "All projects (combined)",
+          amountCents: totalOverageCents,
+          description: `Maintenance Overage — ${overageHours}h over combined ${budgetHours}h budget @ $30/hr (cycle since ${cycleStartLabel})`,
+        });
       }
 
       // Create activity event
@@ -4583,6 +4587,107 @@ JD CoreDev System`,
       }
 
       res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Recalculate an existing hosting invoice in place using the current
+  // combined-budget logic + present cycle window. Used to repair invoices
+  // that were generated before the per-project → combined-budget fix.
+  // Replaces line items and updates totalAmountCents; preserves invoice
+  // metadata (invoiceNumber, dueDate, status, reminderCount).
+  app.post("/api/admin/hosting-invoices/:id/recalculate", requireAdmin, async (req, res, next) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid invoice ID" });
+
+      const existing = await storage.getHostingInvoice(id);
+      if (!existing) return res.status(404).json({ message: "Invoice not found" });
+
+      // Pull existing line items to recover the project list this invoice
+      // was issued against. Use distinct projectIds across all rows.
+      const { db } = await import("./db");
+      const { hostingInvoiceLineItems } = await import("@shared/schema");
+      const existingLineItems = await db.select().from(hostingInvoiceLineItems)
+        .where(eq(hostingInvoiceLineItems.invoiceId, id));
+      const projectIds = Array.from(new Set(existingLineItems.map(li => li.projectId)));
+      if (projectIds.length === 0) {
+        return res.status(400).json({ message: "Invoice has no line items — nothing to recalculate from" });
+      }
+
+      const projectsWithTerms = await storage.getHostingProjectsWithTerms(existing.clientId);
+      const selectedProjects = projectsWithTerms.filter(p => projectIds.includes(p.id));
+      if (selectedProjects.length === 0) {
+        return res.status(400).json({ message: "No matching hosting projects found for this invoice's client" });
+      }
+
+      const hostingFeesTotal = selectedProjects.reduce((sum, p) =>
+        sum + (p.hostingTerms?.monthlyFeeCents || 0), 0
+      );
+
+      const HOSTING_OVERAGE_RATE_CENTS_PER_HOUR = 3000;
+      const cycleEnd = existing.invoiceDate;
+      let combinedActualMinutes = 0;
+      let combinedBudgetMinutes = 0;
+      let earliestCycleStart: string | null = null;
+      for (const project of selectedProjects) {
+        const terms = await storage.getProjectHostingTerms(project.id);
+        const budgetMinutes = terms?.maintenanceBudgetMinutes ?? null;
+        const cycleStart = terms?.currentCycleStartDate || cycleEnd;
+        if (!earliestCycleStart || cycleStart < earliestCycleStart) earliestCycleStart = cycleStart;
+        const logs = await storage.getMaintenanceLogsByDateRange(project.id, cycleStart, cycleEnd);
+        const minutes = logs.reduce((sum, l) => sum + l.minutesSpent, 0);
+        combinedActualMinutes += minutes;
+        if (budgetMinutes !== null) combinedBudgetMinutes += budgetMinutes;
+      }
+      const combinedOvertimeMinutes = Math.max(0, combinedActualMinutes - combinedBudgetMinutes);
+      const totalOverageCents = Math.round(
+        (combinedOvertimeMinutes * HOSTING_OVERAGE_RATE_CENTS_PER_HOUR) / 60,
+      );
+      const newTotalCents = hostingFeesTotal + totalOverageCents;
+
+      // Wipe + recreate line items + update total. No transaction wrapper —
+      // the surrounding admin handler is single-writer.
+      await db.delete(hostingInvoiceLineItems).where(eq(hostingInvoiceLineItems.invoiceId, id));
+      for (const project of selectedProjects) {
+        await storage.createHostingInvoiceLineItem({
+          invoiceId: id,
+          projectId: project.id,
+          projectName: project.name,
+          amountCents: project.hostingTerms?.monthlyFeeCents || 0,
+          description: "Monthly Hosting & Support",
+        });
+      }
+      if (totalOverageCents > 0) {
+        const overageHours = (combinedOvertimeMinutes / 60).toFixed(2);
+        const budgetHours  = (combinedBudgetMinutes / 60).toFixed(1);
+        await storage.createHostingInvoiceLineItem({
+          invoiceId: id,
+          projectId: selectedProjects[0].id,
+          projectName: "All projects (combined)",
+          amountCents: totalOverageCents,
+          description: `Maintenance Overage — ${overageHours}h over combined ${budgetHours}h budget @ $30/hr (cycle since ${earliestCycleStart || cycleEnd})`,
+        });
+      }
+
+      const updated = await storage.updateHostingInvoice(id, { totalAmountCents: newTotalCents });
+
+      res.json({
+        invoiceId: id,
+        invoiceNumber: existing.invoiceNumber,
+        previousTotalCents: existing.totalAmountCents,
+        newTotalCents,
+        delta: newTotalCents - existing.totalAmountCents,
+        breakdown: {
+          hostingFeesTotal,
+          combinedActualMinutes,
+          combinedBudgetMinutes,
+          combinedOvertimeMinutes,
+          totalOverageCents,
+        },
+        invoice: updated,
+      });
     } catch (error) {
       next(error);
     }

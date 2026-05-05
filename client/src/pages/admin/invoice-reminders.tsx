@@ -549,6 +549,26 @@ export default function AdminInvoiceReminders() {
     },
   });
 
+  const recalculateInvoiceMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/admin/hosting-invoices/${id}/recalculate`, {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/hosting-invoices"] });
+      const prev = (data.previousTotalCents / 100).toFixed(2);
+      const next = (data.newTotalCents / 100).toFixed(2);
+      const delta = (data.delta / 100).toFixed(2);
+      toast({
+        title: "Invoice recalculated",
+        description: `${data.invoiceNumber}: $${prev} → $${next} (Δ ${data.delta >= 0 ? "+" : ""}$${delta})`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Recalculation failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const uncancelInvoiceReminderMutation = useMutation({
     mutationFn: async ({ id, reminderNum }: { id: number; reminderNum: number }) => {
       const res = await apiRequest("POST", `/api/admin/hosting-invoices/${id}/uncancel-reminder`, { reminderNum });
@@ -726,6 +746,16 @@ export default function AdminInvoiceReminders() {
                           <Button
                             variant="outline"
                             size="sm"
+                            onClick={() => recalculateInvoiceMutation.mutate(invoice.id)}
+                            disabled={recalculateInvoiceMutation.isPending}
+                            data-testid={`recalculate-invoice-${invoice.id}`}
+                            title="Re-run combined-budget overage calc; replaces line items + total"
+                          >
+                            ↻ Recalc
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => sendTestInvoiceEmailMutation.mutate(invoice.id)}
                             disabled={sendTestInvoiceEmailMutation.isPending}
                             data-testid={`test-email-invoice-${invoice.id}`}
@@ -831,14 +861,31 @@ export default function AdminInvoiceReminders() {
 
                       {invoice.lineItems.length > 0 && (
                         <div className="mb-4">
-                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Projects</p>
-                          <div className="flex flex-wrap gap-2">
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Breakdown</p>
+                          <div className="space-y-1 rounded-md border border-border/50 divide-y divide-border/40">
                             {invoice.lineItems.map((item) => (
-                              <Badge key={item.id} variant="secondary">
-                                {item.projectName}
-                              </Badge>
+                              <div key={item.id} className="flex items-start justify-between gap-3 px-3 py-2 text-sm">
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-medium truncate">{item.projectName}</p>
+                                  {item.description && (
+                                    <p className="text-xs text-muted-foreground">{item.description}</p>
+                                  )}
+                                </div>
+                                <span className="font-mono text-sm shrink-0">
+                                  {formatAmount(item.amountCents)}
+                                </span>
+                              </div>
                             ))}
+                            <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm bg-muted/30">
+                              <span className="font-semibold">Total</span>
+                              <span className="font-mono font-semibold">{formatAmount(invoice.totalAmountCents)}</span>
+                            </div>
                           </div>
+                          {invoice.lineItems.reduce((s, li) => s + li.amountCents, 0) !== invoice.totalAmountCents && (
+                            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                              ⚠ Line items sum to {formatAmount(invoice.lineItems.reduce((s, li) => s + li.amountCents, 0))} — does not match invoice total.
+                            </p>
+                          )}
                         </div>
                       )}
 
