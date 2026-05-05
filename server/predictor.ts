@@ -1728,6 +1728,143 @@ async function saveScan(
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
+// Diagnostic — answers "why hasn't the agent placed a bet recently?" by
+// returning the live state of every gate the executor checks. Surfaces
+// the most common silent blockers: cluster cap saturation from stale
+// resting bets, position cap, and recent PASS verdicts.
+predictorRouter.get("/why-no-bets", async (_req, res) => {
+  try {
+    const [maxPositions, maxCorrelated, minEdge, dynamicEdge] = await Promise.all([
+      getSetting("max_positions").then(v => parseInt(v || "10")),
+      getSetting("max_correlated_bets").then(v => parseInt(v || "2")),
+      getSetting("min_edge").then(v => parseFloat(v || "0.05")),
+      getSetting("dynamic_edge").then(v => v !== "false"),
+    ]);
+
+    const openBets = (await pool.query(
+      `SELECT id, market_ticker, market_title, side, status, logged_at
+         FROM predictor_bets
+        WHERE status NOT IN ('cancelled','canceled','failed','settled')
+        ORDER BY logged_at DESC`
+    )).rows;
+
+    // Group by cluster and flag saturated clusters that block new bets.
+    const clusterCounts: Record<string, number> = {};
+    const clusterSamples: Record<string, string[]> = {};
+    for (const b of openBets) {
+      const c = detectCluster(b.market_title || "");
+      if (c === "other") continue;
+      clusterCounts[c] = (clusterCounts[c] || 0) + 1;
+      clusterSamples[c] = clusterSamples[c] || [];
+      if (clusterSamples[c].length < 3) clusterSamples[c].push(b.market_ticker);
+    }
+    const saturatedClusters = Object.entries(clusterCounts)
+      .filter(([, n]) => n >= maxCorrelated)
+      .map(([cluster, count]) => ({ cluster, count, sampleTickers: clusterSamples[cluster] }));
+
+    // Resting bets older than 7 days are stale candidates for cleanup.
+    const staleResting = openBets.filter(b =>
+      b.status === "resting" &&
+      Date.parse(b.logged_at) < Date.now() - 7 * 86400000
+    );
+
+    // Last 24h council activity — what verdict ratio?
+    const recent = (await pool.query(
+      `SELECT verdict, COUNT(*)::int AS n
+         FROM predictor_councils
+        WHERE logged_at > NOW() - INTERVAL '24 hours'
+        GROUP BY verdict`
+    )).rows;
+    const verdictBreakdown: Record<string, number> = {};
+    for (const r of recent) verdictBreakdown[r.verdict] = r.n;
+
+    // Last fire summary (predictor_scans is the run audit log).
+    const lastRun = (await pool.query(
+      `SELECT logged_at, markets_scanned, candidates_found, bets_placed, rounds, result_summary
+         FROM predictor_scans
+        ORDER BY logged_at DESC LIMIT 1`
+    )).rows[0] || null;
+
+    const blockers: string[] = [];
+    if (saturatedClusters.length > 0) {
+      blockers.push(
+        `${saturatedClusters.length} cluster(s) saturated at the ${maxCorrelated}-bet cap: ` +
+        saturatedClusters.map(s => `${s.cluster} (${s.count})`).join(", ") +
+        ". New markets in these clusters auto-skip until existing bets resolve or are cancelled."
+      );
+    }
+    if (openBets.length >= maxPositions) {
+      blockers.push(`Position cap hit: ${openBets.length}/${maxPositions} open bets.`);
+    }
+    if (staleResting.length > 0) {
+      blockers.push(
+        `${staleResting.length} resting bet(s) older than 7 days — likely never filled and ` +
+        `still consuming cluster slots. Consider cancelling: ` +
+        staleResting.slice(0, 5).map(b => b.market_ticker).join(", ") +
+        (staleResting.length > 5 ? `, +${staleResting.length - 5} more` : "")
+      );
+    }
+    if ((verdictBreakdown.PASS || 0) > 0 && (verdictBreakdown.BET_YES || 0) + (verdictBreakdown.BET_NO || 0) === 0) {
+      blockers.push(
+        `Last 24h council verdicts: ${verdictBreakdown.PASS} PASS, 0 BET. ` +
+        `Either no edge available right now or the ${(minEdge * 100).toFixed(0)}pp floor is too tight.`
+      );
+    }
+    if (blockers.length === 0) {
+      blockers.push("No obvious blockers — agent should be placing bets when fired. Check that the cron is actually running.");
+    }
+
+    res.json({
+      gates: { maxPositions, maxCorrelated, minEdge, dynamicEdge },
+      openBets: { count: openBets.length, sample: openBets.slice(0, 10) },
+      clusterCounts,
+      saturatedClusters,
+      staleResting: staleResting.map(b => ({
+        id: b.id, ticker: b.market_ticker, title: b.market_title,
+        status: b.status, ageDays: Math.floor((Date.now() - Date.parse(b.logged_at)) / 86400000),
+      })),
+      last24hVerdicts: verdictBreakdown,
+      lastRun,
+      blockers,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Cancel resting bets older than N days (default 7). Frees up cluster
+// slots so the agent can place new bets. POST body: { olderThanDays?: number }
+predictorRouter.post("/cancel-stale-resting", async (req, res) => {
+  try {
+    const olderThanDays = Math.max(1, parseInt(String(req.body?.olderThanDays ?? "7"), 10) || 7);
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000);
+    const stale = (await pool.query(
+      `SELECT id, market_ticker, order_id
+         FROM predictor_bets
+        WHERE status = 'resting' AND order_id IS NOT NULL AND logged_at < $1`,
+      [cutoff]
+    )).rows;
+
+    let cancelled = 0;
+    const failures: any[] = [];
+    for (const bet of stale) {
+      try {
+        await kalshiReq(`/portfolio/orders/${bet.order_id}`, "DELETE");
+        await pool.query(
+          `UPDATE predictor_bets SET status = 'cancelled' WHERE id = $1`,
+          [bet.id]
+        );
+        cancelled++;
+      } catch (e: any) {
+        failures.push({ id: bet.id, ticker: bet.market_ticker, error: e.message });
+      }
+    }
+    res.json({ found: stale.length, cancelled, failures, olderThanDays });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 predictorRouter.get("/health", async (_req, res) => {
   const keys = await getKalshiKeys();
   res.json({
