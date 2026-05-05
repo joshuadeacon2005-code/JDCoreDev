@@ -986,24 +986,14 @@ leadEngineRouter.post("/test-email", requireSecret, async (req, res) => {
   if (!to)
     return res.status(400).json({ error: '"to" email address required' });
 
-  const subject = `Quick question about Acme Trading Co's online presence`;
+  const subject = `Acme's mobile site (the bounce-rate issue)`;
   const body = `Hi Sarah,
 
-I came across Acme Trading Co while researching businesses in Hong Kong's import/export space and ran a quick audit of your digital presence.
+Acme's site takes ~6s to load on mobile and there's no Google Business profile — every "import export Hong Kong" search is going to a competitor right now.
 
-A few things stood out — your website loads slowly on mobile (scoring around 4/10 on responsiveness), and you don't appear to have a Google Business profile set up, which means you're missing out on local search visibility.
+That's a fix, not a rebuild. Audit with specifics: https://jdcoredev.com/audits/acme-trading-co — happy to walk through it on a 15-min call.
 
-I've put together a short audit report with specifics here:
-https://jdcoredev.com/audits/acme-trading-co
-
-I specialise in helping businesses like yours fix exactly these kinds of issues — typically within 2–4 weeks. No fluff, just practical work.
-
-Worth a quick chat? I'm happy to walk you through the findings at no cost.
-
-Best,
-Joshua
-JD CoreDev
-https://jdcoredev.com`;
+— Josh`;
 
   try {
     await sendEmail(to, subject, body);

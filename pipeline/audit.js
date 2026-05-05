@@ -202,7 +202,9 @@ Return ONLY a valid JSON object, no markdown, no explanation:
     }
   ],
 
-  "auditSummary": "1–2 sentences summarising the biggest opportunity for JD CoreDev with this specific company. If they use multiple subscription tools, mention the total monthly spend and the consolidation opportunity."
+  "auditSummary": "1–2 sentences summarising the biggest opportunity for JD CoreDev with this specific company. If they use multiple subscription tools, mention the total monthly spend and the consolidation opportunity.",
+
+  "headline": "ONE punchy sentence (max 18 words) stating the SPECIFIC, named problem at THIS company. Must reference a real tool, number, or detail you found — never generic. This becomes the hero callout on the audit page. Examples of GOOD headlines (don't copy these — they belong to other businesses): 'Fresha takes 2.19% of every booking and owns your entire client list.' / 'No website at all — every \"florist Causeway Bay\" search goes to a competitor.' / 'Three subscription tools costing HK$1,500/mo, none of them connected.' Examples of BAD headlines: 'Your digital presence has room to grow.' / 'Several improvements possible.' / 'Mixed results across our audit.'"
 }
 
 NOTES ON subscriptionSoftware:
