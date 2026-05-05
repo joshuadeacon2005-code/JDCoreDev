@@ -507,6 +507,25 @@ export default function LeadEngine() {
     }
   }
 
+  async function regenerateAll() {
+    const targets = leads.filter(l => l.id && l.domain);
+    if (!targets.length) { toast({ title: "No leads to regenerate" }); return; }
+    if (!confirm(`Force-rebuild audits + outreach for ALL ${targets.length} lead(s)? Applies the latest audit template + outreach prompt to every existing lead. Burns AI credits — runs sequentially to avoid rate limits, may take 10+ minutes.`)) return;
+    setRegenAllLoading(true);
+    try {
+      const res = await apiPost("/regenerate-all");
+      if (res.domains) {
+        const map: typeof regenProgressMap = {};
+        res.domains.forEach((d: string, idx: number) => { map[d] = { domain: d, name: res.names?.[idx] ?? d, stage: "queued", percent: 0 }; });
+        setRegenProgressMap(map);
+        setRegeneratingAudits(new Set(res.domains));
+      }
+      toast({ title: `Regenerating ${res.queued} lead(s) sequentially…`, description: "Watch the progress chips on each card." });
+    } catch {
+      setRegenAllLoading(false);
+    }
+  }
+
   async function deleteDraftItem(id: number) {
     await apiDelete("/draft", { id });
     toast({ title: "Draft deleted — audit also removed" });
@@ -733,6 +752,13 @@ export default function LeadEngine() {
                       onClick={regenerateAllMissing} disabled={regenAllLoading} data-testid="button-regen-all-missing">
                       <RefreshCw className={`w-3 h-3 ${regenAllLoading ? "animate-spin" : ""}`} />
                       {regenAllLoading ? "Queuing…" : `Regenerate ${leads.filter(l => !l.hasHtml && l.id).length} Missing`}
+                    </Button>
+                  )}
+                  {leads.filter(l => l.id && l.domain).length > 0 && (
+                    <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 border-violet-500/30 text-violet-500 hover:text-violet-400 hover:bg-violet-500/10"
+                      onClick={regenerateAll} disabled={regenAllLoading} data-testid="button-regen-all">
+                      <RefreshCw className={`w-3 h-3 ${regenAllLoading ? "animate-spin" : ""}`} />
+                      Force-rebuild ALL ({leads.filter(l => l.id && l.domain).length})
                     </Button>
                   )}
                   <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 border-orange-500/30 text-orange-500 hover:text-orange-400 hover:bg-orange-500/10"

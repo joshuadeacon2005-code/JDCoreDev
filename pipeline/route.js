@@ -709,6 +709,40 @@ leadEngineRouter.get("/status", requireSecret, async (req, res) => {
   });
 });
 
+// ── POST /api/lead-engine/regenerate-all ─────────────────────────────────────
+// Queues a full re-audit + outreach rewrite for EVERY existing audit, not
+// just the ones missing HTML. Used to refresh stale audits + apply the
+// latest outreach prompt to every lead in one sweep.
+leadEngineRouter.post(
+  "/regenerate-all",
+  requireSecret,
+  async (req, res) => {
+    const allAudits = await dbGetAllAudits();
+    const targets = allAudits.filter(a => a.domain); // domain required for the pipeline
+    for (const record of targets) {
+      setRegenProgress(record.domain, {
+        auditId: record.id,
+        name: record.name,
+        domain: record.domain,
+        stage: "queued",
+        percent: 0,
+        startedAt: Date.now(),
+      });
+    }
+    res.json({
+      queued: targets.length,
+      names: targets.map(a => a.name),
+      domains: targets.map(a => a.domain),
+    });
+    // Run sequentially — hammering Claude with N parallel deep audits will
+    // hit rate limits and the bill spikes hard.
+    for (const record of targets) {
+      await runRegenPipeline(record);
+    }
+    log("[RegenAll] Force-rebuild of all audits complete");
+  },
+);
+
 // ── POST /api/lead-engine/regenerate-all-missing ──────────────────────────────
 // Queues re-audit for every lead_audit record that has no html_content stored.
 leadEngineRouter.post(

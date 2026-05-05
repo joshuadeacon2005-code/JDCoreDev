@@ -435,6 +435,24 @@ export default function AdminInvoices() {
     },
   });
 
+  const recalculateAll = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/hosting-invoices/recalculate-all", {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/hosting-invoices"] });
+      const changed = (data.results || []).filter((r: any) => r.delta !== undefined && r.delta !== 0).length;
+      toast({
+        title: `Recalculated ${data.ok} invoice(s)`,
+        description: `${changed} changed total · ${data.errors || 0} errors`,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Bulk recalculate failed", description: e.message, variant: "destructive" });
+    },
+  });
+
   const updateInvoiceStatus = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
       return apiRequest("PATCH", `/api/admin/hosting-invoices/${id}`, { status });
@@ -562,9 +580,25 @@ export default function AdminInvoices() {
   return (
     <AdminLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">Invoices</h1>
-          <p className="text-muted-foreground">View all billing items across hosting invoices and payment milestones</p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-bold">Invoices</h1>
+            <p className="text-muted-foreground">View all billing items across hosting invoices and payment milestones</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (confirm("Recalculate ALL non-paid hosting invoices using the current combined-budget logic? This replaces line items + total on each. Paid/cancelled invoices are skipped.")) {
+                recalculateAll.mutate();
+              }
+            }}
+            disabled={recalculateAll.isPending}
+            className="text-xs"
+            data-testid="button-recalc-all-invoices"
+          >
+            {recalculateAll.isPending ? "Recalculating…" : "↻ Recalculate ALL hosting invoices"}
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

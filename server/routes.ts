@@ -20,6 +20,7 @@ import {
   trackedCoins, priceAlerts, priceHistory, coinNews, cryptoNotificationSettings,
   type User, type MeetingRequest, clients, projects, projectHostingTerms, maintenanceLogs,
   referralPartners, commissionEntries, projectCosts,
+  hostingInvoiceLineItems,
   type Project, type ReferralPartner,
 } from "@shared/schema";
 import { eq, desc, and, gte } from "drizzle-orm";
@@ -4607,8 +4608,6 @@ JD CoreDev System`,
 
       // Pull existing line items to recover the project list this invoice
       // was issued against. Use distinct projectIds across all rows.
-      const { db } = await import("./db");
-      const { hostingInvoiceLineItems } = await import("@shared/schema");
       const existingLineItems = await db.select().from(hostingInvoiceLineItems)
         .where(eq(hostingInvoiceLineItems.invoiceId, id));
       const projectIds = Array.from(new Set(existingLineItems.map(li => li.projectId)));
@@ -4687,6 +4686,89 @@ JD CoreDev System`,
           totalOverageCents,
         },
         invoice: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Recalculate ALL hosting invoices (sweep). Skips paid + cancelled —
+  // re-running on a paid invoice would invalidate the receipt. Returns a
+  // per-invoice diff array so the UI can summarise.
+  app.post("/api/admin/hosting-invoices/recalculate-all", requireAdmin, async (req, res, next) => {
+    try {
+      const allInvoices = await storage.getAllHostingInvoicesWithDetails();
+      const eligible = allInvoices.filter(inv => inv.status !== "paid" && inv.status !== "cancelled");
+      const results: any[] = [];
+      let okCount = 0, errCount = 0;
+      for (const inv of eligible) {
+        try {
+          const fakeReq: any = { params: { id: String(inv.id) } };
+          // Inline the recalc logic instead of recursing into the route
+          // handler (no internal HTTP call).
+          const projectIds = Array.from(new Set(inv.lineItems.map((li: any) => li.projectId)));
+          if (projectIds.length === 0) continue;
+          const projectsWithTerms = await storage.getHostingProjectsWithTerms(inv.clientId);
+          const selectedProjects = projectsWithTerms.filter(p => projectIds.includes(p.id));
+          if (selectedProjects.length === 0) continue;
+          const hostingFeesTotal = selectedProjects.reduce((s, p) => s + (p.hostingTerms?.monthlyFeeCents || 0), 0);
+          const cycleEnd = inv.invoiceDate;
+          let combinedActualMinutes = 0;
+          let combinedBudgetMinutes = 0;
+          let earliestCycleStart: string | null = null;
+          for (const project of selectedProjects) {
+            const terms = await storage.getProjectHostingTerms(project.id);
+            const budgetMinutes = terms?.maintenanceBudgetMinutes ?? null;
+            const cycleStart = terms?.currentCycleStartDate || cycleEnd;
+            if (!earliestCycleStart || cycleStart < earliestCycleStart) earliestCycleStart = cycleStart;
+            const logs = await storage.getMaintenanceLogsByDateRange(project.id, cycleStart, cycleEnd);
+            combinedActualMinutes += logs.reduce((s, l) => s + l.minutesSpent, 0);
+            if (budgetMinutes !== null) combinedBudgetMinutes += budgetMinutes;
+          }
+          const combinedOvertimeMinutes = Math.max(0, combinedActualMinutes - combinedBudgetMinutes);
+          const totalOverageCents = Math.round((combinedOvertimeMinutes * 3000) / 60);
+          const newTotalCents = hostingFeesTotal + totalOverageCents;
+
+          await db.delete(hostingInvoiceLineItems).where(eq(hostingInvoiceLineItems.invoiceId, inv.id));
+          for (const project of selectedProjects) {
+            await storage.createHostingInvoiceLineItem({
+              invoiceId: inv.id,
+              projectId: project.id,
+              projectName: project.name,
+              amountCents: project.hostingTerms?.monthlyFeeCents || 0,
+              description: "Monthly Hosting & Support",
+            });
+          }
+          if (totalOverageCents > 0) {
+            const overageHours = (combinedOvertimeMinutes / 60).toFixed(2);
+            const budgetHours = (combinedBudgetMinutes / 60).toFixed(1);
+            await storage.createHostingInvoiceLineItem({
+              invoiceId: inv.id,
+              projectId: selectedProjects[0].id,
+              projectName: "All projects (combined)",
+              amountCents: totalOverageCents,
+              description: `Maintenance Overage — ${overageHours}h over combined ${budgetHours}h budget @ $30/hr (cycle since ${earliestCycleStart || cycleEnd})`,
+            });
+          }
+          await storage.updateHostingInvoice(inv.id, { totalAmountCents: newTotalCents });
+          okCount++;
+          results.push({
+            id: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            previousTotalCents: inv.totalAmountCents,
+            newTotalCents,
+            delta: newTotalCents - inv.totalAmountCents,
+          });
+        } catch (e: any) {
+          errCount++;
+          results.push({ id: inv.id, invoiceNumber: inv.invoiceNumber, error: e.message });
+        }
+      }
+      res.json({
+        eligible: eligible.length,
+        ok: okCount,
+        errors: errCount,
+        results,
       });
     } catch (error) {
       next(error);

@@ -569,6 +569,24 @@ export default function AdminInvoiceReminders() {
     },
   });
 
+  const recalculateAllMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/hosting-invoices/recalculate-all", {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/hosting-invoices"] });
+      const changed = (data.results || []).filter((r: any) => r.delta !== undefined && r.delta !== 0).length;
+      toast({
+        title: `Recalculated ${data.ok} invoice(s)`,
+        description: `${changed} changed total · ${data.errors || 0} errors · paid/cancelled skipped`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Bulk recalculate failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const uncancelInvoiceReminderMutation = useMutation({
     mutationFn: async ({ id, reminderNum }: { id: number; reminderNum: number }) => {
       const res = await apiRequest("POST", `/api/admin/hosting-invoices/${id}/uncancel-reminder`, { reminderNum });
@@ -680,11 +698,27 @@ export default function AdminInvoiceReminders() {
   return (
     <AdminLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Invoice Reminders</h1>
-          <p className="text-muted-foreground">
-            Track email reminders for invoices and payment milestones. Reminders are automatically cancelled when marked as paid.
-          </p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-semibold">Invoice Reminders</h1>
+            <p className="text-muted-foreground">
+              Track email reminders for invoices and payment milestones. Reminders are automatically cancelled when marked as paid.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (confirm("Recalculate ALL non-paid hosting invoices using the current combined-budget logic? This replaces line items + total on each. Paid/cancelled invoices are skipped.")) {
+                recalculateAllMutation.mutate();
+              }
+            }}
+            disabled={recalculateAllMutation.isPending}
+            className="text-xs"
+            data-testid="button-recalc-all"
+          >
+            ↻ Recalculate ALL invoices
+          </Button>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
