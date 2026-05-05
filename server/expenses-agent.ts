@@ -19,8 +19,21 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { pool } from "./db";
 import { convertToUsd } from "./fx";
-import * as XLSX from "xlsx";
 import Anthropic from "@anthropic-ai/sdk";
+
+// xlsx is loaded lazily — if the package failed to install (e.g., a flaky
+// CI run), the rest of the app still boots and only /parse-xlsx fails
+// with a clear 503 instead of taking down the whole server at startup.
+let _xlsxModule: any = null;
+async function getXlsx() {
+  if (_xlsxModule) return _xlsxModule;
+  try {
+    _xlsxModule = await import("xlsx");
+    return _xlsxModule;
+  } catch (e: any) {
+    throw new Error(`xlsx package not available — ${e.message}`);
+  }
+}
 
 export const expensesAgentRouter = Router();
 export const expensesRouter = Router();
@@ -796,8 +809,9 @@ expensesRouter.post("/parse-xlsx", async (req, res) => {
       return res.status(503).json({ error: "ANTHROPIC_API_KEY not configured — classification needs it" });
     }
 
-    let workbook;
+    let workbook, XLSX;
     try {
+      XLSX = await getXlsx();
       const buf = Buffer.from(b64, "base64");
       workbook = XLSX.read(buf, { type: "buffer", cellDates: true });
     } catch (e: any) {
