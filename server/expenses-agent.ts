@@ -19,6 +19,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { pool } from "./db";
 import { convertToUsd } from "./fx";
+import * as XLSX from "xlsx";
+import Anthropic from "@anthropic-ai/sdk";
 
 export const expensesAgentRouter = Router();
 export const expensesRouter = Router();
@@ -768,6 +770,148 @@ expensesRouter.post("/import", async (req, res) => {
       }
     }
     res.status(201).json({ imported, duplicates: dups, errors, total: items.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Bulk XLSX upload + auto-classification ────────────────────────────────
+// Accepts a base64-encoded .xlsx body, parses every row, asks Claude to
+// classify each as "business" / "personal" / "undefined" + suggest a
+// category, and returns a preview the user reviews before committing.
+//
+// Expected XLSX columns (case-insensitive, common variants accepted):
+//   vendor / merchant / payee / description
+//   amount / total / cost / price
+//   currency / ccy        (default HKD)
+//   date / dated_at / transaction_date
+//   notes / memo / category (optional)
+//
+// Doesn't write anything — caller posts confirmed items back to /import.
+expensesRouter.post("/parse-xlsx", async (req, res) => {
+  try {
+    const b64 = (req.body?.fileBase64 || "").toString();
+    if (!b64) return res.status(400).json({ error: "fileBase64 (base64 .xlsx contents) required" });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({ error: "ANTHROPIC_API_KEY not configured — classification needs it" });
+    }
+
+    let workbook;
+    try {
+      const buf = Buffer.from(b64, "base64");
+      workbook = XLSX.read(buf, { type: "buffer", cellDates: true });
+    } catch (e: any) {
+      return res.status(400).json({ error: `Could not parse XLSX: ${e.message}` });
+    }
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) return res.status(400).json({ error: "XLSX has no sheets" });
+    const sheet = workbook.Sheets[sheetName];
+    const rawRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null });
+    if (rawRows.length === 0) return res.status(400).json({ error: "XLSX sheet is empty" });
+    if (rawRows.length > 1000) {
+      return res.status(400).json({ error: `Too many rows (${rawRows.length}); max 1000 per upload` });
+    }
+
+    // Normalise column names — accept common variants.
+    const pickField = (row: any, candidates: string[]): any => {
+      const keys = Object.keys(row);
+      for (const c of candidates) {
+        const k = keys.find(x => x.trim().toLowerCase() === c.toLowerCase());
+        if (k && row[k] !== null && row[k] !== "") return row[k];
+      }
+      return null;
+    };
+    const normalised = rawRows.map((r, idx) => {
+      const dateField = pickField(r, ["date", "dated_at", "transaction_date", "txn_date", "tx_date"]);
+      let datedAtIso: string | null = null;
+      if (dateField instanceof Date) {
+        datedAtIso = dateField.toISOString().slice(0, 10);
+      } else if (typeof dateField === "string") {
+        const parsed = new Date(dateField);
+        if (!isNaN(parsed.getTime())) datedAtIso = parsed.toISOString().slice(0, 10);
+      } else if (typeof dateField === "number") {
+        // Excel serial date
+        const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+        const parsed = new Date(excelEpoch.getTime() + dateField * 86400000);
+        if (!isNaN(parsed.getTime())) datedAtIso = parsed.toISOString().slice(0, 10);
+      }
+      return {
+        rowIndex: idx + 2, // +2 = header row + 1-indexed
+        vendor:   (pickField(r, ["vendor", "merchant", "payee", "description"]) || "").toString().trim(),
+        amount:   Number(pickField(r, ["amount", "total", "cost", "price", "value"])),
+        currency: (pickField(r, ["currency", "ccy"]) || "HKD").toString().toUpperCase().slice(0, 3),
+        datedAt:  datedAtIso,
+        notes:    pickField(r, ["notes", "memo", "description"]) || null,
+        existingCategory: pickField(r, ["category", "type"]) || null,
+      };
+    });
+
+    // Drop obviously invalid rows.
+    const valid = normalised.filter(r =>
+      r.vendor && Number.isFinite(r.amount) && r.amount > 0 && r.datedAt
+    );
+    const skipped = normalised.length - valid.length;
+
+    // Classify in batches to keep prompts small. Claude returns JSON
+    // with classification + category + brief rationale per row.
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const BATCH_SIZE = 30;
+    const classified: any[] = [];
+    for (let i = 0; i < valid.length; i += BATCH_SIZE) {
+      const batch = valid.slice(i, i + BATCH_SIZE);
+      const prompt = `You are classifying historical expenses as business / personal / undefined for a Hong Kong software consultancy (JD CoreDev). The owner builds custom software. Business = anything plausibly tied to running the consultancy (SaaS subscriptions, hosting, dev tools, AI APIs, business meals/travel, accounting, comms, professional services). Personal = clearly consumer (groceries, personal entertainment, personal travel unrelated to business). Undefined = ambiguous or insufficient info to call it.
+
+For each row, also pick a short category from: SaaS · AI, SaaS · Dev, SaaS · Hosting, SaaS · Email, SaaS · Banking, SaaS · Domains, Comms · Mobile, Comms · Internet, Travel · Business, Travel · Ancillary, Meals · Business, Office · Supplies, Professional · Legal, Professional · Accounting, Other · Business, Other · Personal — or invent one if none fit.
+
+Return ONLY a JSON array, one object per input row in the same order:
+[{"index": <row_index>, "classification": "business"|"personal"|"undefined", "category": "...", "confidence": 0.0-1.0, "rationale": "1 sentence why"}]
+
+Input rows:
+${JSON.stringify(batch.map((r, j) => ({ index: r.rowIndex, vendor: r.vendor, amount: r.amount, currency: r.currency, dated_at: r.datedAt, notes: r.notes, existingCategory: r.existingCategory })), null, 2)}`;
+
+      const result = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 4000,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const text = result.content
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("");
+      const m = text.match(/\[[\s\S]*\]/);
+      if (!m) {
+        console.error("[parse-xlsx] no JSON array in response:", text.slice(0, 200));
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(m[0]);
+        for (const row of batch) {
+          const cls = parsed.find((p: any) => p.index === row.rowIndex);
+          classified.push({
+            ...row,
+            classification: cls?.classification || "undefined",
+            suggestedCategory: cls?.category || row.existingCategory || null,
+            classificationConfidence: cls?.confidence ?? 0.5,
+            classificationRationale: cls?.rationale || null,
+          });
+        }
+      } catch (e: any) {
+        console.error("[parse-xlsx] JSON parse failed:", e.message);
+      }
+    }
+
+    res.json({
+      sheet: sheetName,
+      totalRows: rawRows.length,
+      validRows: valid.length,
+      skipped,
+      classified,
+      summary: {
+        business:  classified.filter(c => c.classification === "business").length,
+        personal:  classified.filter(c => c.classification === "personal").length,
+        undefined: classified.filter(c => c.classification === "undefined").length,
+      },
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

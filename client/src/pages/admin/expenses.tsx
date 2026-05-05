@@ -82,7 +82,7 @@ const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day
 
 export default function AdminExpenses() {
   const { toast } = useToast();
-  const [tab, setTab] = useState<"confirmed" | "undecided" | "add">("undecided");
+  const [tab, setTab] = useState<"confirmed" | "undecided" | "add" | "import">("undecided");
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -90,6 +90,16 @@ export default function AdminExpenses() {
   const [scanning, setScanning] = useState(false);
   const [actingId, setActingId] = useState<number | null>(null);
   const [newExpense, setNewExpense] = useState<any>({ vendor: "", amount: "", currency: "HKD", category: "", frequency: "one_off", dated_at: new Date().toISOString().slice(0, 10), notes: "" });
+  // XLSX upload + classification preview state
+  const [xlsxParsing, setXlsxParsing] = useState(false);
+  const [xlsxResult, setXlsxResult] = useState<{
+    totalRows: number;
+    validRows: number;
+    skipped: number;
+    classified: any[];
+    summary: { business: number; personal: number; undefined: number };
+  } | null>(null);
+  const [xlsxImporting, setXlsxImporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,6 +140,81 @@ export default function AdminExpenses() {
     } catch (e: any) {
       toast({ title: "Backfill error", description: e.message, variant: "destructive" });
     }
+  };
+
+  // XLSX upload → server parses + auto-classifies → user reviews → confirm imports the business-tagged rows.
+  const onXlsxFile = async (file: File) => {
+    setXlsxParsing(true);
+    setXlsxResult(null);
+    try {
+      const buf = await file.arrayBuffer();
+      // Convert to base64 in chunks to avoid call-stack issues on big files.
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+      }
+      const fileBase64 = btoa(binary);
+      const r = await fetch("/api/expenses/parse-xlsx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileBase64 }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        toast({ title: "Parse failed", description: d?.error || `HTTP ${r.status}`, variant: "destructive" });
+        return;
+      }
+      setXlsxResult(d);
+      toast({
+        title: `Parsed ${d.validRows} row(s)`,
+        description: `${d.summary.business} business · ${d.summary.personal} personal · ${d.summary.undefined} undefined`,
+      });
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    }
+    setXlsxParsing(false);
+  };
+
+  const importClassifiedAs = async (filter: "business" | "all-non-personal") => {
+    if (!xlsxResult) return;
+    const items = xlsxResult.classified
+      .filter(c => filter === "business" ? c.classification === "business" : c.classification !== "personal")
+      .map(c => ({
+        vendor: c.vendor,
+        amount: c.amount,
+        currency: c.currency,
+        category: c.suggestedCategory,
+        dated_at: c.datedAt,
+        notes: [c.notes, c.classificationRationale].filter(Boolean).join(" — ") || null,
+      }));
+    if (items.length === 0) {
+      toast({ title: "Nothing to import for that filter" });
+      return;
+    }
+    setXlsxImporting(true);
+    try {
+      const r = await fetch("/api/expenses/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        toast({ title: "Import failed", description: d?.error || `HTTP ${r.status}`, variant: "destructive" });
+        return;
+      }
+      toast({
+        title: `Imported ${d.imported} expense(s)`,
+        description: `${d.duplicates || 0} duplicates skipped · ${d.errors || 0} errors`,
+      });
+      setXlsxResult(null);
+      await load();
+    } catch (e: any) {
+      toast({ title: "Import error", description: e.message, variant: "destructive" });
+    }
+    setXlsxImporting(false);
   };
 
   const fireScanner = async () => {
@@ -318,6 +403,7 @@ export default function AdminExpenses() {
             </TabsTrigger>
             <TabsTrigger value="confirmed" className="text-xs">Confirmed ({expenses.length})</TabsTrigger>
             <TabsTrigger value="add" className="text-xs">Add manually</TabsTrigger>
+            <TabsTrigger value="import" className="text-xs">Import XLSX</TabsTrigger>
           </TabsList>
 
           {/* Undecided */}
@@ -477,6 +563,122 @@ export default function AdminExpenses() {
                 <Button onClick={submitNewExpense} disabled={!newExpense.vendor || !newExpense.amount} className="bg-violet-600 hover:bg-violet-700">
                   <Plus className="h-3 w-3 mr-1.5" />Add expense
                 </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Import XLSX */}
+          <TabsContent value="import" className="mt-4">
+            <Card>
+              <CardHeader className="pb-3 pt-4">
+                <CardTitle className="text-sm flex items-center gap-1.5">
+                  <Plus className="h-4 w-4" />Import expenses from XLSX
+                </CardTitle>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Upload a spreadsheet of historical expenses. Claude classifies each row as <span className="font-medium">business</span>, <span className="font-medium">personal</span>, or <span className="font-medium">undefined</span> based on vendor + amount + notes. Review the preview, then import only the rows you want.
+                </p>
+                <p className="text-[10px] text-muted-foreground/70 mt-1">
+                  Expected columns (any order, case-insensitive): vendor / amount / currency / date / notes / category. Up to 1,000 rows per upload.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div>
+                  <Label className="text-xs">XLSX file</Label>
+                  <Input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    disabled={xlsxParsing}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (f) onXlsxFile(f);
+                    }}
+                  />
+                  {xlsxParsing && (
+                    <p className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1.5">
+                      <RefreshCw className="h-3 w-3 animate-spin" />
+                      Parsing + classifying with Claude — can take 10-30s for larger files…
+                    </p>
+                  )}
+                </div>
+
+                {xlsxResult && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="p-2 rounded-md border border-emerald-500/30 bg-emerald-500/5">
+                        <p className="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Business</p>
+                        <p className="text-lg font-bold">{xlsxResult.summary.business}</p>
+                      </div>
+                      <div className="p-2 rounded-md border border-muted">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Personal</p>
+                        <p className="text-lg font-bold">{xlsxResult.summary.personal}</p>
+                      </div>
+                      <div className="p-2 rounded-md border border-amber-500/30 bg-amber-500/5">
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 uppercase tracking-wider">Undefined</p>
+                        <p className="text-lg font-bold">{xlsxResult.summary.undefined}</p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border max-h-[400px] overflow-y-auto">
+                      <table className="w-full text-[11px]">
+                        <thead className="bg-muted/40 sticky top-0">
+                          <tr>
+                            <th className="text-left p-2 font-medium">Vendor</th>
+                            <th className="text-left p-2 font-medium">Amount</th>
+                            <th className="text-left p-2 font-medium">Date</th>
+                            <th className="text-left p-2 font-medium">Class</th>
+                            <th className="text-left p-2 font-medium">Category</th>
+                            <th className="text-left p-2 font-medium">Why</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {xlsxResult.classified.map((c, i) => (
+                            <tr key={i} className="border-t hover:bg-muted/20">
+                              <td className="p-2 font-medium">{c.vendor}</td>
+                              <td className="p-2 font-mono">{c.currency} {c.amount.toFixed(2)}</td>
+                              <td className="p-2 text-muted-foreground">{c.datedAt}</td>
+                              <td className="p-2">
+                                <Badge variant="outline" className={cn("text-[9px]",
+                                  c.classification === "business" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" :
+                                  c.classification === "personal" ? "border-muted text-muted-foreground" :
+                                  "border-amber-500/30 text-amber-600 dark:text-amber-400"
+                                )}>
+                                  {c.classification}
+                                </Badge>
+                              </td>
+                              <td className="p-2 text-muted-foreground">{c.suggestedCategory || "—"}</td>
+                              <td className="p-2 text-muted-foreground italic max-w-xs truncate" title={c.classificationRationale || ""}>
+                                {c.classificationRationale}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        onClick={() => importClassifiedAs("business")}
+                        disabled={xlsxImporting || xlsxResult.summary.business === 0}
+                        className="bg-emerald-600 hover:bg-emerald-700"
+                      >
+                        {xlsxImporting ? "Importing…" : `Import ${xlsxResult.summary.business} business expense(s)`}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => importClassifiedAs("all-non-personal")}
+                        disabled={xlsxImporting || (xlsxResult.summary.business + xlsxResult.summary.undefined) === 0}
+                      >
+                        Import business + undefined ({xlsxResult.summary.business + xlsxResult.summary.undefined})
+                      </Button>
+                      <Button variant="ghost" onClick={() => setXlsxResult(null)} disabled={xlsxImporting}>
+                        Discard preview
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      Personal-tagged rows are never imported. Undefined rows can be imported alongside business if you'd rather review them in the database than discard them.
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
