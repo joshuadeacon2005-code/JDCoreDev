@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Target, Brain, Users, Shield, TrendingUp, TrendingDown,
   Play, RefreshCw, AlertTriangle, CheckCircle2, Clock, DollarSign,
@@ -198,7 +199,132 @@ function CheckResolutionsButton() {
 
 // ── Bet Card ──────────────────────────────────────────────────────────────────
 
+// Full bet detail panel — opened when the user clicks into a bet card.
+// Surfaces: when (absolute + relative timestamp), how (auto-placed by
+// predictor routine, with order ID), and the full reasoning (council
+// transcript with bull/bear/historian/devil/risk_manager arguments).
+function BetDetailDialog({
+  bet,
+  open,
+  onOpenChange,
+}: {
+  bet: any;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const transcript = typeof bet.council_transcript === "string"
+    ? JSON.parse(bet.council_transcript)
+    : bet.council_transcript;
+  const pnl = bet.pnl != null ? parseFloat(bet.pnl) : null;
+  const placedAt = bet.logged_at ? new Date(bet.logged_at) : null;
+  const settledAt = bet.settled_at ? new Date(bet.settled_at) : null;
+  const ageMs = placedAt ? Date.now() - placedAt.getTime() : 0;
+  const ageLabel =
+    ageMs < 60_000        ? "just now"
+    : ageMs < 3_600_000   ? `${Math.floor(ageMs / 60_000)}m ago`
+    : ageMs < 86_400_000  ? `${Math.floor(ageMs / 3_600_000)}h ago`
+    : `${Math.floor(ageMs / 86_400_000)}d ago`;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2 flex-wrap">
+            <Badge variant="outline" className={cn("text-[10px]",
+              bet.platform === "polymarket" ? "border-blue-500/30 text-blue-500" : "border-purple-500/30 text-purple-500")}>
+              {bet.platform === "polymarket" ? "Polymarket" : "Kalshi"}
+            </Badge>
+            <Badge variant="outline" className={cn("text-[10px]",
+              bet.side === "yes" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "border-red-500/30 text-red-500")}>
+              {bet.side?.toUpperCase()}
+            </Badge>
+            <span className="font-mono text-xs text-muted-foreground">{bet.market_ticker}</span>
+          </DialogTitle>
+          <DialogDescription asChild>
+            <p className="text-sm font-semibold text-foreground leading-snug">{bet.market_title}</p>
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* When + how it was placed */}
+        <div className="space-y-3">
+          <div className="rounded-md border border-border/50 p-3 space-y-2">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Placed</p>
+                <p className="text-sm font-medium">
+                  {placedAt ? fmtHKT(placedAt, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"} HKT
+                </p>
+                <p className="text-[11px] text-muted-foreground">{ageLabel}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">How</p>
+                <p className="text-sm font-medium">Auto · predictor routine</p>
+                <p className="text-[11px] text-muted-foreground">Council verdict: <span className="font-mono">{bet.council_verdict}</span></p>
+              </div>
+            </div>
+            {bet.order_id && (
+              <div className="pt-2 border-t border-border/50 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Order ID</span>
+                <span className="text-[10px] font-mono text-muted-foreground truncate">{bet.order_id}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Bet economics */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { label: "Contracts", value: bet.contracts },
+              { label: "Price", value: `$${parseFloat(bet.price).toFixed(2)}` },
+              { label: "Cost", value: fmtUSD(parseFloat(bet.cost)) },
+              { label: "Edge", value: `${((parseFloat(bet.edge) || 0) * 100).toFixed(1)}pp` },
+            ].map(({ label, value }) => (
+              <div key={label} className="rounded-md border border-border/50 p-2">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</p>
+                <p className="text-sm font-mono font-semibold">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Status / outcome */}
+          <div className="rounded-md border border-border/50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Status</p>
+                <p className="text-sm font-medium capitalize">{bet.status || "pending"}</p>
+                {settledAt && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Settled {fmtHKT(settledAt, { month: "short", day: "numeric" })} HKT
+                  </p>
+                )}
+              </div>
+              {pnl != null && (
+                <div className="text-right">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">P&L</p>
+                  <p className={cn("text-lg font-mono font-bold", clrPnl(pnl))}>
+                    {pnl >= 0 ? "+" : ""}{fmtUSD(pnl)}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Reasoning — council transcript */}
+          {transcript && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Users className="h-3 w-3" /> Reasoning — Council Debate
+              </p>
+              <CouncilViewer transcript={transcript} marketTitle={bet.market_title} />
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function BetCard({ bet, onCancelled }: { bet: any; onCancelled?: () => void }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const [showCouncil, setShowCouncil]     = useState(false);
   const [confirming, setConfirming]       = useState(false);
   const [cancelling, setCancelling]       = useState(false);
@@ -227,11 +353,19 @@ function BetCard({ bet, onCancelled }: { bet: any; onCancelled?: () => void }) {
   };
 
   return (
-    <Card className={cn("border",
+    <>
+    <BetDetailDialog bet={bet} open={detailOpen} onOpenChange={setDetailOpen} />
+    <Card className={cn("border cursor-pointer hover:border-primary/40 transition-colors",
       bet.status === "cancelled" ? "border-muted opacity-60"
       : pnl != null && pnl > 0 ? "border-emerald-500/30"
       : pnl != null && pnl < 0 ? "border-red-500/30"
-      : "border-border")}>
+      : "border-border")}
+      onClick={(e) => {
+        // Don't open the dialog when clicking action buttons inside the card.
+        const target = e.target as HTMLElement;
+        if (target.closest("button") || target.closest("a")) return;
+        setDetailOpen(true);
+      }}>
       <CardContent className="pt-4 pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
@@ -313,6 +447,7 @@ function BetCard({ bet, onCancelled }: { bet: any; onCancelled?: () => void }) {
         )}
       </CardContent>
     </Card>
+    </>
   );
 }
 
