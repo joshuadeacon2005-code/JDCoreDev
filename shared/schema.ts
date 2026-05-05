@@ -518,6 +518,11 @@ export const hostingInvoices = pgTable("hosting_invoices", {
   billingPeriod: text("billing_period"),
   notes: text("notes"),
   pdfPath: text("pdf_path"),
+  // Cycle window the invoice was generated against — frozen at creation
+  // time so recalculate() uses the original window, not whatever the
+  // project's currentCycleStartDate has moved to since.
+  cycleStartDate: date("cycle_start_date"),
+  cycleEndDate: date("cycle_end_date"),
   createdByUserId: integer("created_by_user_id").references(() => users.id),
   // Email reminder tracking
   reminderCount: integer("reminder_count").notNull().default(0),

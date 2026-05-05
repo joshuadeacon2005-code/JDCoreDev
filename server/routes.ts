@@ -4409,6 +4409,8 @@ JD CoreDev System`,
       // All invoice amounts are stored in USD; client.invoiceCurrency is
       // the *secondary display* currency for the conversion line on the
       // generated PDF (e.g. "≈ £X.XX" for GBP), not a re-denomination.
+      // cycleStartDate freezes the original window so future recalculates
+      // see the same logs even if currentCycleStartDate has been reset.
       const invoice = await storage.createHostingInvoice({
         invoiceNumber,
         clientId,
@@ -4419,8 +4421,10 @@ JD CoreDev System`,
         status: "pending",
         billingPeriod,
         notes,
+        cycleStartDate: earliestCycleStart || cycleEnd,
+        cycleEndDate: cycleEnd,
         createdByUserId: req.user!.id,
-      });
+      } as any);
 
       // One hosting line item per project; ONE combined overage line item
       // attached to the first project (overage is now client-level, not
@@ -4626,15 +4630,26 @@ JD CoreDev System`,
       );
 
       const HOSTING_OVERAGE_RATE_CENTS_PER_HOUR = 3000;
-      const cycleEnd = existing.invoiceDate;
+      // Cycle window: requires the frozen cycleStartDate/cycleEndDate stored
+      // on the invoice. If those aren't set (legacy invoices), the recalc
+      // returns 400 with a clear message — user must set the window via
+      // PATCH /:id/cycle before recalculating. No silent date-guessing.
+      const cycleStart = (existing as any).cycleStartDate;
+      const cycleEnd = (existing as any).cycleEndDate || existing.invoiceDate;
+      if (!cycleStart) {
+        return res.status(400).json({
+          message:
+            "This invoice has no cycle window stored. Set cycleStartDate + cycleEndDate first " +
+            "(via PATCH /api/admin/hosting-invoices/:id/cycle or the invoice detail dialog) " +
+            "so the maintenance overage is computed against the correct log range.",
+        });
+      }
       let combinedActualMinutes = 0;
       let combinedBudgetMinutes = 0;
-      let earliestCycleStart: string | null = null;
+      const earliestCycleStart: string = cycleStart;
       for (const project of selectedProjects) {
         const terms = await storage.getProjectHostingTerms(project.id);
         const budgetMinutes = terms?.maintenanceBudgetMinutes ?? null;
-        const cycleStart = terms?.currentCycleStartDate || cycleEnd;
-        if (!earliestCycleStart || cycleStart < earliestCycleStart) earliestCycleStart = cycleStart;
         const logs = await storage.getMaintenanceLogsByDateRange(project.id, cycleStart, cycleEnd);
         const minutes = logs.reduce((sum, l) => sum + l.minutesSpent, 0);
         combinedActualMinutes += minutes;
@@ -4692,6 +4707,48 @@ JD CoreDev System`,
     }
   });
 
+  // Idempotent column add — ensures the new cycle window columns exist
+  // even when drizzle-kit push hasn't been run on the deploy target.
+  // Runs once at first request via the requireAdmin path.
+  let _cycleColumnsReady = false;
+  async function ensureCycleColumns() {
+    if (_cycleColumnsReady) return;
+    await pool.query(`ALTER TABLE hosting_invoices ADD COLUMN IF NOT EXISTS cycle_start_date DATE`);
+    await pool.query(`ALTER TABLE hosting_invoices ADD COLUMN IF NOT EXISTS cycle_end_date   DATE`);
+    _cycleColumnsReady = true;
+  }
+  ensureCycleColumns().catch(e => console.error("[hosting-invoices] cycle columns:", e.message));
+
+  // Set the cycle window on an existing hosting invoice. Required for
+  // legacy invoices that were issued before cycleStartDate/cycleEndDate
+  // existed on the schema. Once set, recalculate() can re-derive overage
+  // from the correct log range.
+  app.patch("/api/admin/hosting-invoices/:id/cycle", requireAdmin, async (req, res, next) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid invoice ID" });
+      const { cycleStartDate, cycleEndDate } = req.body || {};
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRe.test(String(cycleStartDate || ""))) {
+        return res.status(400).json({ message: "cycleStartDate must be YYYY-MM-DD" });
+      }
+      if (cycleEndDate && !dateRe.test(String(cycleEndDate))) {
+        return res.status(400).json({ message: "cycleEndDate must be YYYY-MM-DD" });
+      }
+      if (cycleEndDate && String(cycleEndDate) < String(cycleStartDate)) {
+        return res.status(400).json({ message: "cycleEndDate must be on or after cycleStartDate" });
+      }
+      const updated = await storage.updateHostingInvoice(id, {
+        cycleStartDate,
+        cycleEndDate: cycleEndDate || null,
+      } as any);
+      if (!updated) return res.status(404).json({ message: "Invoice not found" });
+      res.json({ id, cycleStartDate, cycleEndDate: cycleEndDate || null });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Recalculate ALL hosting invoices (sweep). Skips paid + cancelled —
   // re-running on a paid invoice would invalidate the receipt. Returns a
   // per-invoice diff array so the UI can summarise.
@@ -4712,15 +4769,25 @@ JD CoreDev System`,
           const selectedProjects = projectsWithTerms.filter(p => projectIds.includes(p.id));
           if (selectedProjects.length === 0) continue;
           const hostingFeesTotal = selectedProjects.reduce((s, p) => s + (p.hostingTerms?.monthlyFeeCents || 0), 0);
-          const cycleEnd = inv.invoiceDate;
+          // Skip if cycle window not set — the bulk handler doesn't guess.
+          // Caller fixes per-invoice via PATCH /:id/cycle, then re-runs bulk.
+          const cycleStart = (inv as any).cycleStartDate;
+          const cycleEnd = (inv as any).cycleEndDate || inv.invoiceDate;
+          if (!cycleStart) {
+            results.push({
+              id: inv.id,
+              invoiceNumber: inv.invoiceNumber,
+              skipped: true,
+              reason: "no cycle window — set cycleStartDate via the invoice detail dialog",
+            });
+            continue;
+          }
           let combinedActualMinutes = 0;
           let combinedBudgetMinutes = 0;
-          let earliestCycleStart: string | null = null;
+          const earliestCycleStart: string = cycleStart;
           for (const project of selectedProjects) {
             const terms = await storage.getProjectHostingTerms(project.id);
             const budgetMinutes = terms?.maintenanceBudgetMinutes ?? null;
-            const cycleStart = terms?.currentCycleStartDate || cycleEnd;
-            if (!earliestCycleStart || cycleStart < earliestCycleStart) earliestCycleStart = cycleStart;
             const logs = await storage.getMaintenanceLogsByDateRange(project.id, cycleStart, cycleEnd);
             combinedActualMinutes += logs.reduce((s, l) => s + l.minutesSpent, 0);
             if (budgetMinutes !== null) combinedBudgetMinutes += budgetMinutes;

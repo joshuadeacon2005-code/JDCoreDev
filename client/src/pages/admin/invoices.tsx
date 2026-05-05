@@ -26,6 +26,8 @@ import {
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { generateHostingReceiptPDF, generateMilestoneReceiptPDF } from "@/lib/receipt-pdf";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -105,7 +107,241 @@ function getDueDateStatus(dueDate: string | null, status: string): string {
   }
 }
 
+// Reminder schedule mirrors the server logic (server/scheduler.ts).
+const REMINDER_SCHEDULE = [
+  { num: 1, daysFromDue: -3, label: "3 days before due" },
+  { num: 2, daysFromDue:  0, label: "On due date" },
+  { num: 3, daysFromDue:  3, label: "3 days overdue" },
+  { num: 4, daysFromDue:  7, label: "7 days overdue" },
+  { num: 5, daysFromDue: 14, label: "14 days overdue" },
+];
+
+function InvoiceDetailDialog({
+  invoice,
+  open,
+  onOpenChange,
+  onDownloadReceipt,
+}: {
+  invoice: InvoiceWithDetails;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onDownloadReceipt?: () => void;
+}) {
+  const { toast } = useToast();
+  const [cycleStart, setCycleStart] = useState<string>((invoice as any).cycleStartDate || "");
+  const [cycleEnd, setCycleEnd] = useState<string>((invoice as any).cycleEndDate || invoice.invoiceDate);
+  const [savingCycle, setSavingCycle] = useState(false);
+  const [recalcing, setRecalcing] = useState(false);
+
+  const saveCycle = async () => {
+    if (!cycleStart) {
+      toast({ title: "Set both cycle start and end dates", variant: "destructive" });
+      return;
+    }
+    setSavingCycle(true);
+    try {
+      const r = await apiRequest("PATCH", `/api/admin/hosting-invoices/${invoice.id}/cycle`, {
+        cycleStartDate: cycleStart,
+        cycleEndDate: cycleEnd || null,
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.message || "Failed");
+      toast({ title: "Cycle window saved", description: `${cycleStart} → ${cycleEnd || invoice.invoiceDate}` });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/hosting-invoices"] });
+    } catch (e: any) {
+      toast({ title: "Couldn't save cycle", description: e.message, variant: "destructive" });
+    }
+    setSavingCycle(false);
+  };
+
+  const recalcNow = async () => {
+    setRecalcing(true);
+    try {
+      const r = await apiRequest("POST", `/api/admin/hosting-invoices/${invoice.id}/recalculate`, {});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.message || "Failed");
+      const prev = (d.previousTotalCents / 100).toFixed(2);
+      const next = (d.newTotalCents / 100).toFixed(2);
+      const delta = (d.delta / 100).toFixed(2);
+      toast({
+        title: "Invoice recalculated",
+        description: `${d.invoiceNumber}: $${prev} → $${next} (Δ ${d.delta >= 0 ? "+" : ""}$${delta})`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/hosting-invoices"] });
+    } catch (e: any) {
+      toast({ title: "Recalculate failed", description: e.message, variant: "destructive" });
+    }
+    setRecalcing(false);
+  };
+
+  const lineSum = invoice.lineItems.reduce((s, li) => s + li.amountCents, 0);
+  const totalMatchesLines = lineSum === invoice.totalAmountCents;
+  const cancelled: number[] = (invoice as any).cancelledReminders || [];
+  const reminderCount = (invoice as any).reminderCount || 0;
+  const lastSent = (invoice as any).lastReminderSent;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            <Receipt className="h-4 w-4 text-muted-foreground" />
+            {invoice.invoiceNumber}
+            <Badge variant="outline" className="text-[10px]">{invoice.status}</Badge>
+          </DialogTitle>
+          <DialogDescription asChild>
+            <p className="text-sm flex items-center gap-2 flex-wrap text-muted-foreground">
+              <Building2 className="h-3 w-3" /> {invoice.client.name}
+              <span>·</span>
+              <span>Issued {format(parseISO(invoice.invoiceDate), "MMM d, yyyy")}</span>
+              <span>·</span>
+              <span>Due {format(parseISO(invoice.dueDate), "MMM d, yyyy")}</span>
+            </p>
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Total + actions */}
+          <div className="flex items-center justify-between rounded-md border border-border/50 p-3 bg-muted/20">
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total</p>
+              <p className="text-2xl font-mono font-bold">
+                {invoice.currency || "USD"} ${(invoice.totalAmountCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              {!totalMatchesLines && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                  ⚠ Line items sum to ${(lineSum / 100).toFixed(2)} — does not match total.
+                </p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              {onDownloadReceipt && (
+                <Button variant="outline" size="sm" onClick={onDownloadReceipt} className="text-xs">
+                  <Download className="h-3.5 w-3.5 mr-1.5" />PDF
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Cycle window editor — required for legacy invoices to recalc.
+              Setting these freezes the maintenance-log range this invoice
+              bills against, surviving any future cycle resets. */}
+          <div className="rounded-md border border-border/50 p-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
+              Maintenance Cycle Window
+              {!(invoice as any).cycleStartDate && (
+                <span className="ml-2 text-amber-600 dark:text-amber-400 normal-case tracking-normal text-[11px]">
+                  not set — recalc will refuse until you save dates here
+                </span>
+              )}
+            </p>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Start</label>
+                <input
+                  type="date"
+                  value={cycleStart}
+                  onChange={e => setCycleStart(e.target.value)}
+                  className="w-full text-sm border rounded-md px-2 py-1.5 bg-background"
+                  data-testid={`cycle-start-${invoice.id}`}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">End</label>
+                <input
+                  type="date"
+                  value={cycleEnd}
+                  onChange={e => setCycleEnd(e.target.value)}
+                  className="w-full text-sm border rounded-md px-2 py-1.5 bg-background"
+                  data-testid={`cycle-end-${invoice.id}`}
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={saveCycle} disabled={savingCycle} className="text-xs">
+                {savingCycle ? "Saving…" : "Save cycle"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={recalcNow} disabled={recalcing || !cycleStart} className="text-xs"
+                data-testid={`recalc-${invoice.id}`}>
+                {recalcing ? "Recalculating…" : "↻ Recalculate this invoice"}
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+              Maintenance logs in this date range count toward the combined budget. Logs outside the range
+              are billed on whichever invoice owns their cycle (or none yet).
+            </p>
+          </div>
+
+          {/* Line items breakdown */}
+          <div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Breakdown</p>
+            <div className="rounded-md border border-border/50 divide-y divide-border/40">
+              {invoice.lineItems.map(li => (
+                <div key={li.id} className="px-3 py-2 flex items-start justify-between gap-3 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">{li.projectName}</p>
+                    {li.description && <p className="text-xs text-muted-foreground">{li.description}</p>}
+                  </div>
+                  <span className="font-mono shrink-0">
+                    ${(li.amountCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Reminder timeline */}
+          <div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Clock className="h-3 w-3" /> Reminder Timeline
+              <span className="text-muted-foreground/70 ml-1">{reminderCount}/5 sent</span>
+            </p>
+            <div className="space-y-1.5">
+              {REMINDER_SCHEDULE.map(r => {
+                const dueDate = parseISO(invoice.dueDate);
+                const scheduledAt = addDays(dueDate, r.daysFromDue);
+                const isPast = isBefore(scheduledAt, new Date());
+                const isCancelled = cancelled.includes(r.num);
+                const isSent = r.num <= reminderCount && !isCancelled;
+                const isPaidOrCancelled = invoice.status === "paid" || invoice.status === "cancelled";
+                return (
+                  <div key={r.num} className="flex items-center gap-3 text-xs px-3 py-2 rounded-md border border-border/40">
+                    <span className={`inline-flex items-center justify-center h-5 w-5 rounded-full text-[10px] font-mono ${
+                      isCancelled ? "bg-muted text-muted-foreground line-through" :
+                      isSent ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400" :
+                      isPast && !isPaidOrCancelled ? "bg-amber-500/20 text-amber-600 dark:text-amber-400" :
+                      "bg-muted text-muted-foreground/60"
+                    }`}>
+                      {isCancelled ? "✕" : isSent ? "✓" : r.num}
+                    </span>
+                    <div className="flex-1">
+                      <p className={`font-medium ${isCancelled ? "line-through text-muted-foreground" : ""}`}>
+                        {r.label}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Scheduled {format(scheduledAt, "MMM d, yyyy")}
+                        {isCancelled && " · cancelled"}
+                        {isSent && !isCancelled && " · sent"}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {lastSent && (
+              <p className="text-[11px] text-muted-foreground mt-2">
+                Last reminder sent: {format(new Date(lastSent), "MMM d, yyyy 'at' h:mm a")}
+              </p>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function BillingItemCard({ item, onStatusChange, onDelete, onDownloadReceipt }: { item: BillingItem; onStatusChange: (item: BillingItem, newStatus: string) => void; onDelete?: (item: BillingItem) => void; onDownloadReceipt?: (item: BillingItem) => void }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const dueDateStatus = getDueDateStatus(item.dueDate, item.status);
   const isOverdue = item.dueDate && isBefore(parseISO(item.dueDate), startOfDay(new Date())) && item.status !== "paid";
   
@@ -113,8 +349,29 @@ function BillingItemCard({ item, onStatusChange, onDelete, onDownloadReceipt }: 
   const invoiceStatuses = ["pending", "paid", "overdue"];
   const statusOptions = item.type === "milestone" ? milestoneStatuses : invoiceStatuses;
   
+  const isInvoice = item.type === "invoice";
+  const invoiceItem = isInvoice ? (item.originalItem as InvoiceWithDetails) : null;
+
   return (
-    <Card className="hover-elevate" data-testid={`billing-item-${item.id}`}>
+    <>
+    {invoiceItem && (
+      <InvoiceDetailDialog
+        invoice={invoiceItem}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        onDownloadReceipt={onDownloadReceipt ? () => onDownloadReceipt(item) : undefined}
+      />
+    )}
+    <Card
+      className={`hover-elevate ${isInvoice ? "cursor-pointer" : ""}`}
+      data-testid={`billing-item-${item.id}`}
+      onClick={isInvoice ? (e) => {
+        const target = e.target as HTMLElement;
+        // Don't open dialog when interacting with action controls inside the card.
+        if (target.closest("button") || target.closest("a") || target.closest('[role="combobox"]')) return;
+        setDetailOpen(true);
+      } : undefined}
+    >
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
@@ -237,6 +494,7 @@ function BillingItemCard({ item, onStatusChange, onDelete, onDownloadReceipt }: 
         </div>
       </CardContent>
     </Card>
+    </>
   );
 }
 
