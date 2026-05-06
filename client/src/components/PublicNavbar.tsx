@@ -105,6 +105,16 @@ export function PublicNavbar() {
                     Services
                   </div>
                 </Link>
+                <Link href="/services/ai-advertising-audit" onClick={() => setMobileMenuOpen(false)}>
+                  <div className={cn(
+                    "pl-8 pr-4 py-2 rounded-lg transition-colors text-xs uppercase tracking-wide",
+                    isActive("/services/ai-advertising-audit")
+                      ? "bg-primary/10 text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-muted"
+                  )}>
+                    AI Advertising Audit
+                  </div>
+                </Link>
                 <Link href="/work" onClick={() => setMobileMenuOpen(false)}>
                   <div className={cn(
                     "px-4 py-2 rounded-lg transition-colors",
