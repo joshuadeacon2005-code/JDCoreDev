@@ -433,8 +433,9 @@ export async function registerRoutes(
     const SITE = "https://www.jdcoredev.com";
     type SitemapEntry = { loc: string; priority: string; changefreq: string; lastmod?: string };
     const staticUrls: SitemapEntry[] = [
-      { loc: SITE + "/",         priority: "1.0", changefreq: "weekly" },
-      { loc: SITE + "/audits",   priority: "0.8", changefreq: "daily"  },
+      { loc: SITE + "/",                                  priority: "1.0", changefreq: "weekly"  },
+      { loc: SITE + "/services/ai-advertising-audit",     priority: "0.8", changefreq: "monthly" },
+      { loc: SITE + "/audits",                            priority: "0.8", changefreq: "daily"   },
     ];
     const auditUrls: SitemapEntry[] = [];
     try {
