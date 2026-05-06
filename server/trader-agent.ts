@@ -357,8 +357,8 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
         if (order && order.id) {
           executedCount++;
           await pool.query(`
-            INSERT INTO trader_trades (id, symbol, side, qty, notional, status, rationale, risk, mode, order_id, catalyst_class, strategy_profile)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            INSERT INTO trader_trades (id, symbol, side, qty, notional, status, rationale, risk, mode, order_id, catalyst_class, strategy_profile, is_paper)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
             ON CONFLICT (id) DO NOTHING
           `, [
             order.id, symbol, action,
@@ -370,6 +370,7 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
             order.id,
             (d.catalyst_class || "").toString().slice(0, 64) || null,
             (d.strategy_profile || "").toString().slice(0, 32) || null,
+            isPaper,
           ]);
           results.push({ symbol, action, status: "executed", orderId: order.id, rationale });
         } else {
@@ -389,13 +390,14 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
     try {
       const post = await alpacaReq(keys, "/v2/account");
       await pool.query(`
-        INSERT INTO trader_snapshots (equity, buying_power, pnl_day, positions_count)
-        VALUES ($1,$2,$3,$4)
+        INSERT INTO trader_snapshots (equity, buying_power, pnl_day, positions_count, is_paper)
+        VALUES ($1,$2,$3,$4,$5)
       `, [
         parseFloat(post?.equity || "0"),
         parseFloat(post?.buying_power || "0"),
         parseFloat(post?.equity || "0") - parseFloat(post?.last_equity || "0"),
         (positions || []).length,
+        isPaper,
       ]);
     } catch {}
 
@@ -407,8 +409,8 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
     await pool.query(`
       INSERT INTO trader_pipelines
         (risk, mode, positions_count, ter, thesis, pass, score,
-         decision_source, decisions_json, executed_status, positions_json)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         decision_source, decisions_json, executed_status, positions_json, is_paper)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     `, [
       (await getSetting("cron_risk")) || "medium",
       "swing",
@@ -421,14 +423,16 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
       JSON.stringify(decisions),
       runStatus,
       JSON.stringify(results),
+      isPaper,
     ]);
 
     await pool.query(`
-      INSERT INTO trader_logs (message, type)
-      VALUES ($1, $2)
+      INSERT INTO trader_logs (message, type, is_paper)
+      VALUES ($1, $2, $3)
     `, [
       `[agent-routine] ${executedCount} executed / ${rejectedCount} rejected. ${thesis.slice(0, 120)}`,
       runStatus === "rejected" ? "warn" : "info",
+      isPaper,
     ]);
 
     res.status(201).json({
@@ -457,6 +461,7 @@ traderAgentRouter.post("/reflections", requireAgentKey, async (req, res) => {
       return res.status(400).json({ error: "non-empty `reflections` array required" });
     }
 
+    const { isPaper } = await getActiveAlpacaKeys();
     let inserted = 0;
     const errors: string[] = [];
 
@@ -472,8 +477,8 @@ traderAgentRouter.post("/reflections", requireAgentKey, async (req, res) => {
         await pool.query(`
           INSERT INTO trader_reflections
             (trade_id, ticker, closed_at, hold_days, pnl_usd, pnl_pct,
-             catalyst_class, strategy_profile, reflection, what_worked, what_didnt, next_time)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             catalyst_class, strategy_profile, reflection, what_worked, what_didnt, next_time, is_paper)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         `, [
           r.trade_id ?? null,
           ticker,
@@ -487,6 +492,7 @@ traderAgentRouter.post("/reflections", requireAgentKey, async (req, res) => {
           (r.what_worked || "").toString().slice(0, 1000) || null,
           (r.what_didnt  || "").toString().slice(0, 1000) || null,
           (r.next_time   || "").toString().slice(0, 1000) || null,
+          isPaper,
         ]);
         inserted++;
       } catch (e: any) {

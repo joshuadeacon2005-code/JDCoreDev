@@ -89,6 +89,20 @@ async function initTraderTables() {
   await pool.query(`ALTER TABLE trader_trades ADD COLUMN IF NOT EXISTS catalyst_class TEXT`);
   await pool.query(`ALTER TABLE trader_trades ADD COLUMN IF NOT EXISTS strategy_profile TEXT`);
 
+  // Paper vs Live separation (TRADE-SEP-01). Tag every write so analytics,
+  // performance, runs, and the routine's recentDecisions/recentTrades feed
+  // can be filtered cleanly. Default TRUE — historical rows pre-date live
+  // trading and the live Alpaca keys are not configured anyway.
+  await pool.query(`ALTER TABLE trader_trades     ADD COLUMN IF NOT EXISTS is_paper BOOLEAN DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE trader_pipelines  ADD COLUMN IF NOT EXISTS is_paper BOOLEAN DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE trader_snapshots  ADD COLUMN IF NOT EXISTS is_paper BOOLEAN DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE trader_logs       ADD COLUMN IF NOT EXISTS is_paper BOOLEAN`);
+
+  // Indexes for the (is_paper, logged_at) read pattern used by every list query.
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_trades_mode_ts     ON trader_trades(is_paper, logged_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_pipelines_mode_ts  ON trader_pipelines(is_paper, logged_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_snapshots_mode_ts  ON trader_snapshots(is_paper, logged_at DESC)`);
+
   // Post-trade reflections — written by the routine after a position closes.
   // Drives the memory loop: next fire injects the last N into the Analyst prompt.
   await pool.query(`CREATE TABLE IF NOT EXISTS trader_reflections (
@@ -105,10 +119,13 @@ async function initTraderTables() {
     what_worked TEXT,
     what_didnt TEXT,
     next_time TEXT,
+    is_paper BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  await pool.query(`ALTER TABLE trader_reflections ADD COLUMN IF NOT EXISTS is_paper BOOLEAN DEFAULT TRUE`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_reflections_ticker ON trader_reflections(ticker)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_reflections_catalyst ON trader_reflections(catalyst_class)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_reflections_mode ON trader_reflections(is_paper, created_at DESC)`);
 
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_enabled', 'false') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_risk', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_RISK || 'medium']);
@@ -132,24 +149,33 @@ async function setSetting(key: string, value: string) {
   `, [key, value]);
 }
 
+// Read the active paper/live mode for tagging write operations.
+async function getIsPaperMode(): Promise<boolean> {
+  const dbPaper = await getSetting('alpaca_paper');
+  return dbPaper !== null ? dbPaper !== 'false' : process.env.CRON_ALPACA_PAPER !== 'false';
+}
+
 async function insertLog(type: string, message: string) {
-  await pool.query('INSERT INTO trader_logs (type, message) VALUES ($1,$2)', [type, message]);
+  const isPaper = await getIsPaperMode();
+  await pool.query('INSERT INTO trader_logs (type, message, is_paper) VALUES ($1,$2,$3)', [type, message, isPaper]);
 }
 
 async function insertTrade(t: any) {
   const id = `${t.symbol}-${Date.now()}`;
+  const isPaper = await getIsPaperMode();
   await pool.query(`
-    INSERT INTO trader_trades (id,symbol,side,qty,notional,price,status,rationale,risk,mode,order_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    INSERT INTO trader_trades (id,symbol,side,qty,notional,price,status,rationale,risk,mode,order_id,is_paper)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT (id) DO NOTHING
-  `, [id, t.symbol, t.side, t.qty||null, t.notional||null, t.price||null, t.status||null, t.rationale||null, t.risk||null, t.mode||null, t.orderId||null]);
+  `, [id, t.symbol, t.side, t.qty||null, t.notional||null, t.price||null, t.status||null, t.rationale||null, t.risk||null, t.mode||null, t.orderId||null, isPaper]);
 }
 
 async function insertSnapshot(s: any) {
+  const isPaper = await getIsPaperMode();
   await pool.query(`
-    INSERT INTO trader_snapshots (equity,buying_power,pnl_day,positions_count)
-    VALUES ($1,$2,$3,$4)
-  `, [s.equity||0, s.cash||0, s.pnl||0, s.positions||0]);
+    INSERT INTO trader_snapshots (equity,buying_power,pnl_day,positions_count,is_paper)
+    VALUES ($1,$2,$3,$4,$5)
+  `, [s.equity||0, s.cash||0, s.pnl||0, s.positions||0, isPaper]);
 }
 
 async function insertPipelineRun(p: any) {
