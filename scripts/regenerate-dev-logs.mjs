@@ -210,24 +210,37 @@ async function main() {
         continue;
       }
 
-      // Skip if regenerated description is identical (idempotent reruns).
-      if (newDesc.trim() === log.description.trim()) {
+      // Re-derive minutesSpent from the same slice using the active-time
+      // computation in summarizeTranscript. The DB column was set by the
+      // hook with the OLD GAP_CAP_MS=5min cap; this lets us roll back the
+      // inflation. Fall back to 1-minute floor for slices with any activity.
+      const newMinutes = summary.activeMs > 0
+        ? Math.max(1, Math.round(summary.activeMs / 60000))
+        : log.minutesSpent;
+
+      // Skip if regenerated description AND minutes are identical (idempotent).
+      const descUnchanged = newDesc.trim() === log.description.trim();
+      const minutesUnchanged = newMinutes === log.minutesSpent;
+      if (descUnchanged && minutesUnchanged) {
         unchanged++;
         prevEndMs = endMs;
         continue;
       }
 
       if (DRY_RUN) {
-        console.log(`\n── log ${log.id} (project ${log.projectId}, ${log.minutesSpent} min) ──`);
+        console.log(`\n── log ${log.id} (project ${log.projectId}, ${log.minutesSpent}m → ${newMinutes}m) ──`);
         console.log("BEFORE:");
         console.log(log.description.split("\n").slice(0, 6).map(l => "  " + l).join("\n"));
         console.log("AFTER:");
         console.log(newDesc.split("\n").slice(0, 8).map(l => "  " + l).join("\n"));
       } else {
         try {
-          await api("PATCH", `/${log.id}`, { description: newDesc });
+          const body = {};
+          if (!descUnchanged) body.description = newDesc;
+          if (!minutesUnchanged) body.minutesSpent = newMinutes;
+          await api("PATCH", `/${log.id}`, body);
           patched++;
-          if (VERBOSE) console.log(`  ✓ ${sid} log ${log.id}: patched`);
+          if (VERBOSE) console.log(`  ✓ ${sid} log ${log.id}: patched (${log.minutesSpent}m → ${newMinutes}m)`);
         } catch (e) {
           errors++;
           console.log(`  ! log ${log.id}: ${e.message}`);
