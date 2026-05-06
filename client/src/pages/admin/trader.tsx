@@ -956,14 +956,14 @@ export default function TraderDashboard() {
                           <div className="flex gap-2">
                             {!agentRunning ? (
                               <Button size="sm" className={cn("text-xs border", ac.btn)} variant="outline" onClick={startAgent}>
-                                <Play className="h-3 w-3 mr-1.5"/>Start Agent
+                                <Play className="h-3 w-3 mr-1.5"/>Fire Routine
                               </Button>
                             ):(
                               <Button size="sm" variant="outline" className="text-xs border-red-500/30 bg-red-500/10 text-red-500 hover:bg-red-500/20" onClick={stopAgent}>
                                 <Square className="h-3 w-3 mr-1.5"/>Stop
                               </Button>
                             )}
-                            <Button size="sm" variant="outline" className="text-xs" onClick={mode==="swing" ? startAgent : async()=>{const pipe=await runPipeline();if(pipe) await executeTrades(pipe);}}>
+                            <Button size="sm" variant="outline" className="text-xs" onClick={startAgent}>
                               Run Once
                             </Button>
                           </div>

@@ -724,8 +724,8 @@ traderRouter.get('/health', async (_req, res) => {
     hasPaperKeys,
     hasLiveKeys,
     env: {
+      hasRoutineToken: !!process.env.CLAUDE_ROUTINE_TRADER_TOKEN,
       hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-      hasCronSecret:   !!process.env.CRON_SECRET,
       hasPaperKeys,
       hasLiveKeys,
       hasEmail:        !!process.env.SMTP_HOST,

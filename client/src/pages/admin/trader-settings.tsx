@@ -49,8 +49,8 @@ export default function TraderSettings() {
   const [testMsg,     setTestMsg]     = useState("");
   const [logs,        setLogs]        = useState<any[]>([]);
   const [logsOpen,    setLogsOpen]    = useState(false);
-  const [cronRunning, setCronRunning] = useState<string|null>(null);
-  const [cronMsg,     setCronMsg]     = useState<Record<string,string>>({});
+  const [routineRunning, setRoutineRunning] = useState<string|null>(null);
+  const [routineMsg,     setRoutineMsg]     = useState<Record<string,string>>({});
 
   useEffect(()=>{
     Promise.all([
@@ -68,22 +68,20 @@ export default function TraderSettings() {
     setSaving(false);
   };
 
-  const toggleCron = () => updateSetting('cron_enabled', settings.cron_enabled==='true' ? 'false' : 'true');
-
   const triggerManualRun = async (mode: string) => {
-    setCronRunning(mode); setCronMsg(p=>({...p,[mode]:""}));
+    setRoutineRunning(mode); setRoutineMsg(p=>({...p,[mode]:""}));
     try {
-      const r = await fetch('/api/trader/cron/run',{
+      const r = await fetch('/api/trader/agent/run',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({risk:settings.cron_risk||'medium',mode}),
+        body:JSON.stringify({note:`manual fire from settings — risk=${settings.cron_risk||'medium'} mode=${mode}`}),
       });
       const d = await r.json();
-      const msg = d.error ? `Error: ${d.error}` : `Done — ${d.action||'complete'}. ${d.orders||0} orders.`;
-      setCronMsg(p=>({...p,[mode]:msg}));
-    } catch(e:any){setCronMsg(p=>({...p,[mode]:`Error: ${e.message}`}));}
-    setCronRunning(null);
-    setTimeout(()=>setCronMsg(p=>({...p,[mode]:""})),6000);
+      const msg = d.error ? `Error: ${d.error}` : `Routine fired ✓ — Claude is analyzing. Check Runs for results.`;
+      setRoutineMsg(p=>({...p,[mode]:msg}));
+    } catch(e:any){setRoutineMsg(p=>({...p,[mode]:`Error: ${e.message}`}));}
+    setRoutineRunning(null);
+    setTimeout(()=>setRoutineMsg(p=>({...p,[mode]:""})),8000);
   };
 
   const loadLogs = async () => {
@@ -105,8 +103,6 @@ export default function TraderSettings() {
     setTimeout(()=>setTestMsg(""),4000);
   };
 
-  const cronEnabled = settings.cron_enabled === 'true';
-
   return (
     <AdminLayout>
       <TraderTabs />
@@ -116,33 +112,19 @@ export default function TraderSettings() {
           <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         </div>
 
-        {/* Auto-trading cron */}
-        <Card className={cn("transition-colors", cronEnabled && "border-emerald-500/30")}>
+        {/* Trader Routine */}
+        <Card>
           <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Activity className="h-4 w-4"/>Autonomous Trading Cron
-                </CardTitle>
-                <CardDescription className="mt-1 text-xs">
-                  All enabled strategies run simultaneously on independent schedules. Every trade is tagged with its strategy type.
-                </CardDescription>
-              </div>
-              <button onClick={toggleCron} disabled={loading||saving}
-                className={cn("relative w-12 h-6 rounded-full border transition-colors flex-shrink-0",
-                  cronEnabled ? "bg-emerald-500 border-emerald-500" : "bg-muted border-border")}>
-                <span className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all",
-                  cronEnabled ? "left-6" : "left-0.5")}/>
-              </button>
+            <div>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Activity className="h-4 w-4"/>Trader Routine
+              </CardTitle>
+              <CardDescription className="mt-1 text-xs">
+                Powered by Claude Code. Fires on-demand — no server-side cron. Use "Fire Routine" on the dashboard or the button below.
+              </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {cronEnabled&&(
-              <div className="p-3 rounded-md border border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 text-xs">
-                Autonomous trading is active. Ensure <code className="font-mono">CRON_ALPACA_KEY</code> and <code className="font-mono">CRON_ALPACA_SECRET</code> are configured in Secrets.
-              </div>
-            )}
-
             <div>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Risk Profile</p>
               <div className="flex gap-1.5">
@@ -157,34 +139,23 @@ export default function TraderSettings() {
             </div>
 
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-3">Active Strategies</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-3">Strategy</p>
               <div className="space-y-1">
                 {Object.entries(TRADING_MODES).map(([k,v]:any)=>{
-                  const on = settings[`cron_${k}_enabled`]==='true';
                   const lastRun = settings[`cron_last_run_${k}`];
                   const lastLabel = lastRun ? fmtHKT(lastRun, {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) + ' HKT' : 'Never';
                   return (
-                    <div key={k} className={cn("flex flex-col gap-2 px-3 py-2.5 rounded-md border transition-colors",
-                      on ? "border-emerald-500/20 bg-emerald-500/5" : "border-border bg-muted/20")}>
-                      <div className="flex items-center gap-3">
-                        <button onClick={()=>updateSetting(`cron_${k}_enabled`, on?'false':'true')} disabled={saving}
-                          className={cn("relative w-9 h-5 rounded-full border flex-shrink-0 transition-colors",
-                            on ? "bg-emerald-500 border-emerald-500" : "bg-muted border-border")}>
-                          <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all",
-                            on ? "left-4" : "left-0.5")}/>
-                        </button>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium">{v.label}</p>
-                          <p className="text-[10px] text-muted-foreground">Last run: {lastLabel}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {cronMsg[k]&&<p className={cn("text-[10px]", cronMsg[k].startsWith("Error") ? "text-red-500" : "text-emerald-600 dark:text-emerald-400")}>{cronMsg[k]}</p>}
-                          <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={()=>triggerManualRun(k)} disabled={cronRunning===k}>
-                            <Play className="h-3 w-3 mr-1"/>{cronRunning===k?"…":"Run"}
-                          </Button>
-                        </div>
+                    <div key={k} className="flex items-center gap-3 px-3 py-2.5 rounded-md border border-border bg-muted/20">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium">{v.label}</p>
+                        <p className="text-[10px] text-muted-foreground">Last fire: {lastLabel}</p>
                       </div>
-                      <ModeIntervalInput modeKey={k} value={settings[`cron_interval_${k}`] || String(({day:15,swing:240,portfolio:1440,crypto:1440} as any)[k] || 15)} onSave={mins=>updateSetting(`cron_interval_${k}`, mins)} />
+                      <div className="flex items-center gap-2">
+                        {routineMsg[k]&&<p className={cn("text-[10px]", routineMsg[k].startsWith("Error") ? "text-red-500" : "text-emerald-600 dark:text-emerald-400")}>{routineMsg[k]}</p>}
+                        <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={()=>triggerManualRun(k)} disabled={routineRunning===k}>
+                          <Play className="h-3 w-3 mr-1"/>{routineRunning===k?"Firing…":"Fire Now"}
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}
@@ -271,17 +242,17 @@ export default function TraderSettings() {
         <Card>
           <CardHeader className="pb-3 pt-4">
             <CardTitle className="text-sm">Environment Secrets</CardTitle>
-            <CardDescription className="text-xs">Add these in <strong>Replit → Secrets</strong>. Paper/Live mode is controlled from the dashboard toggle.</CardDescription>
+            <CardDescription className="text-xs">Add these in <strong>Railway → Variables</strong>. Paper/Live mode is controlled from the dashboard toggle.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {[
-              { key:"CRON_ALPACA_KEY_PAPER",    note:"Paper account Key ID",     req:true,  set: health?.env?.hasPaperKeys, group:"paper" },
-              { key:"CRON_ALPACA_SECRET_PAPER",  note:"Paper account Secret Key",  req:true,  set: health?.env?.hasPaperKeys, group:"paper" },
-              { key:"CRON_ALPACA_KEY_LIVE",      note:"Live account Key ID",      req:true,  set: health?.env?.hasLiveKeys,  group:"live"  },
-              { key:"CRON_ALPACA_SECRET_LIVE",   note:"Live account Secret Key",   req:true,  set: health?.env?.hasLiveKeys,  group:"live"  },
-              { key:"ANTHROPIC_API_KEY",         note:"Claude AI — required for pipeline analysis", req:true,  set: health?.env?.hasAnthropicKey },
-              { key:"SMTP_HOST",                 note:"e.g. smtp.gmail.com — for email notifications", req:false, set: health?.env?.hasEmail },
-              { key:"SLACK_WEBHOOK_URL",         note:"For Slack trade alerts",   req:false, set: health?.env?.hasSlack },
+              { key:"CLAUDE_ROUTINE_TRADER_TOKEN", note:"Anthropic routine fire token — get from claude.ai/code/routines", req:true,  set: health?.env?.hasRoutineToken },
+              { key:"CRON_ALPACA_KEY_PAPER",       note:"Alpaca paper account Key ID",     req:true,  set: health?.env?.hasPaperKeys },
+              { key:"CRON_ALPACA_SECRET_PAPER",    note:"Alpaca paper account Secret Key",  req:true,  set: health?.env?.hasPaperKeys },
+              { key:"CRON_ALPACA_KEY_LIVE",        note:"Alpaca live account Key ID",      req:false, set: health?.env?.hasLiveKeys  },
+              { key:"CRON_ALPACA_SECRET_LIVE",     note:"Alpaca live account Secret Key",   req:false, set: health?.env?.hasLiveKeys  },
+              { key:"SMTP_HOST",                   note:"e.g. smtp.gmail.com — for email notifications", req:false, set: health?.env?.hasEmail },
+              { key:"SLACK_WEBHOOK_URL",           note:"For Slack trade alerts",           req:false, set: health?.env?.hasSlack },
             ].map(({key:k,note,req,set,group}:any)=>(
               <div key={k} className="flex items-center gap-3 p-2.5 rounded-md border bg-muted/30">
                 <code className={cn("text-xs font-mono flex-shrink-0", req ? "text-primary" : "text-muted-foreground")}>{k}</code>

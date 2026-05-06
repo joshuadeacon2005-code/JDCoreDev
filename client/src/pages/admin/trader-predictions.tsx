@@ -393,7 +393,7 @@ function BetCard({ bet, onCancelled }: { bet: any; onCancelled?: () => void }) {
                 </Badge>
               ) : null}
             </div>
-            <p className="text-sm font-semibold leading-tight mb-1">{bet.market_title}</p>
+            <p className="text-sm font-semibold leading-tight mb-1">{bet.market_title || bet.market_ticker}</p>
             <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
               <span>{bet.contracts} contracts @ ${parseFloat(bet.price).toFixed(2)}</span>
               <span>Cost: {fmtUSD(parseFloat(bet.cost))}</span>
