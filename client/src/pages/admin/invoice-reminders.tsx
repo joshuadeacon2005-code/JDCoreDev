@@ -466,6 +466,60 @@ function EmailPreviewDialog({
   );
 }
 
+function HostingInvoiceBreakdown({
+  invoice,
+  formatAmount,
+}: {
+  invoice: InvoiceWithDetails;
+  formatAmount: (cents: number) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  if (invoice.lineItems.length === 0) return null;
+  const lineSum = invoice.lineItems.reduce((s, li) => s + li.amountCents, 0);
+  const itemWord = invoice.lineItems.length === 1 ? "item" : "items";
+  return (
+    <div className="mb-4">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1 text-xs text-muted-foreground uppercase tracking-wider mb-2 hover:text-foreground transition-colors"
+        data-testid={`toggle-breakdown-${invoice.id}`}
+      >
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        Breakdown ({invoice.lineItems.length} {itemWord})
+      </button>
+      {open && (
+        <>
+          <div className="space-y-1 rounded-md border border-border/50 divide-y divide-border/40">
+            {invoice.lineItems.map((item) => (
+              <div key={item.id} className="flex items-start justify-between gap-3 px-3 py-2 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium truncate">{item.projectName}</p>
+                  {item.description && (
+                    <p className="text-xs text-muted-foreground">{item.description}</p>
+                  )}
+                </div>
+                <span className="font-mono text-sm shrink-0">
+                  {formatAmount(item.amountCents)}
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm bg-muted/30">
+              <span className="font-semibold">Total</span>
+              <span className="font-mono font-semibold">{formatAmount(invoice.totalAmountCents)}</span>
+            </div>
+          </div>
+          {lineSum !== invoice.totalAmountCents && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              ⚠ Line items sum to {formatAmount(lineSum)} — does not match invoice total.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function AdminInvoiceReminders() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("hosting");
@@ -893,35 +947,7 @@ export default function AdminInvoiceReminders() {
                         </div>
                       </div>
 
-                      {invoice.lineItems.length > 0 && (
-                        <div className="mb-4">
-                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Breakdown</p>
-                          <div className="space-y-1 rounded-md border border-border/50 divide-y divide-border/40">
-                            {invoice.lineItems.map((item) => (
-                              <div key={item.id} className="flex items-start justify-between gap-3 px-3 py-2 text-sm">
-                                <div className="min-w-0 flex-1">
-                                  <p className="font-medium truncate">{item.projectName}</p>
-                                  {item.description && (
-                                    <p className="text-xs text-muted-foreground">{item.description}</p>
-                                  )}
-                                </div>
-                                <span className="font-mono text-sm shrink-0">
-                                  {formatAmount(item.amountCents)}
-                                </span>
-                              </div>
-                            ))}
-                            <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm bg-muted/30">
-                              <span className="font-semibold">Total</span>
-                              <span className="font-mono font-semibold">{formatAmount(invoice.totalAmountCents)}</span>
-                            </div>
-                          </div>
-                          {invoice.lineItems.reduce((s, li) => s + li.amountCents, 0) !== invoice.totalAmountCents && (
-                            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                              ⚠ Line items sum to {formatAmount(invoice.lineItems.reduce((s, li) => s + li.amountCents, 0))} — does not match invoice total.
-                            </p>
-                          )}
-                        </div>
-                      )}
+                      <HostingInvoiceBreakdown invoice={invoice} formatAmount={formatAmount} />
 
                       <ReminderTimeline 
                         reminderCount={invoice.reminderCount}
