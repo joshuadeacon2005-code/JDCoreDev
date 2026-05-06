@@ -12,6 +12,7 @@ import NotFound from "@/pages/not-found";
 import HomePage from "@/pages/home";
 import ServicesPage from "@/pages/services";
 import AiAdvertisingAuditPage from "@/pages/ai-advertising-audit";
+import SeoAuditAndImprovementPage from "@/pages/seo-audit-and-improvement";
 import WorkPage from "@/pages/work";
 import ContactPage from "@/pages/contact";
 import AuthPage from "@/pages/auth-page";
@@ -67,6 +68,7 @@ function Router() {
       <Route path="/" component={HomePage} />
       <Route path="/services" component={ServicesPage} />
       <Route path="/services/ai-advertising-audit" component={AiAdvertisingAuditPage} />
+      <Route path="/services/seo-audit-and-improvement" component={SeoAuditAndImprovementPage} />
       <Route path="/work" component={WorkPage} />
       <Route path="/contact" component={ContactPage} />
       <Route path="/auth" component={AuthPage} />

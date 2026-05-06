@@ -43,6 +43,7 @@ import {
   GraduationCap,
   ChevronRight,
   Target,
+  Search,
 } from "lucide-react";
 
 const navItems = [
@@ -850,7 +851,18 @@ export default function HomePage() {
                   See the audit <ArrowRight className="h-3 w-3" />
                 </span>
               </Link>
-              {/* Phase 2 will add the SEO Audit sibling card here */}
+              <Link href="/services/seo-audit-and-improvement" className="block border border-border p-8 hover:bg-muted/20 transition-colors group" data-testid="card-home-seo">
+                <div className="flex items-center gap-3 mb-3">
+                  <Search className="h-5 w-5 text-primary" />
+                  <h3 className="text-xl font-black uppercase italic tracking-tight">SEO Audit</h3>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-6">
+                  A plain-English review of your site's SEO. We find why Google isn't finding you, fix the technical problems, sharpen the content — so search actually starts working.
+                </p>
+                <span className="text-xs font-bold uppercase tracking-widest text-primary inline-flex items-center gap-1 group-hover:gap-2 transition-all">
+                  See the audit <ArrowRight className="h-3 w-3" />
+                </span>
+              </Link>
             </div>
           </AnimatedContainer>
         </div>

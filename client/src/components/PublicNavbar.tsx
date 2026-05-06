@@ -4,13 +4,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Menu, MenuItem, HoveredLink } from "@/components/ui/navbar-menu";
-import { Layers, Target, Menu as MenuIcon, X } from "lucide-react";
+import { Layers, Target, Search, Menu as MenuIcon, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
 const services = [
-  { href: "/services",                          label: "All services",         icon: Layers },
-  { href: "/services/ai-advertising-audit",     label: "AI Advertising Audit", icon: Target },
+  { href: "/services",                              label: "All services",         icon: Layers },
+  { href: "/services/ai-advertising-audit",         label: "AI Advertising Audit", icon: Target },
+  { href: "/services/seo-audit-and-improvement",    label: "SEO Audit",            icon: Search },
 ];
 
 export function PublicNavbar() {
@@ -113,6 +114,16 @@ export function PublicNavbar() {
                       : "text-muted-foreground hover:bg-muted"
                   )}>
                     AI Advertising Audit
+                  </div>
+                </Link>
+                <Link href="/services/seo-audit-and-improvement" onClick={() => setMobileMenuOpen(false)}>
+                  <div className={cn(
+                    "pl-8 pr-4 py-2 rounded-lg transition-colors text-xs uppercase tracking-wide",
+                    isActive("/services/seo-audit-and-improvement")
+                      ? "bg-primary/10 text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-muted"
+                  )}>
+                    SEO Audit
                   </div>
                 </Link>
                 <Link href="/work" onClick={() => setMobileMenuOpen(false)}>

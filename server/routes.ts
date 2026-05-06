@@ -435,6 +435,7 @@ export async function registerRoutes(
     const staticUrls: SitemapEntry[] = [
       { loc: SITE + "/",                                  priority: "1.0", changefreq: "weekly"  },
       { loc: SITE + "/services/ai-advertising-audit",     priority: "0.8", changefreq: "monthly" },
+      { loc: SITE + "/services/seo-audit-and-improvement", priority: "0.8", changefreq: "monthly" },
       { loc: SITE + "/audits",                            priority: "0.8", changefreq: "daily"   },
     ];
     const auditUrls: SitemapEntry[] = [];
