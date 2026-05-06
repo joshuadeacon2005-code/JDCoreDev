@@ -123,9 +123,9 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 | MKTG-SEO-08 | Phase 2 | | Pending |
 | MKTG-SEO-09 | Phase 2 | | Pending |
 | MKTG-NAV-01 | Phase 1 + Phase 2 | Plan 01-02 shipped AAA half (commits `e532f31` + `ed4bf10`: desktop dropdown + mobile sub-row); SEO half lands in Phase 2 | Partial (AAA done) |
-| MKTG-HOME-01 | Phase 1 + Phase 2 | AAA card in P1, SEO card in P2; fully satisfied after both ship | Pending |
-| MKTG-MAP-01 | Phase 1 + Phase 2 | AAA URL in `staticUrls` in P1, SEO URL in P2; fully satisfied after both ship | Pending |
-| MKTG-CACHE-01 | Phase 1 + Phase 2 | Manual CF purge follow-up surfaced after each W2 deploy | Pending |
+| MKTG-HOME-01 | Phase 1 + Phase 2 | Plan 01-03 shipped AAA card (commits `19283e9` + `e640d6f`: lucide import + Targeted-services section); SEO sibling lands in Phase 2 | Partial (AAA done) |
+| MKTG-MAP-01 | Phase 1 + Phase 2 | Plan 01-04 shipped AAA URL in `staticUrls` (commit `60e6238`, priority 0.8 monthly); SEO URL lands in Phase 2 | Partial (AAA done) |
+| MKTG-CACHE-01 | Phase 1 + Phase 2 | Plan 01-05 shipped CACHE-PURGE.md follow-up note (commit `f4e8ec5`); Phase 2 will reuse | Partial (AAA done) |
 | TRADE-DISC-01 | Phase 3 | | Pending |
 | TRADE-DISC-02 | Phase 3 | Hard-blocks Phases 4, 5, 6 | Pending |
 | TRADE-CAM-01 | Phase 4 | | Pending |

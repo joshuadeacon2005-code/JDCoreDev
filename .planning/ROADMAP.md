@@ -115,7 +115,7 @@ Phase 3 (Discovery) ──┬──> Phase 4 (Camoufox)
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. AI Advertising Audit page | 3/5 | In progress (plans 01 + 02 + 05 shipped — page + nav wiring + cache-purge note; 03 homepage card + 04 sitemap outstanding) | — |
+| 1. AI Advertising Audit page | 5/5 | Code complete — awaiting verification | — |
 | 2. SEO Audit page | 0/0 | Not started | — |
 | 3. Trading-routine architecture discovery | 0/0 | Not started | — |
 | 4. Camoufox stealth scraping primitive | 0/0 | Not started (blocked by Phase 3) | — |

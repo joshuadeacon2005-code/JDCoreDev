@@ -14,9 +14,9 @@
 ## Current Position
 
 - **Phase:** 1 — AI Advertising Audit page
-- **Plans complete:** 3/5 (01-05 cache-purge note + 01-01 page component & route + 01-02 nav wiring); next: 01-03 (homepage card)
-- **Status:** In progress — Phase 1 page + nav wiring shipped; homepage card (01-03) and sitemap entry (01-04) outstanding
-- **Progress:** 0/6 phases complete `[░░░░░░]`
+- **Plans complete:** 5/5 (01-05 cache-purge + 01-01 page & route + 01-02 nav wiring + 01-03 homepage card + 01-04 sitemap entry)
+- **Status:** Code complete — awaiting `/gsd-verify-phase 1`
+- **Progress:** 0/6 phases complete `[░░░░░░]` (Phase 1 code-complete, verification pending)
 
 ## Performance Metrics
 
@@ -38,6 +38,12 @@
 | Plan 01-02 duration | ~15 min |
 | Plan 01-02 tasks | 2 |
 | Plan 01-02 files | 1 modified (`client/src/components/PublicNavbar.tsx`) |
+| Plan 01-03 duration | ~5 min |
+| Plan 01-03 tasks | 2 |
+| Plan 01-03 files | 1 modified (`client/src/pages/home.tsx`) |
+| Plan 01-04 duration | ~3 min |
+| Plan 01-04 tasks | 1 |
+| Plan 01-04 files | 1 modified (`server/routes.ts`) |
 
 ## Accumulated Context
 
@@ -74,6 +80,8 @@
 
 ### Last session
 
+- **2026-05-06** — gsd-executor: shipped Phase 1 Plan 04 (sitemap AAA entry). Inserted `/services/ai-advertising-audit` (priority 0.8, changefreq monthly) between `/` and `/audits` in the `staticUrls` array at `server/routes.ts:435`. 1 task, 2 commits (`60e6238` array edit, `57934b2` SUMMARY). Closes AAA half of MKTG-MAP-01.
+- **2026-05-06** — gsd-executor: shipped Phase 1 Plan 03 (homepage AAA card). Modified `client/src/pages/home.tsx`: added `Target` to lucide-react import; inserted a new `// Targeted services` section between the existing "Stuff we've actually built" section and the footer, containing one AAA card linking to `/services/ai-advertising-audit` inside a `md:grid-cols-2` grid with a Phase 2 placeholder comment locking the SEO sibling insertion point. 2 tasks, 3 commits (`19283e9` icon import, `e640d6f` section, `46aaf71` SUMMARY). Closes AAA half of MKTG-HOME-01.
 - **2026-05-06** — gsd-executor: shipped Phase 1 Plan 02 (PublicNavbar AAA wiring). Modified `client/src/components/PublicNavbar.tsx`: replaced the 4 placeholder Services-dropdown entries with 2 real ones (`All services` → `/services`, `AI Advertising Audit` → `/services/ai-advertising-audit`); trimmed lucide imports (dropped `Code`, `Rocket`, `Server`; added `Target`); inserted an indented mobile-menu sub-row under the existing Services row using `pl-8` indent + `text-xs uppercase tracking-wide` typography, reusing `cn()` and `isActive()` helpers. Phase 2 will append the SEO entry. 2 tasks, 2 commits (`e532f31` desktop dropdown swap, `ed4bf10` mobile sub-row). TypeScript check passes. Closes the AAA half of MKTG-NAV-01.
 - **2026-05-06** — gsd-executor: shipped Phase 1 Plan 01 (AAA page component + route + SEO useEffect). Created `client/src/pages/ai-advertising-audit.tsx` (full standalone marketing page — hero, 4 benefit cards, 2 pricing tiers + ongoing strip, 3-cell social-proof grid, 7-entry FAQ, final CTA, footer; 8 meta + canonical + Service JSON-LD injected on mount, all tagged `data-page="ai-advertising-audit"` and removed on unmount; document.title restored on unmount); modified `client/src/App.tsx` (one new wouter `<Route>` + one new import). Closes MKTG-AAA-01 through MKTG-AAA-09. 3 tasks, 3 commits (`b217648` skeleton, `65c80ec` content, `ee36125` SEO + route). TypeScript check (`npx tsc --noEmit`) passes; production build skipped due to local iCloud-sync `EUNKNOWN` on `node_modules/.bin/tsx` — not a code issue, will run normally in CI.
 - **2026-05-06** — gsd-executor: shipped Phase 1 Plan 05 (cache-purge follow-up note). Created `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md` documenting the manual Cloudflare purge procedure (URLs: `/sitemap.xml`, `/services`, `/`), wrangler + dashboard options, do-not-paste-tokens guidance, and v2 hand-off for auto-purge. 1 task, 1 commit (`f4e8ec5`).
