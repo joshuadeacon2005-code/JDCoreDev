@@ -13,10 +13,11 @@
 
 ## Current Position
 
-- **Phase:** 4 v1 shipped — camoufox-fetch primitive. Next up: Phase 5 (Fincept) and/or Phase 6 (AutoHedge skills) — independent.
+- **Phase:** 6 shipped — AutoHedge skills (Director / Quant / Risk / Execution + README). Next up: Phase 5 (Fincept) is the only remaining W3 phase. Needs Josh's Fincept account + API key on Railway env.
 - **W2 status:** Both marketing pages live. Phase 1 shipped + refreshed (`beff125`). Phase 2 shipped (`701a33e`).
-- **W3 status:** Discovery doc + install pattern (`abc091d`). Cleanup pass shipped — auth gap closed, dead modelfarm code gone, scheduled triggers disabled (`4e06249`, `5cdeab0`, `8e9e979`). Phase 4 v1 stealth-scrape endpoint + SKILL.md (`2e9c1a1`).
-- **Progress:** 4/6 phases complete `[████░░]` (Phase 4 v1; v2 backend deferred)
+- **W3 status:** Discovery (`abc091d`), cleanup (`4e06249`, `5cdeab0`, `8e9e979`), Phase 4 stealth-scrape v1 (`2e9c1a1`), Phase 6 AutoHedge skills (this commit).
+- **Progress:** 5/6 phases complete `[█████░]` (Phase 4 v1 deferred for stealth backend; Phase 5 pending Fincept account)
+- **User-action backlog**: (a) wire AutoHedge sequence into `docs/ROUTINE_PROMPT_TRADER.md`, (b) provision Fincept account + Railway env, (c) decide on v2 stealth backend (playwright vs scrapingbee) for Phase 4.
 
 ## Architecture flags (raised by Phase 3 discovery — handle before/during Phases 4-6)
 

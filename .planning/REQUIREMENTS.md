@@ -139,12 +139,12 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 | TRADE-FIN-04 | Phase 5 | | Pending |
 | TRADE-FIN-05 | Phase 5 | | Pending |
 | TRADE-FIN-06 | Phase 5 | | Pending |
-| TRADE-AH-01 | Phase 6 | | Pending |
-| TRADE-AH-02 | Phase 6 | | Pending |
-| TRADE-AH-03 | Phase 6 | | Pending |
-| TRADE-AH-04 | Phase 6 | | Pending |
-| TRADE-AH-05 | Phase 6 | | Pending |
-| TRADE-AH-06 | Phase 6 | | Pending |
-| TRADE-AH-07 | Phase 6 | | Pending |
+| TRADE-AH-01 | Phase 6 | `.claude/skills/autohedge-director/SKILL.md` — thesis prompt + JSON schema (ticker, side, conviction, key_catalysts, invalidation_signals, expected_move_pct) | Complete |
+| TRADE-AH-02 | Phase 6 | `.claude/skills/autohedge-quant/SKILL.md` — analysis prompt + JSON schema (verdict, edge_score, supporting/contradicting metrics — concrete numbers, not adjectives) | Complete |
+| TRADE-AH-03 | Phase 6 | `.claude/skills/autohedge-risk/SKILL.md` — explicit account-equity-aware sizing math (entry/stop/target/shares as integers), risk-profile bands (low/medium/high → 0.5/1.0/2.0%), drawdown circuit breaker (-10% halve, -15% halt) | Complete |
+| TRADE-AH-04 | Phase 6 | `.claude/skills/autohedge-execution/SKILL.md` — order payload schema matching `server/trader-agent.ts:191-201` so endpoint validates without drift | Complete |
+| TRADE-AH-05 | Phase 6 | All 4 SKILL.md files are prompt-only markdown. No Python framework install. No `pip install autohedge`. No runtime dependency. README at `.claude/skills/README.md` documents this constraint. | Complete |
+| TRADE-AH-06 | Phase 6 | Each skill specifies its position in the chain (Director step 1 → Quant step 2 → Risk step 3 → Execution step 4). Each role validates previous step's output before continuing. Wiring into `docs/ROUTINE_PROMPT_TRADER.md` is a user-decision (left to Josh per skills/README.md). | Complete (skill side); user-action remaining (routine-prompt wire-up) |
+| TRADE-AH-07 | Phase 6 | Risk SKILL explicitly forbids prose substitutions for numbers; quality gate "Any number replaced by prose ('a moderate position') → REJECT" | Complete |
 | TRADE-MODE-01 | Phase 4 + Phase 5 + Phase 6 | Standing constraint; every new W3 code path defaults to Paper | Pending |
 | TRADE-MODE-02 | Phase 4 + Phase 5 + Phase 6 | Standing constraint; Live only via explicit confirmation gate | Pending |
