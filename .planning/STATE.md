@@ -14,8 +14,8 @@
 ## Current Position
 
 - **Phase:** 1 — AI Advertising Audit page
-- **Plan:** none yet (run `/gsd-plan-phase 1` to generate)
-- **Status:** Roadmap generated, awaiting plan-phase
+- **Plan:** 01-05 complete (CACHE-PURGE.md note landed); next plan TBD per phase-1 plan suite
+- **Status:** In progress — Phase 1 plan 05 (cache-purge follow-up note) shipped
 - **Progress:** 0/6 phases complete `[░░░░░░]`
 
 ## Performance Metrics
@@ -29,6 +29,9 @@
 | Orphaned requirements | 0 |
 | Granularity | coarse |
 | Workflow | parallel, balanced models, plan_check + verifier on |
+| Plan 01-05 duration | ~3 min |
+| Plan 01-05 tasks | 1 |
+| Plan 01-05 files | 1 created |
 
 ## Accumulated Context
 
@@ -42,6 +45,8 @@
 - **CTAs route to `/contact` only** via existing `<Link href="/contact"><Button>Get in touch</Button></Link>` pattern. No new contact mechanism.
 - **Visual style copies `client/src/pages/services.tsx`** for both new W2 pages — no shared `<ServicePage>` component yet (deferred to v2).
 - **Trading mode safety**: every new W3 code path defaults to Paper; Live requires an explicit confirmation gate in the routine prompt.
+- **Cloudflare cache purge is manual only** for Phase 1 deploy (and Phase 2 deploy). Procedure documented in `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md`. Auto-purge is OUT OF SCOPE — deferred to v2.
+- **`wrangler` CLI with local auth is the documented purge path**, dashboard "Purge By URL" is the fallback. No CF API tokens get pasted into scripts or commits.
 
 ### Open Todos
 
@@ -61,12 +66,14 @@
 
 ### Last session
 
+- **2026-05-06** — gsd-executor: shipped Phase 1 Plan 05 (cache-purge follow-up note). Created `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md` documenting the manual Cloudflare purge procedure (URLs: `/sitemap.xml`, `/services`, `/`), wrangler + dashboard options, do-not-paste-tokens guidance, and v2 hand-off for auto-purge. 1 task, 1 commit (`f4e8ec5`).
 - **2026-05-06** — gsd-roadmapper: extracted requirements from PROJECT.md + REQUIREMENTS.md, mapped 38 active v1 REQ-IDs to 6 phases (phase order pre-locked by user), wrote ROADMAP.md, initialized STATE.md, populated REQUIREMENTS.md Traceability section.
 
 ### Next up
 
-- Run `/gsd-plan-phase 1` to decompose Phase 1 (AI Advertising Audit page) into executable plans.
+- Continue Phase 1 plan suite (plans 01-04 — AAA page route, hero+benefits, pricing+FAQ+social-proof, nav+homepage+sitemap wiring).
+- After Phase 1 deploys to production: Josh runs the manual purge per `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md`.
 - One PR for Phase 1, then `/gsd-transition` to Phase 2.
 
 ---
-*Updated: 2026-05-06 by gsd-roadmapper.*
+*Updated: 2026-05-06 by gsd-executor.*
