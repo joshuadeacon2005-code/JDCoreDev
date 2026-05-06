@@ -139,6 +139,24 @@ export default function TraderSettings() {
             </div>
 
             <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Strategy Profile</p>
+              <div className="flex gap-1.5 flex-wrap">
+                {[
+                  {k:"conservative", label:"Conservative", desc:"RR≥2.5 · 0.5% risk · no biotech/M&A binaries"},
+                  {k:"aggressive",   label:"Aggressive",   desc:"RR≥1.5 · full risk band · all catalysts"},
+                  {k:"both",         label:"Both",         desc:"Run each fire under both lenses · max 1 buy per profile"},
+                ].map(({k,label,desc})=>(
+                  <button key={k} onClick={()=>updateSetting('strategy_profile',k)} title={desc}
+                    className={cn("text-xs px-3 py-1.5 rounded-md border transition-colors text-left",
+                      (settings.strategy_profile||'aggressive')===k ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground")}>
+                    <div className="font-medium">{label}</div>
+                    <div className="text-[9px] opacity-70 mt-0.5">{desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-3">Strategy</p>
               <div className="space-y-1">
                 {Object.entries(TRADING_MODES).map(([k,v]:any)=>{

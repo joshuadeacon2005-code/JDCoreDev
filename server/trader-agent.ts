@@ -102,7 +102,7 @@ traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
     `);
 
     const recentTrades = await pool.query(`
-      SELECT id, symbol, side, qty, notional, price, pnl, mode, logged_at, executed_at
+      SELECT id, symbol, side, qty, notional, price, pnl, mode, catalyst_class, strategy_profile, logged_at, executed_at
       FROM trader_trades
       ORDER BY logged_at DESC
       LIMIT 60
@@ -115,8 +115,43 @@ traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
       ORDER BY logged_at ASC
     `);
 
+    // Reflection memory: last N reflections + trades that closed but haven't
+    // been reflected on yet + hit-rate-by-catalyst aggregates.
+    const recentReflections = await pool.query(`
+      SELECT id, ticker, closed_at, hold_days, pnl_usd, pnl_pct,
+             catalyst_class, strategy_profile, reflection, what_worked, what_didnt, next_time
+      FROM trader_reflections
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    const tradesNeedingReflection = await pool.query(`
+      SELECT t.id, t.symbol, t.side, t.qty, t.notional, t.price, t.pnl,
+             t.catalyst_class, t.strategy_profile, t.logged_at, t.executed_at
+      FROM trader_trades t
+      LEFT JOIN trader_reflections r ON r.trade_id = t.id
+      WHERE t.pnl IS NOT NULL
+        AND t.logged_at > NOW() - INTERVAL '30 days'
+        AND r.id IS NULL
+      ORDER BY t.logged_at DESC
+      LIMIT 20
+    `);
+
+    const catalystHitRate = await pool.query(`
+      SELECT catalyst_class,
+             COUNT(*)::int                                   AS trades,
+             SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END)::int AS wins,
+             ROUND(AVG(pnl_pct)::numeric, 2)                 AS avg_pnl_pct,
+             ROUND(SUM(pnl_usd)::numeric, 2)                 AS total_pnl_usd
+      FROM trader_reflections
+      WHERE catalyst_class IS NOT NULL
+      GROUP BY catalyst_class
+      ORDER BY total_pnl_usd DESC NULLS LAST
+    `);
+
     const equityNow = parseFloat(account?.equity || "0");
     const drawdown7dPct = await compute7dDrawdownPct(equityNow);
+    const strategyProfile = (await getSetting("strategy_profile")) || "aggressive";
 
     res.json({
       mode: "swing",
@@ -172,12 +207,18 @@ traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
         executedAt: r.executed_at,
       })),
       currentRisk: (await getSetting("cron_risk")) || "medium",
+      strategyProfile,
+      recentReflections: recentReflections.rows,
+      tradesNeedingReflection: tradesNeedingReflection.rows,
+      catalystHitRate: catalystHitRate.rows,
       marketHints: {
         marketSignalsEndpoint: "/api/trader/market-signals?mode=swing",
         stockBarsEndpoint:     "/api/trader/stock-bars/{SYMBOL}?limit=60&timeframe=1Day",
+        reflectionsEndpoint:   "/api/trader/agent/reflections (POST)",
         note: "Call market-signals for fresh indicators / news / earnings. " +
               "Call stock-bars for price history on a specific ticker. " +
-              "Both endpoints are public — no auth header needed.",
+              "Both endpoints are public — no auth header needed. " +
+              "POST reflections at end of fire to seed next-fire memory.",
       },
     });
   } catch (e: any) {
@@ -316,8 +357,8 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
         if (order && order.id) {
           executedCount++;
           await pool.query(`
-            INSERT INTO trader_trades (id, symbol, side, qty, notional, status, rationale, risk, mode, order_id)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            INSERT INTO trader_trades (id, symbol, side, qty, notional, status, rationale, risk, mode, order_id, catalyst_class, strategy_profile)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
             ON CONFLICT (id) DO NOTHING
           `, [
             order.id, symbol, action,
@@ -327,6 +368,8 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
             d.risk_level || (await getSetting("cron_risk")) || "medium",
             "swing",
             order.id,
+            (d.catalyst_class || "").toString().slice(0, 64) || null,
+            (d.strategy_profile || "").toString().slice(0, 32) || null,
           ]);
           results.push({ symbol, action, status: "executed", orderId: order.id, rationale });
         } else {
@@ -396,6 +439,62 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
       isPaper,
       accountBlockers,
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /api/trader/agent/reflections ────────────────────────────────────
+// Routine writes one or more post-trade reflections at the end of a fire.
+// Each reflection links to a closed trade row and captures what_worked /
+// what_didnt / next_time so the next fire can inject prior lessons into the
+// Analyst+Contrarian prompt. Hit-rate-by-catalyst aggregates roll up from
+// these rows in /state.
+traderAgentRouter.post("/reflections", requireAgentKey, async (req, res) => {
+  try {
+    const reflections: any[] = Array.isArray(req.body?.reflections) ? req.body.reflections : [];
+    if (reflections.length === 0) {
+      return res.status(400).json({ error: "non-empty `reflections` array required" });
+    }
+
+    let inserted = 0;
+    const errors: string[] = [];
+
+    for (const r of reflections) {
+      const ticker = (r.ticker || "").toString().toUpperCase().slice(0, 16);
+      const reflection = (r.reflection || "").toString().slice(0, 4000);
+      if (!ticker || !reflection) {
+        errors.push(`Skipped: missing ticker or reflection (${JSON.stringify(r).slice(0, 80)})`);
+        continue;
+      }
+
+      try {
+        await pool.query(`
+          INSERT INTO trader_reflections
+            (trade_id, ticker, closed_at, hold_days, pnl_usd, pnl_pct,
+             catalyst_class, strategy_profile, reflection, what_worked, what_didnt, next_time)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        `, [
+          r.trade_id ?? null,
+          ticker,
+          r.closed_at ?? null,
+          Number.isFinite(+r.hold_days) ? +r.hold_days : null,
+          Number.isFinite(+r.pnl_usd)   ? +r.pnl_usd   : null,
+          Number.isFinite(+r.pnl_pct)   ? +r.pnl_pct   : null,
+          (r.catalyst_class || "").toString().slice(0, 64) || null,
+          (r.strategy_profile || "").toString().slice(0, 32) || null,
+          reflection,
+          (r.what_worked || "").toString().slice(0, 1000) || null,
+          (r.what_didnt  || "").toString().slice(0, 1000) || null,
+          (r.next_time   || "").toString().slice(0, 1000) || null,
+        ]);
+        inserted++;
+      } catch (e: any) {
+        errors.push(`${ticker}: ${e.message}`);
+      }
+    }
+
+    res.status(201).json({ inserted, errors, total: reflections.length });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

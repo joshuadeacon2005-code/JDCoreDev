@@ -59,9 +59,16 @@ GET `/api/trader/agent/state`. Inspect:
   - `low` → 1/3 of `maxPositionPct` per position
   - `medium` → 2/3 of `maxPositionPct`
   - `high` → up to `maxPositionPct`
+- `strategyProfile` — `conservative` | `aggressive` | `both`. Drives the council:
+  - `aggressive` (default) → existing behavior. RR≥1.5, full risk band, all catalyst classes allowed.
+  - `conservative` → flat 0.5% risk/trade, RR≥2.5, vol-cap (ATR/price < 0.04), reject biotech-readout + mna-rumor binaries.
+  - `both` → run Risk+Judge **twice in parallel** (one conservative, one aggressive); see Step 4.
 - `recentDecisions` (last 30), `recentTrades` (last 60) — your memory across fires. Use these to:
   - Avoid re-pitching a name you bought recently (don't average down).
   - Notice your own pattern of misses (e.g. five consecutive small biotech losses → tighten the catalyst quality bar).
+- `recentReflections` (last 10) — post-mortems written by previous fires. **READ THESE FIRST every run.** Inject into the Analyst+Contrarian context: prior `what_didnt` and `next_time` lines are the cheapest hit-rate boost available. Don't repeat a mistake the last fire flagged.
+- `catalystHitRate` — aggregate stats by catalyst class from your reflection history. If `biotech-readout` shows wins=2 trades=10 (20% hit rate) and `form4-cluster` shows wins=8 trades=12 (67%), bias today's candidate generation toward the latter. Don't ignore your own data.
+- `tradesNeedingReflection` — closed positions you have not yet reflected on. **MANDATORY post-fire step**: at end of run, POST one reflection per row to `/api/trader/agent/reflections` (see Step 6). If you skip this, your future self loses memory.
 
 ### Step 2. Market-state check
 If `account` is null OR Alpaca is closed for the session AND `positions` are empty AND no candidates are at stop/take, POST a no-op:
@@ -83,12 +90,25 @@ Then **search aggressively** with WebSearch for catalyst-driven small/mid-cap ca
 For symbols already in `positions`, GET `/api/trader/stock-bars/{SYMBOL}?limit=60` to check whether stop/take is hit relative to entry.
 
 ### Step 4. Council debate per candidate
-For each candidate (max 5 surfaced; **propose at most 2 buys**), run a four-agent council in your context:
+For each candidate (max 5 surfaced; cap depends on profile — see end of step), run a four-agent council in your context:
 
-1. **Analyst** — bull case. What's the catalyst, what's the asymmetry, what's the timeline? Cross-reference at minimum 2 sources.
+1. **Analyst** — bull case. What's the catalyst, what's the asymmetry, what's the timeline? Cross-reference at minimum 2 sources. **Pre-step:** scan `recentReflections` for any prior reflection on the same ticker or the same `catalyst_class`; if one exists, paste the `what_didnt` + `next_time` lines into your context before forming the bull case.
 2. **Contrarian** — actively searches for and surfaces the bear case. What does the short side know? What's the tape saying? Has insider selling offset the buying? Is the catalyst already priced in? **The contrarian must search beyond the analyst's sources.**
-3. **Risk** — sizing, days-to-catalyst, liquidity (avg daily volume × price), correlation with existing positions, earnings-window check. Computes notional given `maxPositionPct` and `currentRisk`. **Output discipline:** read `.claude/skills/autohedge-risk/SKILL.md` and produce its JSON output verbatim — entry, stop, target, position_size_shares (integer), and risk_reward_ratio. Every field is a NUMBER, never a phrase like "moderate size". The drawdown circuit-breaker rules in that SKILL.md apply: at `drawdown7dPct < -10` the Risk role halves per-trade %; at `-15` it returns `decision: "PASS"` and the Judge accepts the halt without debate.
+3. **Risk** — sizing, days-to-catalyst, liquidity (avg daily volume × price), correlation with existing positions, earnings-window check. Computes notional given `maxPositionPct` and `currentRisk`. **Output discipline:** read `.claude/skills/autohedge-risk/SKILL.md` and produce its JSON output verbatim — entry, stop, target, position_size_shares (integer), risk_reward_ratio, **plus `profile` and `catalyst_class` fields**. Every numeric field is a NUMBER, never a phrase like "moderate size". The drawdown circuit-breaker rules in that SKILL.md apply: at `drawdown7dPct < -10` the Risk role halves per-trade %; at `-15` it returns `decision: "PASS"` and the Judge accepts the halt without debate.
 4. **Judge** — weighs the analyst vs contrarian on evidence quality (not headline count). Outputs the final verdict: `buy`, `sell`, `hold`, or `skip`.
+
+**Dual-profile mode** — when `state.strategyProfile === "both"`:
+- For each candidate, run **steps 3 + 4 twice** — once with `profile: "conservative"` and once with `profile: "aggressive"`. Steps 1 + 2 (Analyst, Contrarian) are shared — token cost ~1.6× a single profile, not 2×.
+- Conservative-Risk will reject biotech-readout / mna-rumor candidates outright (returns `decision: "PASS"`); that's correct — let it pass and rely on aggressive-Risk for those.
+- Each profile produces **at most 1 buy per fire**. Total cap when `both` mode is active: 2 buys (one per profile) — enforces real diversity, not 2 aggressive trades wearing different labels.
+- Tag each surviving buy decision with the profile that produced it (`strategy_profile` field) so the reflection loop can later compute hit-rate per profile.
+
+**Buy caps:**
+- `aggressive` profile: max 2 buys per fire.
+- `conservative` profile: max 2 buys per fire.
+- `both` profile: max 1 buy per profile = 2 buys total.
+
+A run with 0 buys is fine. Quality over quantity.
 
 ### Step 5. Build decisions and POST
 **Cap: 2 buys per fire.** A run with 1 high-conviction buy is better than 3 shallow buys. Sells/holds are unlimited (apply to existing positions).
@@ -107,7 +127,8 @@ Build the request. For every `buy` decision, format it via `.claude/skills/autoh
       "limit_price": 18.30, "stop_loss": 16.95, "take_profit": 22.50,
       "paper_or_live": "paper", "thesis": "Phase 2 readout in 18 days...",
       "edge_score": 0.62, "risk_reward_ratio": 3.1,
-      "drawdown_circuit_state": "normal", "decision_source": "agent-routine"
+      "drawdown_circuit_state": "normal", "decision_source": "agent-routine",
+      "catalyst_class": "form4-cluster", "strategy_profile": "aggressive"
     },
     /* Sells/holds on existing positions stay simple — no AutoHedge needed: */
     { "action": "sell", "symbol": "ABC", "qty": 4, "rationale": "Hit +18% TP." },
@@ -134,19 +155,53 @@ Server response per decision:
 - `rejected` — server refused. Read `reasons` — typically `exceeds maxPositionPct`, `earnings within N days`, `would push positions over maxPositions`, or `7-day drawdown exceeds limit`. Update next run.
 - `order_failed` — Alpaca rejected. Read `reasons` — usually liquidity, insufficient buying power, or symbol untradeable.
 
-### Step 6. Summarise
+### Step 6. Reflect on closed positions (MANDATORY)
+For every entry in `state.tradesNeedingReflection`, write one reflection and POST them all in a single batch to `/api/trader/agent/reflections`. **Skipping this step is the single biggest hit-rate leak** — your future self loses the lesson the trade taught you.
+
+Each reflection is a JSON object:
+```json
+{
+  "trade_id": "<the trade.id from state>",
+  "ticker": "XYZ",
+  "closed_at": "<ISO ts of when it closed>",
+  "hold_days": 6.4,
+  "pnl_usd": -28.50,
+  "pnl_pct": -3.1,
+  "catalyst_class": "biotech-readout",
+  "strategy_profile": "aggressive",
+  "reflection": "Bought ahead of the Phase 2 readout. Data was technically positive but Street had whispered better numbers; sold off 14% on the print. Catalyst was real but the bar was higher than I priced.",
+  "what_worked": "Risk skill produced a stop that capped the loss at -3.1% rather than the -14% gap.",
+  "what_didnt": "Didn't read the analyst whisper number — would have shown consensus was already at the high end of guidance.",
+  "next_time": "Before any biotech-readout buy, search '<ticker> whisper' and '<ticker> analyst expectations' specifically. Skip if whispers > guidance midpoint."
+}
+```
+
+POST shape:
+```bash
+curl -s -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'x-jdcd-agent-key: b2f8f4ec15ebfa118c3d925b2234d3d09f69f62a17bcb1110ed8bf1c37dfc1de' \
+  -d '{"reflections": [ {...}, {...} ]}' \
+  https://www.jdcoredev.com/api/trader/agent/reflections
+```
+
+Be honest. The reflection is for your own future fires — sycophantic post-mortems ("trade went exactly as expected, no lessons") are useless. If a trade was a lucky win, say so; if it was an obvious mistake, name the mistake. The next fire reads these verbatim.
+
+### Step 7. Summarise
 End the run with one paragraph:
 - Equity at start, cash available, drawdown
+- Active strategy profile (`aggressive` / `conservative` / `both`)
 - Candidates researched, decisions submitted, executed vs rejected
-- Top conviction buy (symbol, catalyst, notional)
+- Top conviction buy (symbol, catalyst, notional, profile)
 - Theme of the day
+- Reflections written this fire (count + tickers)
 - Anything you'll change in heuristic next fire (e.g. "noticed 3 of last 5 biotech buys lost — tightening to require 2-source catalyst confirmation")
 
 ## Hard rules
 
 - **No new mega-cap buys.** AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, BRK, JPM, JNJ, V, MA, WMT, XOM, UNH, HD, PG, KO are off-limits for new entries. (Existing grandfathered positions are exempt — hold to stop/take.)
 - **Target band $500M–$10B mcap** for new buys unless flagging an explicit edge case in the rationale.
-- **Max 2 buys per fire.** Concentration > diversification when each idea took genuine research.
+- **Max 2 buys per fire** (single profile) or **1 per profile = 2 total** (when `strategyProfile === "both"`). Concentration > diversification when each idea took genuine research.
 - **No averaging down.** If you already hold a position and it's red, do not propose another buy on the same ticker.
 - **No buys with earnings within `noEarningsWithinDays`** (server rejects, but don't waste a slot).
 - **Liquidity floor:** average daily dollar volume must be ≥ $5M. Penny stocks (<$2) are out.

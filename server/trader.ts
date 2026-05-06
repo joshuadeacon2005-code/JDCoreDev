@@ -85,8 +85,34 @@ async function initTraderTables() {
   await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS decisions_json JSONB`);
   await pool.query(`ALTER TABLE trader_pipelines ADD COLUMN IF NOT EXISTS executed_status TEXT`);
 
+  // Catalyst tagging on entry — set when the routine submits the buy.
+  await pool.query(`ALTER TABLE trader_trades ADD COLUMN IF NOT EXISTS catalyst_class TEXT`);
+  await pool.query(`ALTER TABLE trader_trades ADD COLUMN IF NOT EXISTS strategy_profile TEXT`);
+
+  // Post-trade reflections — written by the routine after a position closes.
+  // Drives the memory loop: next fire injects the last N into the Analyst prompt.
+  await pool.query(`CREATE TABLE IF NOT EXISTS trader_reflections (
+    id SERIAL PRIMARY KEY,
+    trade_id TEXT REFERENCES trader_trades(id) ON DELETE SET NULL,
+    ticker TEXT NOT NULL,
+    closed_at TIMESTAMPTZ,
+    hold_days REAL,
+    pnl_usd REAL,
+    pnl_pct REAL,
+    catalyst_class TEXT,
+    strategy_profile TEXT,
+    reflection TEXT NOT NULL,
+    what_worked TEXT,
+    what_didnt TEXT,
+    next_time TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_reflections_ticker ON trader_reflections(ticker)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_reflections_catalyst ON trader_reflections(catalyst_class)`);
+
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_enabled', 'false') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_risk', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_RISK || 'medium']);
+  await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('strategy_profile', 'aggressive') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_mode', $1) ON CONFLICT (key) DO NOTHING`, [process.env.CRON_MODE || 'swing']);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_day', '15') ON CONFLICT (key) DO NOTHING`);
   await pool.query(`INSERT INTO trader_settings (key, value) VALUES ('cron_interval_swing', '240') ON CONFLICT (key) DO NOTHING`);

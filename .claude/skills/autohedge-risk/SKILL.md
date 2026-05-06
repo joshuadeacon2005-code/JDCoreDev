@@ -31,19 +31,41 @@ risk profile, and a confirmed thesis, produce a position size, entry price,
 stop, and target — as **numbers**, not adjectives.
 
 Inputs:
-- Director output (ticker, side, expected_move_pct, invalidation_signals)
+- Director output (ticker, side, expected_move_pct, invalidation_signals,
+  `catalyst_class` — one of `biotech-readout` / `form4-cluster` /
+  `ipo-below-offer` / `13f-surprise` / `earnings-unpriced` / `mna-rumor` /
+  `sector-rotation` / `other`)
 - Quant output (verdict=CONFIRM, edge_score)
 - Account state from `/api/trader/agent/state`:
   `account.equity_usd`, `account.buying_power`, `drawdown7dPct`,
   `currentRisk` ("low" | "medium" | "high")
+- **Strategy profile** — `state.strategyProfile` is one of:
+  - `conservative` — RR ≥ 2.5, max 0.5% risk/trade, vol-cap (ATR/price < 0.04),
+    NO biotech-readout / mna-rumor (binary outcomes), prefer 13f-surprise +
+    earnings-unpriced + form4-cluster.
+  - `aggressive` — RR ≥ 1.5, max risk follows currentRisk band (below), vol
+    uncapped, biotech-readout + mna-rumor allowed.
+  - `both` — caller runs Risk twice with `profile: "conservative"` and
+    `profile: "aggressive"` and passes the explicit override; this skill always
+    receives a single concrete profile string in the input.
 - Current price for the ticker from `/api/trader/stock-bars/<TICKER>?limit=1`
 
-Risk-profile bands (max risk per trade as % of account equity):
+Risk-profile bands when `profile === "aggressive"` (max risk per trade as %
+of account equity, modulated by `currentRisk`):
 - `low`:    0.5%  per trade
 - `medium`: 1.0%  per trade
 - `high`:   2.0%  per trade
 
-Drawdown circuit breaker:
+When `profile === "conservative"`, **override** to a flat 0.5% regardless of
+`currentRisk`. Conservative also enforces:
+- `risk_reward_ratio >= 2.5` (vs 1.5 for aggressive)
+- ATR / price < 0.04 (rejects high-vol names)
+- `catalyst_class NOT IN ("biotech-readout", "mna-rumor")` — these are
+  binary-outcome trades that conservative profile rejects on principle.
+  If the candidate is one of these, return `decision: "PASS"` with reason
+  "binary catalyst rejected by conservative profile".
+
+Drawdown circuit breaker (applies in both profiles):
 - If `drawdown7dPct < -10`, halve the per-trade risk %.
 - If `drawdown7dPct < -15`, return `decision: "PASS"` regardless of edge.
   The chain halts; no Execution.
@@ -66,10 +88,14 @@ For short: invert stop and target signs.
 Constraints:
 - Position size in shares MUST be an integer. Round down, never up.
 - `position_size_usd <= account.buying_power`. If not, scale down.
-- `risk_reward_ratio >= 1.5` minimum. If lower, return `decision: "PASS"` —
-  the math doesn't justify the trade.
+- `risk_reward_ratio` minimum **depends on profile**:
+  - `aggressive`: ≥ 1.5
+  - `conservative`: ≥ 2.5
+  If lower, return `decision: "PASS"` — the math doesn't justify the trade.
 - Every output number is rounded to a sensible precision (prices to 2dp,
   shares to integer, percentages to 4dp).
+- Output MUST include `profile` and `catalyst_class` fields verbatim from
+  input — the Execution skill needs both to tag the trade.
 
 ## Output schema
 
@@ -78,6 +104,8 @@ Constraints:
   "ticker":             "string (must match Director.ticker)",
   "decision":           "TAKE | PASS",
   "side":               "long | short",
+  "profile":            "conservative | aggressive",
+  "catalyst_class":     "biotech-readout | form4-cluster | ipo-below-offer | 13f-surprise | earnings-unpriced | mna-rumor | sector-rotation | other",
   "account_equity_usd": "number",
   "risk_profile":       "low | medium | high",
   "max_risk_pct":       "number",
