@@ -126,8 +126,8 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 | MKTG-HOME-01 | Phase 1 + Phase 2 | Plan 01-03 (AAA card) + Phase 2 commit `701a33e` (SEO sibling card replacing Phase 2 placeholder comment) | Complete |
 | MKTG-MAP-01 | Phase 1 + Phase 2 | Plan 01-04 (AAA URL) + Phase 2 commit `701a33e` (SEO URL inserted between AAA and /audits in staticUrls) | Complete |
 | MKTG-CACHE-01 | Phase 1 + Phase 2 | Plan 01-05 CACHE-PURGE.md applies to both Phase 1 and Phase 2 deploys (manual purge of /sitemap.xml, /services, /) | Complete |
-| TRADE-DISC-01 | Phase 3 | | Pending |
-| TRADE-DISC-02 | Phase 3 | Hard-blocks Phases 4, 5, 6 | Pending |
+| TRADE-DISC-01 | Phase 3 | `docs/trading-routine-architecture.md` enumerates routine prompts (`docs/ROUTINE_PROMPT_*.md`), server modules (`server/trader.ts`, `predictor.ts`), Alpaca direct-REST integration (`server/trader.ts:222`), persistence (raw-SQL `trader_*` + `predictor_*` Postgres tables, NOT Drizzle), and dashboard surface (9 admin pages, 7 endpoints). | Complete |
+| TRADE-DISC-02 | Phase 3 | Install-pattern decision: project-level Claude Code skill (`.claude/skills/<name>/SKILL.md` in repo) + thin Express endpoint behind `x-jdcd-agent-key` for server-side state/secrets. Mirrors existing Alpaca/Kalshi split. Phases 4, 5, 6 must follow. | Complete |
 | TRADE-CAM-01 | Phase 4 | | Pending |
 | TRADE-CAM-02 | Phase 4 | | Pending |
 | TRADE-CAM-03 | Phase 4 | | Pending |

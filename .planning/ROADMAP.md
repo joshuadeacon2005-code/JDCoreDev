@@ -117,7 +117,7 @@ Phase 3 (Discovery) ──┬──> Phase 4 (Camoufox)
 |-------|----------------|--------|-----------|
 | 1. AI Advertising Audit page | 5/5 | Complete (refreshed aesthetic in commit `beff125`) | 2026-05-06 |
 | 2. SEO Audit page | 1/1 | Complete (single shipping commit `701a33e`) | 2026-05-06 |
-| 3. Trading-routine architecture discovery | 0/0 | Not started | — |
+| 3. Trading-routine architecture discovery | 1/1 | Complete (`docs/trading-routine-architecture.md`) | 2026-05-06 |
 | 4. Camoufox stealth scraping primitive | 0/0 | Not started (blocked by Phase 3) | — |
 | 5. Fincept financial data layer | 0/0 | Not started (blocked by Phase 3) | — |
 | 6. AutoHedge agent patterns | 0/0 | Not started (blocked by Phase 3) | — |

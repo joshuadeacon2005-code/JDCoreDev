@@ -13,9 +13,17 @@
 
 ## Current Position
 
-- **Phase:** 2 — SEO Audit page (just shipped). Next up: Phase 3 (Trading-routine architecture discovery).
+- **Phase:** 3 complete — Trading-routine architecture discovery doc shipped. Next up: Phases 4/5/6 (Camoufox / Fincept / AutoHedge skills) — independent of each other; can run in any order.
 - **W2 status:** Both marketing pages live. Phase 1 shipped + refreshed (`beff125`). Phase 2 shipped (`701a33e`).
-- **Progress:** 2/6 phases complete `[██░░░░]` (Phase 1 + Phase 2 done; Phases 3-6 are W3 trading work)
+- **W3 status:** Discovery doc at `docs/trading-routine-architecture.md`. Install pattern locked: project-level Claude Code skill in `.claude/skills/` + thin Express endpoint behind `x-jdcd-agent-key` for server-side state/secrets.
+- **Progress:** 3/6 phases complete `[███░░░]`
+
+## Architecture flags (raised by Phase 3 discovery — handle before/during Phases 4-6)
+
+- **PROJECT.md "no scheduled cron / no deployed routine service" is stale.** Code shows Anthropic-hosted scheduled routines firing on cron (`0 */4 * * 1-5` for trader, every 2h for predictor) + deployed Express service handling all execution. The "interactive Claude Code routines" framing only describes manual `Run Now` fires from the admin UI; the dominant execution path is automated. Update PROJECT.md before planning Phase 4.
+- **Trader + predictor tables bypass Drizzle.** All `trader_*` and `predictor_*` tables created via raw SQL in `initTraderTables()` (`server/trader.ts:21-97`) and `initPredictorTables()` (`server/predictor.ts:110-200`) at server boot. Schema-drift risk if anyone assumes `shared/schema.ts` is canonical for trading data.
+- **Dead modelfarm/Replit Claude SDK paths.** `server/predictor.ts:14-17` reads `AI_INTEGRATIONS_ANTHROPIC_*` env vars pointing to `localhost:1106` (Replit-internal, dead on Railway). Routine path is healthy, but legacy endpoints `POST /scan`, `/run`, `/council`, `/research-trader` are broken — and several admin UI buttons (`trader-predictions.tsx:863, 880, 2344`) still hit them. Worth a separate cleanup task.
+- **Auth gap on legacy `/api/predictor/*` endpoints.** Agent sub-router enforces `x-jdcd-agent-key` (`predictor-agent.ts:31-41`), but parent `predictorRouter` mount at `routes.ts:903` may still be unauthenticated for legacy endpoints. Security pass needed.
 
 ## Performance Metrics
 
