@@ -128,11 +128,11 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 | MKTG-CACHE-01 | Phase 1 + Phase 2 | Plan 01-05 CACHE-PURGE.md applies to both Phase 1 and Phase 2 deploys (manual purge of /sitemap.xml, /services, /) | Complete |
 | TRADE-DISC-01 | Phase 3 | `docs/trading-routine-architecture.md` enumerates routine prompts (`docs/ROUTINE_PROMPT_*.md`), server modules (`server/trader.ts`, `predictor.ts`), Alpaca direct-REST integration (`server/trader.ts:222`), persistence (raw-SQL `trader_*` + `predictor_*` Postgres tables, NOT Drizzle), and dashboard surface (9 admin pages, 7 endpoints). | Complete |
 | TRADE-DISC-02 | Phase 3 | Install-pattern decision: project-level Claude Code skill (`.claude/skills/<name>/SKILL.md` in repo) + thin Express endpoint behind `x-jdcd-agent-key` for server-side state/secrets. Mirrors existing Alpaca/Kalshi split. Phases 4, 5, 6 must follow. | Complete |
-| TRADE-CAM-01 | Phase 4 | | Pending |
-| TRADE-CAM-02 | Phase 4 | | Pending |
-| TRADE-CAM-03 | Phase 4 | | Pending |
-| TRADE-CAM-04 | Phase 4 | | Pending |
-| TRADE-CAM-05 | Phase 4 | | Pending |
+| TRADE-CAM-01 | Phase 4 | Phase 4 commit `2e9c1a1`: skill at `.claude/skills/camoufox-fetch/SKILL.md` + Express endpoint at `server/scrape-agent.ts` mounted at `/api/trader/scrape`. Matches install pattern from discovery doc. | Complete |
+| TRADE-CAM-02 | Phase 4 | v1 plain backend (`fetch` + realistic Chrome 130 headers) handles non-aggressive Cloudflare and most public news/blog. v2 (playwright + stealth plugin OR scrapingbee) deferred — single-file swap in scrape-agent.ts to enable. | Partial (v1) |
+| TRADE-CAM-03 | Phase 4 | Endpoint always returns plain extracted text via `htmlToText()` — strips script/style/nav/footer/svg/noscript and all tags. Never returns raw HTML. | Complete |
+| TRADE-CAM-04 | Phase 4 | All config via env: `JDCD_AGENT_KEY` (auth), `SCRAPE_BACKEND` (backend selector). No hardcoded credentials. SSRF-guarded against internal/private targets. | Complete |
+| TRADE-CAM-05 | Phase 4 | Skill path: `.claude/skills/camoufox-fetch/SKILL.md`. Endpoint: `server/scrape-agent.ts`. Mount: `server/routes.ts` (search `scrapeAgentRouter`). All documented in SKILL.md. | Complete |
 | TRADE-FIN-01 | Phase 5 | | Pending |
 | TRADE-FIN-02 | Phase 5 | | Pending |
 | TRADE-FIN-03 | Phase 5 | | Pending |

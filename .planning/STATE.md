@@ -13,10 +13,10 @@
 
 ## Current Position
 
-- **Phase:** 3 complete — Trading-routine architecture discovery doc shipped. Next up: Phases 4/5/6 (Camoufox / Fincept / AutoHedge skills) — independent of each other; can run in any order.
+- **Phase:** 4 v1 shipped — camoufox-fetch primitive. Next up: Phase 5 (Fincept) and/or Phase 6 (AutoHedge skills) — independent.
 - **W2 status:** Both marketing pages live. Phase 1 shipped + refreshed (`beff125`). Phase 2 shipped (`701a33e`).
-- **W3 status:** Discovery doc at `docs/trading-routine-architecture.md`. Install pattern locked: project-level Claude Code skill in `.claude/skills/` + thin Express endpoint behind `x-jdcd-agent-key` for server-side state/secrets.
-- **Progress:** 3/6 phases complete `[███░░░]`
+- **W3 status:** Discovery doc + install pattern (`abc091d`). Cleanup pass shipped — auth gap closed, dead modelfarm code gone, scheduled triggers disabled (`4e06249`, `5cdeab0`, `8e9e979`). Phase 4 v1 stealth-scrape endpoint + SKILL.md (`2e9c1a1`).
+- **Progress:** 4/6 phases complete `[████░░]` (Phase 4 v1; v2 backend deferred)
 
 ## Architecture flags (raised by Phase 3 discovery — handle before/during Phases 4-6)
 
