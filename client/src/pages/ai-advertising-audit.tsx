@@ -142,7 +142,62 @@ const faqs = [
 ];
 
 export default function AiAdvertisingAuditPage() {
-  // SEO useEffect goes here in Task 3 — DO NOT add it now.
+  useEffect(() => {
+    const PAGE_TAG = "ai-advertising-audit";
+    const TITLE = "AI Advertising Audit + Improvement | JD CoreDev";
+    const DESC = "Plain-English audit of your Google and Meta ad accounts for Hong Kong small businesses. Stop wasting spend, fix broken tracking, sharpen creative — written report you can act on, or we make the changes for you.";
+    const URL = "https://www.jdcoredev.com/services/ai-advertising-audit";
+
+    const prevTitle = document.title;
+    document.title = TITLE;
+
+    const tag = (el: HTMLElement) => {
+      el.setAttribute("data-page", PAGE_TAG);
+      return el;
+    };
+
+    const meta = (attr: "name" | "property", value: string, content: string) => {
+      const m = document.createElement("meta");
+      m.setAttribute(attr, value);
+      m.setAttribute("content", content);
+      document.head.appendChild(tag(m));
+    };
+
+    meta("name",     "description",        DESC);
+    meta("property", "og:type",            "website");
+    meta("property", "og:title",           TITLE);
+    meta("property", "og:description",     DESC);
+    meta("property", "og:url",             URL);
+    meta("name",     "twitter:card",       "summary_large_image");
+    meta("name",     "twitter:title",      TITLE);
+    meta("name",     "twitter:description", DESC);
+
+    const canonical = document.createElement("link");
+    canonical.setAttribute("rel",  "canonical");
+    canonical.setAttribute("href", URL);
+    document.head.appendChild(tag(canonical));
+
+    const ld = document.createElement("script");
+    ld.setAttribute("type", "application/ld+json");
+    ld.textContent = JSON.stringify({
+      "@context":    "https://schema.org",
+      "@type":       "Service",
+      "@id":         URL + "#service",
+      "serviceType": "AI Advertising Audit",
+      "name":        "AI Advertising Audit + Improvement",
+      "description": DESC,
+      "provider":    { "@id": "https://www.jdcoredev.com/#org" },
+      "areaServed":  { "@type": "Country",          "name": "Hong Kong" },
+      "audience":    { "@type": "BusinessAudience", "audienceType": "Small business" },
+      "url":         URL,
+    });
+    document.head.appendChild(tag(ld));
+
+    return () => {
+      document.title = prevTitle;
+      document.head.querySelectorAll(`[data-page="${PAGE_TAG}"]`).forEach((n) => n.remove());
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background text-foreground overflow-x-hidden">
