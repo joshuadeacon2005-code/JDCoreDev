@@ -879,10 +879,12 @@ traderRouter.get('/insider-trades', async (req, res) => {
   }
 });
 
-// Resolve a mode filter from the request query.
-// Accepts ?mode=paper | ?mode=live | ?mode=all (defaults to current Alpaca mode).
+// Resolve a paper/live filter from the request query.
+// Accepts ?account=paper | ?account=live | ?account=all
+// (defaults to current Alpaca mode). Named "account" rather than "mode"
+// because trader_pipelines.mode already means strategy ("swing"/"day"/etc).
 async function resolveModeFilter(req: any): Promise<{ isPaper: boolean | null }> {
-  const raw = (req.query?.mode || '').toString().toLowerCase();
+  const raw = (req.query?.account || '').toString().toLowerCase();
   if (raw === 'paper') return { isPaper: true };
   if (raw === 'live')  return { isPaper: false };
   if (raw === 'all')   return { isPaper: null };
@@ -965,9 +967,13 @@ traderRouter.get('/run-summaries', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 60, 200);
     const mode  = (req.query.mode as string) || 'all';
+    const { isPaper } = await resolveModeFilter(req);
 
-    const whereClause = mode !== 'all' ? `WHERE p.mode = $2` : '';
-    const params: any[] = mode !== 'all' ? [limit, mode] : [limit];
+    const conds: string[] = [];
+    const params: any[] = [limit];
+    if (mode !== 'all') { params.push(mode); conds.push(`p.mode = $${params.length}`); }
+    if (isPaper !== null) { params.push(isPaper); conds.push(`p.is_paper = $${params.length}`); }
+    const whereClause = conds.length > 0 ? `WHERE ${conds.join(' AND ')}` : '';
 
     const pipelinesRes = await pool.query(`
       SELECT p.*

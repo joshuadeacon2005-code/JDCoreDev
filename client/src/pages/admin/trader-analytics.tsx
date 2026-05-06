@@ -6,6 +6,7 @@ import {
 import { useLocation } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
 import { TraderTabs } from "@/components/TraderTabs";
+import { TraderModeToggle } from "@/components/TraderModeToggle";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -253,6 +254,7 @@ export default function TraderAnalytics() {
   const [syncing,     setSyncing]     = useState(false);
   const [view,        setView]        = useState("overview");
   const [activeMode,  setActiveMode]  = useState("all");
+  const [accountMode, setAccountMode] = useState<"paper"|"live"|"all">("paper");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { toast } = useToast();
 
@@ -260,8 +262,8 @@ export default function TraderAnalytics() {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     Promise.all([
-      fetch("/api/trader/history?type=trades&limit=500").then(r=>r.json()),
-      fetch("/api/trader/history?type=pipelines").then(r=>r.json()),
+      fetch(`/api/trader/history?type=trades&limit=500&account=${accountMode}`).then(r=>r.json()),
+      fetch(`/api/trader/history?type=pipelines&account=${accountMode}`).then(r=>r.json()),
     ]).then(([t, p])=>{
       setAllTrades(Array.isArray(t)?t:[]);
       setPipelines(Array.isArray(p)?p:[]);
@@ -269,7 +271,7 @@ export default function TraderAnalytics() {
       setLoading(false);
       setRefreshing(false);
     }).catch(()=>{ setLoading(false); setRefreshing(false); });
-  }, []);
+  }, [accountMode]);
 
   useEffect(()=>{ loadData(); }, [loadData]);
 
@@ -318,8 +320,9 @@ export default function TraderAnalytics() {
               {activeMode!=="all"&&<> · <span className={mc.text}>{mc.label} mode</span></>}
             </p>}
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <Button variant="outline" size="sm" onClick={syncPnl} disabled={syncing || refreshing} className="flex items-center gap-1.5 text-xs mt-1">
+          <div className="flex flex-col items-end gap-2">
+            <TraderModeToggle value={accountMode} onChange={setAccountMode} showAll />
+            <Button variant="outline" size="sm" onClick={syncPnl} disabled={syncing || refreshing} className="flex items-center gap-1.5 text-xs">
               <RefreshCw className={cn("h-3.5 w-3.5", (syncing || refreshing) && "animate-spin")}/>
               {syncing ? "Syncing…" : refreshing ? "Refreshing…" : "Sync P&L"}
             </Button>

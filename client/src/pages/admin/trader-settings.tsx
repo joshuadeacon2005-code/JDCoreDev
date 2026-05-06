@@ -86,6 +86,7 @@ export default function TraderSettings() {
 
   const loadLogs = async () => {
     if(!logsOpen){
+      // Default to current Alpaca mode (paper/live) so logs match what's active.
       const r = await fetch('/api/trader/history?type=logs');
       const d = await r.json();
       setLogs(Array.isArray(d)?d:[]);

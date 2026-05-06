@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { AdminLayout } from "@/components/AdminLayout";
 import { TraderTabs } from "@/components/TraderTabs";
+import { TraderModeToggle } from "@/components/TraderModeToggle";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -416,12 +417,13 @@ export default function TraderRuns() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [activeMode, setActiveMode] = useState("all");
+  const [accountMode, setAccountMode] = useState<"paper"|"live"|"all">("paper");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadRuns = useCallback((silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
-    fetch(`/api/trader/run-summaries?limit=60&mode=${activeMode}`)
+    fetch(`/api/trader/run-summaries?limit=60&mode=${activeMode}&account=${accountMode}`)
       .then(r => r.json())
       .then(d => {
         setRuns(Array.isArray(d) ? d : []);
@@ -430,7 +432,7 @@ export default function TraderRuns() {
         setRefreshing(false);
       })
       .catch(() => { setLoading(false); setRefreshing(false); });
-  }, [activeMode]);
+  }, [activeMode, accountMode]);
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
 
@@ -463,9 +465,10 @@ export default function TraderRuns() {
               </p>
             )}
           </div>
-          <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-col items-end gap-2">
+            <TraderModeToggle value={accountMode} onChange={setAccountMode} showAll />
             <Button variant="outline" size="sm" onClick={() => loadRuns(true)} disabled={refreshing || loading}
-              className="flex items-center gap-1.5 text-xs mt-1">
+              className="flex items-center gap-1.5 text-xs">
               <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
               {refreshing ? "Refreshing…" : "Refresh"}
             </Button>
