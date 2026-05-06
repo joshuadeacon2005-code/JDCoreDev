@@ -16,7 +16,7 @@ import {
   Play, RefreshCw, AlertTriangle, CheckCircle2, Clock, DollarSign,
   ChevronDown, ChevronRight, Search, Gavel, Eye, Zap,
   Scale, Flame, BookOpen, BarChart2, MessageSquare, Send, Trash2,
-  Wallet, UserX, ExternalLink, Info, Globe, Loader2, X,
+  Wallet, ExternalLink, Info, Globe, Loader2, X,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
@@ -451,80 +451,6 @@ function BetCard({ bet, onCancelled }: { bet: any; onCancelled?: () => void }) {
   );
 }
 
-// ── Notable Traders data ──────────────────────────────────────────────────────
-
-const NOTABLE_TRADERS = [
-  {
-    name: "The 2024 Election Whale",
-    subtitle: "Anonymous French trader on Polymarket/Kalshi",
-    reputation: "controversial" as const,
-    focus: ["US Politics", "Presidential Elections"],
-    summary: "Placed $30M+ bets on Trump winning the 2024 US election, single-handedly moving market prices by 10+ percentage points. Identity later confirmed as Frédéric Baguelin. Accused of coordinated manipulation; the bets proved correct but the method drew SEC scrutiny.",
-    signal: "Large anonymous whale positions in political markets may signal either informed trading or coordinated manipulation. Check for corresponding moves on correlated markets.",
-    trackRecord: "Correct on 2024 election. Known for concentrated single-outcome bets, not diversified strategy.",
-    link: "https://www.wsj.com/finance/polymarket-trump-bets-whale",
-  },
-  {
-    name: "Nate Silver",
-    subtitle: "@NateSilver538 — FiveThirtyEight founder",
-    reputation: "declining" as const,
-    focus: ["US Politics", "Sports", "Economics"],
-    summary: "Once considered the gold standard of election forecasting. Accuracy has declined significantly post-2016, with critics noting his models increasingly lag markets rather than lead them. His 2024 presidential forecasts were significantly off on key swing state margins.",
-    signal: "His public probability estimates now frequently trade at a premium on Kalshi. Many traders find value fading his published probabilities, especially in late-stage election markets.",
-    trackRecord: "Excellent 2008–2012. Mixed 2016, poor 2020 & 2024 directional calls. Better as commentary than edge.",
-    link: "https://www.natesilver.net",
-  },
-  {
-    name: "Jim Cramer",
-    subtitle: "@JimCramer — CNBC Mad Money host",
-    reputation: "inverse" as const,
-    focus: ["Federal Reserve", "Economics", "Markets", "Crypto"],
-    summary: "Wall Street's most famous inverse indicator. Academic studies have shown that an inverse portfolio of Cramer's stock picks outperforms the market. The same 'Cramer Effect' extends to his macroeconomic calls: Fed pivot timing, recession predictions, and crypto bottom calls.",
-    signal: "If Cramer confidently declares an economic outcome on TV, the opposite Kalshi position historically has positive expected value. Best used for Fed rate, recession, and CPI markets.",
-    trackRecord: "Called crypto bottom at $36K (BTC hit $15K). Called \"no recession\" 3 months before 2022 slowdown. Called top of rate hikes 6 months early.",
-    link: "https://en.wikipedia.org/wiki/Jim_Cramer",
-  },
-  {
-    name: "Metaculus Community",
-    subtitle: "metaculus.com — crowd forecasting platform",
-    reputation: "mixed" as const,
-    focus: ["Science", "Technology", "AI", "Geopolitics", "Health"],
-    summary: "Aggregated crowd-sourced forecasting platform. Genuinely excellent on long-horizon science and technology questions. Notoriously slow to update on fast-moving political and financial events — crowds anchor too heavily to base rates and are slow to incorporate new information.",
-    signal: "If Metaculus is 80%+ on a political question, check if markets have already priced it. They often lag live prediction markets by days. Good as a sanity-check baseline, not as a trading signal.",
-    trackRecord: "Top-tier on AI capability forecasts, pandemic timelines, and space milestones. Below average on election outcomes and financial surprises.",
-    link: "https://www.metaculus.com",
-  },
-  {
-    name: "Samotsvety Forecasting",
-    subtitle: "@Samotsvety — elite superforecaster team",
-    reputation: "high" as const,
-    focus: ["AI Risk", "Geopolitics", "Nuclear", "Science", "Economics"],
-    summary: "One of the most accurate forecasting teams in existence. Consistently outperforms both prediction markets and individual expert consensus. When their published estimates diverge from live Kalshi prices by more than 10pp, that divergence is historically exploitable.",
-    signal: "USE AS BENCHMARK. If Samotsvety disagrees with a current Kalshi market price by >10pp, this is worth deeper research. They tend to be right on geopolitics, AI milestones, and tail-risk events.",
-    trackRecord: "Top-1% accuracy across Metaculus, Manifold, and Polymarket. Known for AI risk forecasts, Ukraine war timeline predictions, pandemic end-date calls.",
-    link: "https://samotsvety.org",
-  },
-  {
-    name: "Peter Thiel Network",
-    subtitle: "Thiel Capital / Founders Fund political bets",
-    reputation: "biased" as const,
-    focus: ["US Politics", "Crypto Regulation", "AI Regulation", "Silicon Valley"],
-    summary: "Thiel-affiliated entities have been documented making large politically-motivated prediction market bets aligned with candidates they fund. The bets serve dual purposes: financial upside and creating positive narrative momentum ('the smart money thinks X will win').",
-    signal: "Large pro-libertarian, anti-regulation political market positions may be politically motivated rather than purely probabilistic. Useful for sentiment analysis but discount as pure edge signal.",
-    trackRecord: "Won big on 2016 Trump (early backer). Positions in crypto regulation markets tend to over-estimate deregulation likelihood.",
-    link: "https://en.wikipedia.org/wiki/Peter_Thiel",
-  },
-];
-
-const REPUTATION_CONFIG: Record<string, { label: string; className: string }> = {
-  controversial: { label: "⚠ Controversial",    className: "border-amber-500/30 text-amber-500 bg-amber-500/10"       },
-  declining:     { label: "↘ Declining Edge",   className: "border-orange-500/30 text-orange-500 bg-orange-500/10"     },
-  inverse:       { label: "↔ Inverse Indicator", className: "border-red-500/30 text-red-500 bg-red-500/10"             },
-  mixed:         { label: "≈ Mixed Record",      className: "border-blue-500/30 text-blue-500 bg-blue-500/10"          },
-  high:          { label: "✓ High Credibility",  className: "border-emerald-500/30 text-emerald-600 bg-emerald-500/10" },
-  biased:        { label: "⊘ Ideologically Biased", className: "border-purple-500/30 text-purple-500 bg-purple-500/10" },
-};
-
 // ── Portfolio Section (Overview) ──────────────────────────────────────────────
 
 function PortfolioSection({ portfolio, onRefresh }: { portfolio: any; onRefresh: () => void }) {
@@ -843,158 +769,6 @@ function PolyPortfolioSection({ polyBalance, onRefresh, onGoToBets }: { polyBala
         )}
       </CardContent>
     </Card>
-  );
-}
-
-// ── Notable Traders Tab ───────────────────────────────────────────────────────
-
-function NotableTradersTab() {
-  const [research, setResearch] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState<Record<string, boolean>>({});
-  const [custom, setCustom] = useState("");
-  const [customResult, setCustomResult] = useState<string | null>(null);
-  const [customLoading, setCustomLoading] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
-
-  const fetchResearch = async (name: string) => {
-    if (research[name] || loading[name]) return;
-    setLoading(l => ({ ...l, [name]: true }));
-    try {
-      const d = await fetch("/api/predictor/research-trader", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      }).then(r => r.json());
-      setResearch(r => ({ ...r, [name]: d.content || "No data available." }));
-    } catch {
-      setResearch(r => ({ ...r, [name]: "Research failed — check AI configuration." }));
-    }
-    setLoading(l => ({ ...l, [name]: false }));
-  };
-
-  const fetchCustom = async () => {
-    const name = custom.trim();
-    if (!name || customLoading) return;
-    setCustomLoading(true);
-    setCustomResult(null);
-    try {
-      const d = await fetch("/api/predictor/research-trader", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      }).then(r => r.json());
-      setCustomResult(d.content || "No data available.");
-    } catch {
-      setCustomResult("Research failed — check AI configuration.");
-    }
-    setCustomLoading(false);
-  };
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <p className="text-xs text-muted-foreground mb-4">
-          Intelligence profiles on well-known prediction market participants. Useful for understanding market sentiment and spotting coordinated or biased trading activity.
-        </p>
-
-        <div className="space-y-3">
-          {NOTABLE_TRADERS.map(trader => {
-            const repCfg = REPUTATION_CONFIG[trader.reputation];
-            const isExpanded = expanded === trader.name;
-            const hasResearch = !!research[trader.name];
-            const isLoading = loading[trader.name];
-            return (
-              <Card key={trader.name}>
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                        <h3 className="text-sm font-semibold">{trader.name}</h3>
-                        <Badge variant="outline" className={cn("text-[10px]", repCfg.className)}>
-                          {repCfg.label}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{trader.subtitle}</p>
-                    </div>
-                    <a href={trader.link} target="_blank" rel="noopener noreferrer"
-                      className="text-muted-foreground hover:text-foreground flex-shrink-0">
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1 mb-3">
-                    {trader.focus.map(f => (
-                      <Badge key={f} variant="secondary" className="text-[10px] px-1.5 py-0">{f}</Badge>
-                    ))}
-                  </div>
-
-                  <p className="text-xs text-muted-foreground leading-relaxed mb-2">{trader.summary}</p>
-
-                  <div className="rounded-md border border-purple-500/20 bg-purple-500/5 px-3 py-2 mb-3">
-                    <p className="text-[10px] text-purple-500 font-semibold uppercase tracking-wide mb-0.5">Trading Signal</p>
-                    <p className="text-xs text-muted-foreground">{trader.signal}</p>
-                  </div>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={() => {
-                        if (!hasResearch) fetchResearch(trader.name);
-                        setExpanded(isExpanded ? null : trader.name);
-                      }}
-                      className="flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors border border-border rounded px-2 py-1"
-                    >
-                      {isLoading
-                        ? <><Loader2 className="h-3 w-3 animate-spin" />Researching…</>
-                        : hasResearch
-                          ? <><Info className="h-3 w-3" />{isExpanded ? "Hide" : "View"} AI Research</>
-                          : <><Brain className="h-3 w-3" />Get AI Research</>
-                      }
-                    </button>
-                    <span className="text-[10px] text-muted-foreground">Track record: {trader.trackRecord}</span>
-                  </div>
-
-                  {isExpanded && hasResearch && (
-                    <div className="mt-3 pt-3 border-t">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1">
-                        <Brain className="h-3 w-3 text-purple-500" /> AI Intelligence Report
-                      </p>
-                      <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">{research[trader.name]}</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Custom trader research */}
-      <Card>
-        <CardHeader className="pb-2 pt-4">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Globe className="h-4 w-4 text-purple-500" />Research Any Trader
-          </CardTitle>
-          <CardDescription className="text-xs">Enter a name to get an AI-generated intelligence profile</CardDescription>
-        </CardHeader>
-        <CardContent className="pb-4">
-          <div className="flex gap-2 mb-3">
-            <Input
-              value={custom}
-              onChange={e => setCustom(e.target.value)}
-              placeholder="e.g. Manifold Markets, Robin Hanson, Superforecasters…"
-              className="text-sm h-8"
-              onKeyDown={e => e.key === "Enter" && fetchCustom()}
-            />
-            <Button size="sm" variant="outline" onClick={fetchCustom} disabled={customLoading || !custom.trim()} className="h-8 text-xs shrink-0">
-              {customLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
-            </Button>
-          </div>
-          {customResult && (
-            <div className="rounded-md border bg-muted/30 p-3">
-              <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">{customResult}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
   );
 }
 
@@ -2265,13 +2039,9 @@ export default function PredictionsPage() {
   const [polyBalance, setPolyBalance] = useState<any>(null);
   const [loading, setLoading]         = useState(true);
   const [running, setRunning]         = useState(false);
-  const [scanning, setScanning]       = useState(false);
-  const [cryptoRunning, setCryptoRunning] = useState(false);
-  const [cryptoLog, setCryptoLog]     = useState<string[]>([]);
   const [stageStatus, setStageStatus] = useState<any>({});
   const [runLog, setRunLog]           = useState<string[]>([]);
-  const [scanResults, setScanResults] = useState<any[]>([]);
-  const [tab, setTab]                 = useState<"overview" | "bets" | "runs" | "analytics" | "chat" | "councils" | "settings" | "traders">("overview");
+  const [tab, setTab]                 = useState<"overview" | "bets" | "runs" | "analytics" | "chat" | "councils" | "settings">("overview");
   const [runsKey, setRunsKey]         = useState(0);
 
   const loadPortfolio = useCallback(async () => {
@@ -2338,50 +2108,6 @@ export default function PredictionsPage() {
     setRunning(false);
   };
 
-  const runScan = async () => {
-    setScanning(true);
-    try {
-      const r = await fetch("/api/predictor/scan", { method: "POST" });
-      const d = await r.json();
-      setScanResults(d.candidates || []);
-    } catch {}
-    setScanning(false);
-  };
-
-  const runCryptoScan = async () => {
-    setCryptoRunning(true);
-    setCryptoLog([]);
-    try {
-      const response = await fetch("/api/predictor/run-crypto", { method: "POST" });
-      if (!response.body) { setCryptoRunning(false); return; }
-      const reader  = response.body.getReader();
-      const decoder = new TextDecoder();
-      let   buffer  = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const part of parts) {
-          const line = part.trim();
-          if (!line.startsWith("data:")) continue;
-          try {
-            const ev = JSON.parse(line.slice(5).trim());
-            if (ev.type === "stage") {
-              setCryptoLog((prev) => [...prev, ev.msg]);
-            } else if (ev.type === "done" || ev.type === "error") {
-              await loadStats();
-              await loadPortfolio();
-              setRunsKey(k => k + 1);
-            }
-          } catch {}
-        }
-      }
-    } catch {}
-    setCryptoRunning(false);
-  };
-
   const updateSetting = async (key: string, value: string) => {
     await fetch("/api/predictor/settings", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -2397,7 +2123,6 @@ export default function PredictionsPage() {
     { id: "analytics" as const, label: "Analytics",  Icon: BarChart2     },
     { id: "chat"      as const, label: "Chat",       Icon: MessageSquare },
     { id: "councils"  as const, label: "Councils",   Icon: Users         },
-    { id: "traders"   as const, label: "Intel",      Icon: UserX         },
     { id: "settings"  as const, label: "Settings",   Icon: Shield        },
   ];
 
@@ -2598,22 +2323,9 @@ export default function PredictionsPage() {
                         </div>
                       </div>
                     </div>
-                    <Button size="sm" variant="outline" onClick={runCryptoScan}
-                      disabled={cryptoRunning || running}
-                      className="w-full text-xs border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20"
-                      data-testid="button-run-crypto-scan"
-                    >
-                      {cryptoRunning
-                        ? <><RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />Scanning…</>
-                        : <><Zap className="h-3 w-3 mr-1.5" />Run Crypto Scan</>}
-                    </Button>
-                    {cryptoLog.length > 0 && (
-                      <div className="mt-2 max-h-20 overflow-y-auto text-[9px] font-mono text-muted-foreground space-y-0.5">
-                        {cryptoLog.slice(-6).map((line, i) => (
-                          <div key={i} className="truncate">{line}</div>
-                        ))}
-                      </div>
-                    )}
+                    {/* Manual "Run Crypto Scan" button removed — the legacy crypto pipeline
+                        relied on the dead modelfarm Claude SDK. Crypto markets are now
+                        scanned by the routine when crypto_scan_enabled=true. */}
                   </div>
 
                   <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -2621,10 +2333,6 @@ export default function PredictionsPage() {
                       className="text-xs border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20">
                       {running ? <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" /> : <Play className="h-3 w-3 mr-1.5" />}
                       {running ? "Running…" : "Run Full Pipeline"}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={runScan} disabled={scanning || running} className="text-xs">
-                      {scanning ? <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" /> : <Search className="h-3 w-3 mr-1.5" />}
-                      Scan Only
                     </Button>
                     {settings.mode && (
                       <Badge variant="secondary"
@@ -2787,39 +2495,6 @@ export default function PredictionsPage() {
               </Card>
             </div>
 
-            {scanResults.length > 0 && (
-              <Card>
-                <CardHeader className="pb-2 pt-4">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Zap className="h-4 w-4 text-amber-500" />Scan Results ({scanResults.length} opportunities)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="pb-4 space-y-2">
-                  {scanResults.map((m: any, i: number) => {
-                    const isPoly = m.platform === "polymarket";
-                    return (
-                    <div key={i} className={cn("flex items-center gap-3 p-3 rounded-lg border", isPoly ? "border-blue-500/20 bg-blue-500/5" : "border-amber-500/20 bg-amber-500/5")}>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                          <span className="text-xs font-mono text-muted-foreground">{m.ticker}</span>
-                          <Badge variant="outline" className={cn("text-[10px]", isPoly ? "border-blue-500/20 text-blue-500" : "border-amber-500/20 text-amber-500")}>Score: {m.score}</Badge>
-                          <Badge variant="outline" className={cn("text-[10px]", isPoly ? "border-blue-500/30 text-blue-500" : "border-purple-500/30 text-purple-500")}>{isPoly ? "Polymarket" : "Kalshi"}</Badge>
-                        </div>
-                        <p className="text-sm font-semibold">{m.title}</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">{m.why}</p>
-                      </div>
-                      <div className="text-right flex-shrink-0 space-y-0.5">
-                        <p className="text-xs text-muted-foreground">Market: <span className="font-mono">{(m.yes_price * 100).toFixed(0)}%</span></p>
-                        <p className={cn("text-xs", isPoly ? "text-blue-500" : "text-purple-500")}>Ours: <span className="font-mono">{(m.your_estimate * 100).toFixed(0)}%</span></p>
-                        <p className="text-xs font-bold font-mono text-amber-500">Edge: {((m.your_estimate - m.yes_price) * 100).toFixed(1)}pp</p>
-                      </div>
-                    </div>
-                    );
-                  })}
-                </CardContent>
-              </Card>
-            )}
-
             {/* Portfolios — Kalshi + Polymarket side by side */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <PortfolioSection portfolio={portfolio} onRefresh={loadPortfolio} />
@@ -2842,7 +2517,6 @@ export default function PredictionsPage() {
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "chat"      && <ChatTab />}
         {tab === "councils"  && <CouncilsTab />}
-        {tab === "traders"   && <NotableTradersTab />}
         {tab === "settings"  && <SettingsTab settings={settings} onUpdate={updateSetting} />}
       </div>
     </AdminLayout>
