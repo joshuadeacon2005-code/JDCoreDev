@@ -14,8 +14,8 @@
 ## Current Position
 
 - **Phase:** 1 — AI Advertising Audit page
-- **Plan:** 01-05 complete (CACHE-PURGE.md note landed); next plan TBD per phase-1 plan suite
-- **Status:** In progress — Phase 1 plan 05 (cache-purge follow-up note) shipped
+- **Plans complete:** 2/5 (01-05 cache-purge note + 01-01 page component & route); next: 01-02 (nav wiring)
+- **Status:** In progress — Phase 1 page itself shipped end-to-end; site-wide AAA wiring (nav / homepage / sitemap) outstanding
 - **Progress:** 0/6 phases complete `[░░░░░░]`
 
 ## Performance Metrics
@@ -32,6 +32,9 @@
 | Plan 01-05 duration | ~3 min |
 | Plan 01-05 tasks | 1 |
 | Plan 01-05 files | 1 created |
+| Plan 01-01 duration | ~25 min |
+| Plan 01-01 tasks | 3 |
+| Plan 01-01 files | 1 created (`client/src/pages/ai-advertising-audit.tsx`), 1 modified (`client/src/App.tsx`) |
 
 ## Accumulated Context
 
@@ -47,6 +50,8 @@
 - **Trading mode safety**: every new W3 code path defaults to Paper; Live requires an explicit confirmation gate in the routine prompt.
 - **Cloudflare cache purge is manual only** for Phase 1 deploy (and Phase 2 deploy). Procedure documented in `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md`. Auto-purge is OUT OF SCOPE — deferred to v2.
 - **`wrangler` CLI with local auth is the documented purge path**, dashboard "Purge By URL" is the fallback. No CF API tokens get pasted into scripts or commits.
+- **Plan 01-01 set the per-page SEO useEffect contract:** all injected nodes carry `data-page="<page-id>"`; cleanup uses `document.head.querySelectorAll('[data-page="<page-id>"]')` + restores prior `document.title`. Phase 2's SEO Audit page (MKTG-SEO-08) reuses this exact contract with `data-page="seo-audit-and-improvement"`.
+- **Service JSON-LD references the site-wide `@graph` `#org` via `provider.@id`.** Never redeclare the Organization node — `client/index.html` already owns it.
 
 ### Open Todos
 
@@ -66,14 +71,16 @@
 
 ### Last session
 
+- **2026-05-06** — gsd-executor: shipped Phase 1 Plan 01 (AAA page component + route + SEO useEffect). Created `client/src/pages/ai-advertising-audit.tsx` (full standalone marketing page — hero, 4 benefit cards, 2 pricing tiers + ongoing strip, 3-cell social-proof grid, 7-entry FAQ, final CTA, footer; 8 meta + canonical + Service JSON-LD injected on mount, all tagged `data-page="ai-advertising-audit"` and removed on unmount; document.title restored on unmount); modified `client/src/App.tsx` (one new wouter `<Route>` + one new import). Closes MKTG-AAA-01 through MKTG-AAA-09. 3 tasks, 3 commits (`b217648` skeleton, `65c80ec` content, `ee36125` SEO + route). TypeScript check (`npx tsc --noEmit`) passes; production build skipped due to local iCloud-sync `EUNKNOWN` on `node_modules/.bin/tsx` — not a code issue, will run normally in CI.
 - **2026-05-06** — gsd-executor: shipped Phase 1 Plan 05 (cache-purge follow-up note). Created `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md` documenting the manual Cloudflare purge procedure (URLs: `/sitemap.xml`, `/services`, `/`), wrangler + dashboard options, do-not-paste-tokens guidance, and v2 hand-off for auto-purge. 1 task, 1 commit (`f4e8ec5`).
 - **2026-05-06** — gsd-roadmapper: extracted requirements from PROJECT.md + REQUIREMENTS.md, mapped 38 active v1 REQ-IDs to 6 phases (phase order pre-locked by user), wrote ROADMAP.md, initialized STATE.md, populated REQUIREMENTS.md Traceability section.
 
 ### Next up
 
-- Continue Phase 1 plan suite (plans 01-04 — AAA page route, hero+benefits, pricing+FAQ+social-proof, nav+homepage+sitemap wiring).
+- Continue Phase 1 plan suite — plans 02 (nav wiring), 03 (homepage card), 04 (sitemap entry) remain.
 - After Phase 1 deploys to production: Josh runs the manual purge per `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md`.
-- One PR for Phase 1, then `/gsd-transition` to Phase 2.
+- One PR for Phase 1 (all 5 plans), then `/gsd-transition` to Phase 2.
+- **Note** — when running `npm run build` locally, do it from a non-iCloud-synced clone of the repo. iCloud's placeholder-file behaviour breaks node's `readFileSync` for any binary loaded from `node_modules/.bin/`. CI is unaffected.
 
 ---
-*Updated: 2026-05-06 by gsd-executor.*
+*Updated: 2026-05-06 by gsd-executor (after Phase 1 Plan 01 completion).*

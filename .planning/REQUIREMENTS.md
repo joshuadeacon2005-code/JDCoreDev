@@ -8,15 +8,15 @@ Source: implementation brief v3 (narrow W2 scope). All requirements below are v1
 
 **Page: AI Advertising Audit + Improvement (`/services/ai-advertising-audit`)**
 
-- [ ] **MKTG-AAA-01**: Page route registered in `client/src/App.tsx` and renders at `/services/ai-advertising-audit` without console errors
-- [ ] **MKTG-AAA-02**: Hero section with primary CTA → `/contact` matching existing `<Link href="/contact"><Button>Get in touch</Button></Link>` pattern
-- [ ] **MKTG-AAA-03**: 3-5 outcome-focused benefit blocks (plain language, jargon-free; covers Google Ads + Meta Ads, creative, targeting, spend efficiency, conversion tracking, landing-page alignment)
-- [ ] **MKTG-AAA-04**: 2-tier pricing card (Audit-only / Audit + Improvements) with optional ongoing-management tier as stretch; placeholders OK if numbers TBD; not enterprise-feel
-- [ ] **MKTG-AAA-05**: Social-proof slot rendered (placeholder content acceptable)
-- [ ] **MKTG-AAA-06**: 5-8 FAQ entries — what's included, timeline, ad-account access, what happens after they get in touch
-- [ ] **MKTG-AAA-07**: Final CTA strip → `/contact`
-- [ ] **MKTG-AAA-08**: Per-page SEO via `useEffect`: sets `document.title`, OG tags via meta tag append/cleanup, schema.org `Service` JSON-LD via `<script type="application/ld+json">` append on mount and remove on unmount
-- [ ] **MKTG-AAA-09**: Visual style — NavBar tubelight + sticky logo nav + AnimatedContainer + bordered grid pattern, identical to `client/src/pages/services.tsx`
+- [x] **MKTG-AAA-01**: Page route registered in `client/src/App.tsx` and renders at `/services/ai-advertising-audit` without console errors
+- [x] **MKTG-AAA-02**: Hero section with primary CTA → `/contact` matching existing `<Link href="/contact"><Button>Get in touch</Button></Link>` pattern
+- [x] **MKTG-AAA-03**: 3-5 outcome-focused benefit blocks (plain language, jargon-free; covers Google Ads + Meta Ads, creative, targeting, spend efficiency, conversion tracking, landing-page alignment)
+- [x] **MKTG-AAA-04**: 2-tier pricing card (Audit-only / Audit + Improvements) with optional ongoing-management tier as stretch; placeholders OK if numbers TBD; not enterprise-feel
+- [x] **MKTG-AAA-05**: Social-proof slot rendered (placeholder content acceptable)
+- [x] **MKTG-AAA-06**: 5-8 FAQ entries — what's included, timeline, ad-account access, what happens after they get in touch
+- [x] **MKTG-AAA-07**: Final CTA strip → `/contact`
+- [x] **MKTG-AAA-08**: Per-page SEO via `useEffect`: sets `document.title`, OG tags via meta tag append/cleanup, schema.org `Service` JSON-LD via `<script type="application/ld+json">` append on mount and remove on unmount
+- [x] **MKTG-AAA-09**: Visual style — NavBar tubelight + sticky logo nav + AnimatedContainer + bordered grid pattern, identical to `client/src/pages/services.tsx`
 
 **Page: SEO Audit + Improvement (`/services/seo-audit-and-improvement`)**
 
@@ -104,15 +104,15 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 
 | Requirement | Phase | Notes | Status |
 |-------------|-------|-------|--------|
-| MKTG-AAA-01 | Phase 1 | | Pending |
-| MKTG-AAA-02 | Phase 1 | | Pending |
-| MKTG-AAA-03 | Phase 1 | | Pending |
-| MKTG-AAA-04 | Phase 1 | | Pending |
-| MKTG-AAA-05 | Phase 1 | | Pending |
-| MKTG-AAA-06 | Phase 1 | | Pending |
-| MKTG-AAA-07 | Phase 1 | | Pending |
-| MKTG-AAA-08 | Phase 1 | | Pending |
-| MKTG-AAA-09 | Phase 1 | | Pending |
+| MKTG-AAA-01 | Phase 1 | Plan 01-01 (commit `ee36125`: route in `client/src/App.tsx`) | Complete |
+| MKTG-AAA-02 | Phase 1 | Plan 01-01 (commit `65c80ec`: hero CTA → `/contact`) | Complete |
+| MKTG-AAA-03 | Phase 1 | Plan 01-01 (commit `65c80ec`: 4 benefit cards) | Complete |
+| MKTG-AAA-04 | Phase 1 | Plan 01-01 (commit `65c80ec`: 2 pricing tiers + ongoing strip) | Complete |
+| MKTG-AAA-05 | Phase 1 | Plan 01-01 (commit `65c80ec`: 3-cell placeholder grid) | Complete |
+| MKTG-AAA-06 | Phase 1 | Plan 01-01 (commit `65c80ec`: 7 FAQ entries via Accordion) | Complete |
+| MKTG-AAA-07 | Phase 1 | Plan 01-01 (commit `65c80ec`: final CTA → `/contact`) | Complete |
+| MKTG-AAA-08 | Phase 1 | Plan 01-01 (commit `ee36125`: useEffect head-injection w/ data-page cleanup) | Complete |
+| MKTG-AAA-09 | Phase 1 | Plan 01-01 (commit `b217648`: services.tsx primitives composed verbatim) | Complete |
 | MKTG-SEO-01 | Phase 2 | | Pending |
 | MKTG-SEO-02 | Phase 2 | | Pending |
 | MKTG-SEO-03 | Phase 2 | | Pending |
