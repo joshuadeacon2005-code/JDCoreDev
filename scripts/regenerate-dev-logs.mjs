@@ -214,9 +214,13 @@ async function main() {
       // computation in summarizeTranscript. The DB column was set by the
       // hook with the OLD GAP_CAP_MS=5min cap; this lets us roll back the
       // inflation. Fall back to 1-minute floor for slices with any activity.
-      const newMinutes = summary.activeMs > 0
+      // CLAMP: only ever LOWER existing minutes — slice expansion after
+      // consolidation can pick up transcript activity the original log
+      // never counted, but raising minutes silently inflates billing.
+      const derivedMinutes = summary.activeMs > 0
         ? Math.max(1, Math.round(summary.activeMs / 60000))
         : log.minutesSpent;
+      const newMinutes = Math.min(derivedMinutes, log.minutesSpent);
 
       // Skip if regenerated description AND minutes are identical (idempotent).
       const descUnchanged = newDesc.trim() === log.description.trim();
