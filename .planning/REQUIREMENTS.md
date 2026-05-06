@@ -122,7 +122,7 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 | MKTG-SEO-07 | Phase 2 | | Pending |
 | MKTG-SEO-08 | Phase 2 | | Pending |
 | MKTG-SEO-09 | Phase 2 | | Pending |
-| MKTG-NAV-01 | Phase 1 + Phase 2 | AAA entry in P1, SEO entry in P2; fully satisfied after both ship | Pending |
+| MKTG-NAV-01 | Phase 1 + Phase 2 | Plan 01-02 shipped AAA half (commits `e532f31` + `ed4bf10`: desktop dropdown + mobile sub-row); SEO half lands in Phase 2 | Partial (AAA done) |
 | MKTG-HOME-01 | Phase 1 + Phase 2 | AAA card in P1, SEO card in P2; fully satisfied after both ship | Pending |
 | MKTG-MAP-01 | Phase 1 + Phase 2 | AAA URL in `staticUrls` in P1, SEO URL in P2; fully satisfied after both ship | Pending |
 | MKTG-CACHE-01 | Phase 1 + Phase 2 | Manual CF purge follow-up surfaced after each W2 deploy | Pending |

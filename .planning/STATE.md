@@ -14,8 +14,8 @@
 ## Current Position
 
 - **Phase:** 1 — AI Advertising Audit page
-- **Plans complete:** 2/5 (01-05 cache-purge note + 01-01 page component & route); next: 01-02 (nav wiring)
-- **Status:** In progress — Phase 1 page itself shipped end-to-end; site-wide AAA wiring (nav / homepage / sitemap) outstanding
+- **Plans complete:** 3/5 (01-05 cache-purge note + 01-01 page component & route + 01-02 nav wiring); next: 01-03 (homepage card)
+- **Status:** In progress — Phase 1 page + nav wiring shipped; homepage card (01-03) and sitemap entry (01-04) outstanding
 - **Progress:** 0/6 phases complete `[░░░░░░]`
 
 ## Performance Metrics
@@ -35,6 +35,9 @@
 | Plan 01-01 duration | ~25 min |
 | Plan 01-01 tasks | 3 |
 | Plan 01-01 files | 1 created (`client/src/pages/ai-advertising-audit.tsx`), 1 modified (`client/src/App.tsx`) |
+| Plan 01-02 duration | ~15 min |
+| Plan 01-02 tasks | 2 |
+| Plan 01-02 files | 1 modified (`client/src/components/PublicNavbar.tsx`) |
 
 ## Accumulated Context
 
@@ -71,16 +74,17 @@
 
 ### Last session
 
+- **2026-05-06** — gsd-executor: shipped Phase 1 Plan 02 (PublicNavbar AAA wiring). Modified `client/src/components/PublicNavbar.tsx`: replaced the 4 placeholder Services-dropdown entries with 2 real ones (`All services` → `/services`, `AI Advertising Audit` → `/services/ai-advertising-audit`); trimmed lucide imports (dropped `Code`, `Rocket`, `Server`; added `Target`); inserted an indented mobile-menu sub-row under the existing Services row using `pl-8` indent + `text-xs uppercase tracking-wide` typography, reusing `cn()` and `isActive()` helpers. Phase 2 will append the SEO entry. 2 tasks, 2 commits (`e532f31` desktop dropdown swap, `ed4bf10` mobile sub-row). TypeScript check passes. Closes the AAA half of MKTG-NAV-01.
 - **2026-05-06** — gsd-executor: shipped Phase 1 Plan 01 (AAA page component + route + SEO useEffect). Created `client/src/pages/ai-advertising-audit.tsx` (full standalone marketing page — hero, 4 benefit cards, 2 pricing tiers + ongoing strip, 3-cell social-proof grid, 7-entry FAQ, final CTA, footer; 8 meta + canonical + Service JSON-LD injected on mount, all tagged `data-page="ai-advertising-audit"` and removed on unmount; document.title restored on unmount); modified `client/src/App.tsx` (one new wouter `<Route>` + one new import). Closes MKTG-AAA-01 through MKTG-AAA-09. 3 tasks, 3 commits (`b217648` skeleton, `65c80ec` content, `ee36125` SEO + route). TypeScript check (`npx tsc --noEmit`) passes; production build skipped due to local iCloud-sync `EUNKNOWN` on `node_modules/.bin/tsx` — not a code issue, will run normally in CI.
 - **2026-05-06** — gsd-executor: shipped Phase 1 Plan 05 (cache-purge follow-up note). Created `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md` documenting the manual Cloudflare purge procedure (URLs: `/sitemap.xml`, `/services`, `/`), wrangler + dashboard options, do-not-paste-tokens guidance, and v2 hand-off for auto-purge. 1 task, 1 commit (`f4e8ec5`).
 - **2026-05-06** — gsd-roadmapper: extracted requirements from PROJECT.md + REQUIREMENTS.md, mapped 38 active v1 REQ-IDs to 6 phases (phase order pre-locked by user), wrote ROADMAP.md, initialized STATE.md, populated REQUIREMENTS.md Traceability section.
 
 ### Next up
 
-- Continue Phase 1 plan suite — plans 02 (nav wiring), 03 (homepage card), 04 (sitemap entry) remain.
+- Continue Phase 1 plan suite — plans 03 (homepage card) and 04 (sitemap entry) remain.
 - After Phase 1 deploys to production: Josh runs the manual purge per `.planning/phases/01-ai-advertising-audit-page/CACHE-PURGE.md`.
 - One PR for Phase 1 (all 5 plans), then `/gsd-transition` to Phase 2.
 - **Note** — when running `npm run build` locally, do it from a non-iCloud-synced clone of the repo. iCloud's placeholder-file behaviour breaks node's `readFileSync` for any binary loaded from `node_modules/.bin/`. CI is unaffected.
 
 ---
-*Updated: 2026-05-06 by gsd-executor (after Phase 1 Plan 01 completion).*
+*Updated: 2026-05-06 by gsd-executor (after Phase 1 Plan 02 completion).*
