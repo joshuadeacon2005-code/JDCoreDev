@@ -13,10 +13,9 @@
 
 ## Current Position
 
-- **Phase:** 1 — AI Advertising Audit page
-- **Plans complete:** 5/5 (01-05 cache-purge + 01-01 page & route + 01-02 nav wiring + 01-03 homepage card + 01-04 sitemap entry)
-- **Status:** Code complete — awaiting `/gsd-verify-phase 1`
-- **Progress:** 0/6 phases complete `[░░░░░░]` (Phase 1 code-complete, verification pending)
+- **Phase:** 2 — SEO Audit page (just shipped). Next up: Phase 3 (Trading-routine architecture discovery).
+- **W2 status:** Both marketing pages live. Phase 1 shipped + refreshed (`beff125`). Phase 2 shipped (`701a33e`).
+- **Progress:** 2/6 phases complete `[██░░░░]` (Phase 1 + Phase 2 done; Phases 3-6 are W3 trading work)
 
 ## Performance Metrics
 

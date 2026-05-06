@@ -113,19 +113,19 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 | MKTG-AAA-07 | Phase 1 | Plan 01-01 (commit `65c80ec`: final CTA → `/contact`) | Complete |
 | MKTG-AAA-08 | Phase 1 | Plan 01-01 (commit `ee36125`: useEffect head-injection w/ data-page cleanup) | Complete |
 | MKTG-AAA-09 | Phase 1 | Plan 01-01 (commit `b217648`: services.tsx primitives composed verbatim) | Complete |
-| MKTG-SEO-01 | Phase 2 | | Pending |
-| MKTG-SEO-02 | Phase 2 | | Pending |
-| MKTG-SEO-03 | Phase 2 | | Pending |
-| MKTG-SEO-04 | Phase 2 | | Pending |
-| MKTG-SEO-05 | Phase 2 | | Pending |
-| MKTG-SEO-06 | Phase 2 | | Pending |
-| MKTG-SEO-07 | Phase 2 | | Pending |
-| MKTG-SEO-08 | Phase 2 | | Pending |
-| MKTG-SEO-09 | Phase 2 | | Pending |
-| MKTG-NAV-01 | Phase 1 + Phase 2 | Plan 01-02 shipped AAA half (commits `e532f31` + `ed4bf10`: desktop dropdown + mobile sub-row); SEO half lands in Phase 2 | Partial (AAA done) |
-| MKTG-HOME-01 | Phase 1 + Phase 2 | Plan 01-03 shipped AAA card (commits `19283e9` + `e640d6f`: lucide import + Targeted-services section); SEO sibling lands in Phase 2 | Partial (AAA done) |
-| MKTG-MAP-01 | Phase 1 + Phase 2 | Plan 01-04 shipped AAA URL in `staticUrls` (commit `60e6238`, priority 0.8 monthly); SEO URL lands in Phase 2 | Partial (AAA done) |
-| MKTG-CACHE-01 | Phase 1 + Phase 2 | Plan 01-05 shipped CACHE-PURGE.md follow-up note (commit `f4e8ec5`); Phase 2 will reuse | Partial (AAA done) |
+| MKTG-SEO-01 | Phase 2 | Phase 2 commit `701a33e`: route registered in App.tsx | Complete |
+| MKTG-SEO-02 | Phase 2 | Phase 2 commit `701a33e`: hero CTA → /contact via wouter Link | Complete |
+| MKTG-SEO-03 | Phase 2 | Phase 2 commit `701a33e`: 4 benefit blocks (Show up, Fix the plumbing, Page speed, Words customers search) cover meta tags / schema / broken links / page speed / on-page / structured data | Complete |
+| MKTG-SEO-04 | Phase 2 | Phase 2 commit `701a33e`: 2-tier pricing (The Audit / Audit + Improvements) + ongoing-monthly strip | Complete |
+| MKTG-SEO-05 | Phase 2 | Phase 2 commit `701a33e`: 3-cell social-proof grid with stat/quote/attribution placeholder structure | Complete |
+| MKTG-SEO-06 | Phase 2 | Phase 2 commit `701a33e`: 7-entry FAQ accordion with Q-01..Q-07 prefix | Complete |
+| MKTG-SEO-07 | Phase 2 | Phase 2 commit `701a33e`: final CTA "Let's see where you're invisible to search" → /contact | Complete |
+| MKTG-SEO-08 | Phase 2 | Phase 2 commit `701a33e`: useEffect head-injection mirroring AAA contract (data-page="seo-audit-and-improvement", Service JSON-LD, provider→#org) | Complete |
+| MKTG-SEO-09 | Phase 2 | Phase 2 commit `701a33e`: visual style mirrors refreshed AAA — NavBar tubelight + sticky logo nav + AnimatedContainer + bordered grid + breadcrumb + numerical hierarchy | Complete |
+| MKTG-NAV-01 | Phase 1 + Phase 2 | Plan 01-02 (AAA) + Phase 2 commit `701a33e` (SEO entry in services array + mobile sub-row, Search icon import) | Complete |
+| MKTG-HOME-01 | Phase 1 + Phase 2 | Plan 01-03 (AAA card) + Phase 2 commit `701a33e` (SEO sibling card replacing Phase 2 placeholder comment) | Complete |
+| MKTG-MAP-01 | Phase 1 + Phase 2 | Plan 01-04 (AAA URL) + Phase 2 commit `701a33e` (SEO URL inserted between AAA and /audits in staticUrls) | Complete |
+| MKTG-CACHE-01 | Phase 1 + Phase 2 | Plan 01-05 CACHE-PURGE.md applies to both Phase 1 and Phase 2 deploys (manual purge of /sitemap.xml, /services, /) | Complete |
 | TRADE-DISC-01 | Phase 3 | | Pending |
 | TRADE-DISC-02 | Phase 3 | Hard-blocks Phases 4, 5, 6 | Pending |
 | TRADE-CAM-01 | Phase 4 | | Pending |
