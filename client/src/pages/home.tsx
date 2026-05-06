@@ -825,6 +825,37 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="py-20 border-t">
+        <div className="max-w-[1400px] mx-auto px-8">
+          <AnimatedContainer className="text-center mb-12">
+            <span className="text-accent font-black italic uppercase tracking-[0.3em] mb-4 text-sm block">// Targeted services</span>
+            <h2 className="text-4xl md:text-6xl font-black tracking-tighter uppercase italic">
+              Specific <span className="text-primary">audits & rebuilds</span>
+            </h2>
+            <p className="text-muted-foreground mt-4 text-lg max-w-2xl mx-auto">
+              Standalone services for businesses who already know what they need fixed.
+            </p>
+          </AnimatedContainer>
+          <AnimatedContainer delay={0.2}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Link href="/services/ai-advertising-audit" className="block border border-border p-8 hover:bg-muted/20 transition-colors group" data-testid="card-home-aaa">
+                <div className="flex items-center gap-3 mb-3">
+                  <Target className="h-5 w-5 text-primary" />
+                  <h3 className="text-xl font-black uppercase italic tracking-tight">AI Advertising Audit</h3>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-6">
+                  A plain-English review of your Google and Meta ads. We find the wasted spend, fix the tracking, and sharpen the creative — so your budget actually pays back.
+                </p>
+                <span className="text-xs font-bold uppercase tracking-widest text-primary inline-flex items-center gap-1 group-hover:gap-2 transition-all">
+                  See the audit <ArrowRight className="h-3 w-3" />
+                </span>
+              </Link>
+              {/* Phase 2 will add the SEO Audit sibling card here */}
+            </div>
+          </AnimatedContainer>
+        </div>
+      </section>
+
       <footer className="bg-card border-t pt-20">
         <div className="max-w-[1400px] mx-auto px-8 md:px-20 text-center mb-20">
           <AnimatedContainer>
