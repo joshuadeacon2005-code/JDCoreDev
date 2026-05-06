@@ -216,23 +216,39 @@ export default function AiAdvertisingAuditPage() {
         </div>
       </nav>
 
+      {/* BREADCRUMB */}
+      <div className="border-b border-border/40 py-3">
+        <div className="max-w-[1400px] mx-auto px-8 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.3em] text-muted-foreground/70">
+          <Link href="/services" className="hover:text-foreground transition-colors" data-testid="breadcrumb-services">Services</Link>
+          <span>/</span>
+          <span className="text-foreground">AI Advertising Audit</span>
+        </div>
+      </div>
+
       {/* SECTION 1 — HERO */}
       <section className="py-20">
         <div className="max-w-[1400px] mx-auto px-8">
-          <AnimatedContainer className="text-center mb-16">
-            <span className="text-accent font-black italic uppercase tracking-[0.3em] mb-4 text-sm block">// AI Advertising Audit</span>
-            <h1 className="text-5xl md:text-7xl font-black text-foreground tracking-tighter uppercase italic mb-6">
-              Make your ad spend <span className="text-primary">actually pay back</span>
-            </h1>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed mb-10">
-              A clear, plain-English review of your Google and Meta ads — what's working, what's wasting money, and exactly what to change. Done by a real human, with AI built into the process so nothing gets missed.
-            </p>
-            <Link href="/contact">
-              <Button size="lg" className="font-black uppercase italic tracking-wider gap-2" data-testid="button-hero-contact">
-                Get in touch <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
-          </AnimatedContainer>
+          <div className="text-center mb-16">
+            <AnimatedContainer delay={0}>
+              <span className="text-muted-foreground/60 font-mono text-[10px] uppercase tracking-[0.4em] mb-3 block">[ HK BUSINESSES · 2026 ]</span>
+              <span className="text-accent font-black italic uppercase tracking-[0.3em] mb-4 text-sm block">// AI Advertising Audit</span>
+              <h1 className="text-5xl md:text-7xl font-black text-foreground tracking-tighter uppercase italic mb-6">
+                Make your ad spend <span className="text-primary">actually pay back</span>
+              </h1>
+            </AnimatedContainer>
+            <AnimatedContainer delay={0.25}>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed mb-10">
+                A clear, plain-English review of your Google and Meta ads — what's working, what's wasting money, and exactly what to change. Done by a real human, with AI built into the process so nothing gets missed.
+              </p>
+            </AnimatedContainer>
+            <AnimatedContainer delay={0.45}>
+              <Link href="/contact">
+                <Button size="lg" className="font-black uppercase italic tracking-wider gap-2" data-testid="button-hero-contact">
+                  Get in touch <ArrowRight className="h-4 w-4" />
+                </Button>
+              </Link>
+            </AnimatedContainer>
+          </div>
         </div>
       </section>
 
@@ -253,9 +269,9 @@ export default function AiAdvertisingAuditPage() {
                 const borderRight  = isLeftCol ? "md:border-r" : "";
                 const borderBottom = isTopRow  ? "border-b"    : "";
                 return (
-                  <div key={b.title} className={`p-8 md:p-10 ${borderRight} ${borderBottom} border-border group hover:bg-muted/30 transition-colors`}>
+                  <div key={b.title} className={`relative p-8 md:p-10 ${borderRight} ${borderBottom} border-border hover:bg-muted/30 transition-colors before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-primary before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-300`}>
                     <div className="flex items-start gap-4">
-                      <span className="text-5xl font-black text-primary/15 italic leading-none">0{index + 1}</span>
+                      <span className="text-7xl md:text-8xl font-mono font-black text-primary/10 italic leading-none tabular-nums">0{index + 1}</span>
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-3">
                           <b.icon className="h-5 w-5 text-primary" />
@@ -309,7 +325,7 @@ export default function AiAdvertisingAuditPage() {
                           <p className="text-sm font-semibold">{row.label}</p>
                           <p className="text-[11px] text-muted-foreground">{row.note}</p>
                         </div>
-                        <span className="text-lg font-black text-primary">{row.price}</span>
+                        <span className="text-xl md:text-2xl font-black text-primary font-mono tabular-nums">{row.price}</span>
                       </div>
                     ))}
                   </div>
@@ -344,9 +360,15 @@ export default function AiAdvertisingAuditPage() {
           <AnimatedContainer delay={0.2}>
             {/* TODO: replace with real testimonials when available */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-border/40 border border-border">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="p-8 bg-background flex items-center justify-center min-h-[140px]">
-                  <p className="text-xs uppercase tracking-widest text-muted-foreground">[Testimonial · placeholder]</p>
+              {[
+                { stat: "[stat]", quote: "[Quote · placeholder]", attribution: "[Name · Company]" },
+                { stat: "[stat]", quote: "[Quote · placeholder]", attribution: "[Name · Company]" },
+                { stat: "[stat]", quote: "[Quote · placeholder]", attribution: "[Name · Company]" },
+              ].map((t, i) => (
+                <div key={i} className="p-8 bg-background flex flex-col justify-between gap-5 min-h-[200px]">
+                  <p className="font-mono text-2xl font-black text-primary/30 italic tabular-nums leading-none">{t.stat}</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{t.quote}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/70 font-mono">{t.attribution}</p>
                 </div>
               ))}
             </div>
@@ -367,7 +389,10 @@ export default function AiAdvertisingAuditPage() {
             <Accordion type="single" collapsible className="w-full">
               {faqs.map((item, idx) => (
                 <AccordionItem key={`q${idx + 1}`} value={`q${idx + 1}`}>
-                  <AccordionTrigger className="text-left font-black uppercase italic tracking-tight text-base">{item.q}</AccordionTrigger>
+                  <AccordionTrigger className="text-left font-black uppercase italic tracking-tight text-base">
+                    <span className="font-mono text-[11px] tracking-[0.2em] text-muted-foreground/70 mr-3 not-italic font-normal">Q-{String(idx + 1).padStart(2, "0")}</span>
+                    {item.q}
+                  </AccordionTrigger>
                   <AccordionContent className="text-sm text-muted-foreground leading-relaxed">{item.a}</AccordionContent>
                 </AccordionItem>
               ))}
