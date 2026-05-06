@@ -280,8 +280,8 @@ leadEngineAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
         // Discovered prospect — dedup, then INSERT.
         const newDomain = normaliseDomain(newLead.website) || normaliseDomain(newLead.domain);
         const dupCheck = await pool.query(
-          `SELECT id FROM leads WHERE LOWER(business_name) = LOWER($1)
-            OR (website IS NOT NULL AND $2 IS NOT NULL AND LOWER(website) = LOWER($2))
+          `SELECT id FROM leads WHERE LOWER(business_name) = LOWER($1::text)
+            OR (website IS NOT NULL AND $2::text IS NOT NULL AND LOWER(website) = LOWER($2::text))
            LIMIT 1`,
           [newLead.name, newLead.website || null]
         );
