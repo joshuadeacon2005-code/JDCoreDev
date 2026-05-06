@@ -3443,13 +3443,15 @@ JD CoreDev System`,
   // These are the auto-generated entries written by the dev-logs ingest endpoint.
   app.get("/api/admin/dev-logs/claude-sessions", requireAdmin, async (req, res, next) => {
     try {
-      const limit = Math.min(parseInt((req.query.limit as string) || "100"), 500);
+      const limit = Math.min(parseInt((req.query.limit as string) || "500"), 1000);
       const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : null;
       const rows = await db
         .select({
           id: maintenanceLogs.id,
           projectId: maintenanceLogs.projectId,
           projectName: projects.name,
+          clientId: projects.clientId,
+          clientName: clients.name,
           logDate: maintenanceLogs.logDate,
           minutesSpent: maintenanceLogs.minutesSpent,
           estimatedCostCents: maintenanceLogs.estimatedCostCents,
@@ -3459,6 +3461,7 @@ JD CoreDev System`,
         })
         .from(maintenanceLogs)
         .innerJoin(projects, eq(maintenanceLogs.projectId, projects.id))
+        .leftJoin(clients, eq(projects.clientId, clients.id))
         .where(
           projectId
             ? and(
@@ -3470,6 +3473,124 @@ JD CoreDev System`,
         .orderBy(desc(maintenanceLogs.createdAt))
         .limit(limit);
       res.json(rows);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Summary across all clients: budget vs cycle usage, broken down per project.
+  // Drives the grouped layout on /admin/dev-logs. Iterates through clients
+  // (small N), reusing getClientDevSummary for each. Adds an "Internal" bucket
+  // (clientId=null) for projects with no client (e.g. JDCoreDev itself).
+  app.get("/api/admin/dev-logs/clients-summary", requireAdmin, async (_req, res, next) => {
+    try {
+      const allClients = await storage.getClients();
+      const summaries: Array<{
+        clientId: number | null;
+        clientName: string;
+        totalMinutes: number;
+        cycleMinutes: number;
+        totalBudgetMinutes: number;
+        cycleSince: string | null;
+        byProject: Array<{
+          projectId: number;
+          projectName: string;
+          totalMinutes: number;
+          cycleMinutes: number;
+          budgetMinutes: number;
+          cycleStart: string | null;
+        }>;
+      }> = [];
+
+      for (const c of allClients) {
+        const s = await storage.getClientDevSummary(c.id);
+        const projectsWithSignal = s.byProject.filter(
+          p => p.totalMinutes > 0 || p.budgetMinutes > 0
+        );
+        if (projectsWithSignal.length === 0) continue;
+        summaries.push({
+          clientId: c.id,
+          clientName: c.name,
+          totalMinutes: s.totalMinutes,
+          cycleMinutes: s.cycleMinutes,
+          totalBudgetMinutes: s.totalBudgetMinutes,
+          cycleSince: s.cycleSince,
+          byProject: projectsWithSignal.map(p => ({
+            projectId: p.projectId,
+            projectName: p.projectName,
+            totalMinutes: p.totalMinutes,
+            cycleMinutes: p.cycleMinutes,
+            budgetMinutes: p.budgetMinutes,
+            cycleStart: (p as any).cycleStart || null,
+          })),
+        });
+      }
+
+      // Internal bucket — projects with no clientId that nonetheless have logs
+      // (e.g. JDCoreDev's own dev work). Aggregate from maintenance_logs +
+      // hosting_terms directly so we don't synthesise a fake client row.
+      const allProjs = await db.select({
+        id: projects.id, name: projects.name, clientId: projects.clientId,
+      }).from(projects);
+      const noClientIds = allProjs.filter(p => p.clientId == null).map(p => p.id);
+
+      if (noClientIds.length > 0) {
+        const internalLogs = await db.select({
+          projectId: maintenanceLogs.projectId,
+          minutesSpent: maintenanceLogs.minutesSpent,
+          logDate: maintenanceLogs.logDate,
+        }).from(maintenanceLogs);
+        const internalTerms = await db.select({
+          projectId: projectHostingTerms.projectId,
+          maintenanceBudgetMinutes: projectHostingTerms.maintenanceBudgetMinutes,
+          currentCycleStartDate: projectHostingTerms.currentCycleStartDate,
+        }).from(projectHostingTerms);
+        const termsByProj = new Map(internalTerms.map(t => [t.projectId, t]));
+
+        const projAgg = new Map<number, {
+          projectId: number; projectName: string;
+          totalMinutes: number; cycleMinutes: number;
+          budgetMinutes: number; cycleStart: string | null;
+        }>();
+        const noClientSet = new Set(noClientIds);
+        const projNameById = new Map(allProjs.map(p => [p.id, p.name]));
+        for (const pid of noClientIds) {
+          const t = termsByProj.get(pid);
+          projAgg.set(pid, {
+            projectId: pid,
+            projectName: projNameById.get(pid) || `Project ${pid}`,
+            totalMinutes: 0, cycleMinutes: 0,
+            budgetMinutes: t?.maintenanceBudgetMinutes || 0,
+            cycleStart: t?.currentCycleStartDate || null,
+          });
+        }
+        for (const log of internalLogs) {
+          if (!noClientSet.has(log.projectId)) continue;
+          const entry = projAgg.get(log.projectId)!;
+          entry.totalMinutes += log.minutesSpent;
+          if (entry.cycleStart && log.logDate && log.logDate >= entry.cycleStart) {
+            entry.cycleMinutes += log.minutesSpent;
+          }
+        }
+
+        const intProjects = Array.from(projAgg.values()).filter(
+          p => p.totalMinutes > 0 || p.budgetMinutes > 0
+        );
+        if (intProjects.length > 0) {
+          const totalMinutes = intProjects.reduce((s, p) => s + p.totalMinutes, 0);
+          const cycleMinutes = intProjects.reduce((s, p) => s + p.cycleMinutes, 0);
+          const totalBudgetMinutes = intProjects.reduce((s, p) => s + p.budgetMinutes, 0);
+          summaries.push({
+            clientId: null,
+            clientName: "Internal / no client",
+            totalMinutes, cycleMinutes, totalBudgetMinutes,
+            cycleSince: null,
+            byProject: intProjects,
+          });
+        }
+      }
+
+      res.json(summaries);
     } catch (error) {
       next(error);
     }

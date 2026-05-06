@@ -2,12 +2,14 @@ import { useEffect, useState, useMemo } from "react";
 import { AdminLayout } from "@/components/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Bot, Clock, DollarSign, FolderKanban } from "lucide-react";
+import { Bot, Clock, FolderKanban, Building2, ChevronDown, ChevronRight } from "lucide-react";
 
 interface ClaudeSessionLog {
   id: number;
   projectId: number;
   projectName: string;
+  clientId: number | null;
+  clientName: string | null;
   logDate: string;
   minutesSpent: number;
   estimatedCostCents: number | null;
@@ -16,22 +18,46 @@ interface ClaudeSessionLog {
   createdAt: string;
 }
 
-interface ProjectOption { id: number; name: string; }
-
-function fmtCents(cents: number | null) {
-  if (!cents && cents !== 0) return "—";
-  return `$${(cents / 100).toFixed(2)}`;
+interface ClientSummary {
+  clientId: number | null;
+  clientName: string;
+  totalMinutes: number;
+  cycleMinutes: number;
+  totalBudgetMinutes: number;
+  cycleSince: string | null;
+  byProject: Array<{
+    projectId: number;
+    projectName: string;
+    totalMinutes: number;
+    cycleMinutes: number;
+    budgetMinutes: number;
+    cycleStart: string | null;
+  }>;
 }
 
-function fmtDateTime(iso: string) {
-  return new Date(iso).toLocaleString();
-}
+function fmtDateTime(iso: string) { return new Date(iso).toLocaleString(); }
 
 function fmtMinutes(m: number) {
   if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60);
   const rem = m % 60;
   return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+
+function pctBar(used: number, budget: number) {
+  if (budget <= 0) return null;
+  const pct = Math.min(100, Math.round((used / budget) * 100));
+  const over = used > budget;
+  const colour = over
+    ? "bg-red-500"
+    : pct >= 80
+      ? "bg-amber-500"
+      : "bg-teal-500";
+  return (
+    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+      <div className={`h-full ${colour} transition-all`} style={{ width: `${pct}%` }} />
+    </div>
+  );
 }
 
 function readProjectIdFromUrl(): number | null {
@@ -45,62 +71,109 @@ function readProjectIdFromUrl(): number | null {
 
 export default function AdminDevLogs() {
   const [logs, setLogs] = useState<ClaudeSessionLog[]>([]);
-  const [projects, setProjects] = useState<ProjectOption[]>([]);
-  const [filterProjectId, setFilterProjectId] = useState<number | null>(readProjectIdFromUrl());
+  const [summary, setSummary] = useState<ClientSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   async function load() {
     setLoading(true);
-    const params = filterProjectId ? `?projectId=${filterProjectId}` : "";
-    const res = await fetch(`/api/admin/dev-logs/claude-sessions${params}`);
-    const data = await res.json();
-    setLogs(Array.isArray(data) ? data : []);
+    const [logsRes, sumRes] = await Promise.all([
+      fetch("/api/admin/dev-logs/claude-sessions").then(r => r.json()),
+      fetch("/api/admin/dev-logs/clients-summary").then(r => r.json()),
+    ]);
+    setLogs(Array.isArray(logsRes) ? logsRes : []);
+    setSummary(Array.isArray(sumRes) ? sumRes : []);
     setLoading(false);
   }
 
-  async function loadProjects() {
-    const res = await fetch("/api/admin/projects");
-    const data = await res.json();
-    if (Array.isArray(data)) {
-      setProjects(data.map((p: any) => ({ id: p.id, name: p.name })));
-    }
-  }
+  useEffect(() => { load(); }, []);
 
-  useEffect(() => { loadProjects(); }, []);
-  useEffect(() => { load(); }, [filterProjectId]);
+  // Honour ?projectId=X deep-link from /admin/projects: auto-expand that
+  // project's section once data arrives.
+  useEffect(() => {
+    if (loading) return;
+    const target = readProjectIdFromUrl();
+    if (!target) return;
+    const log = logs.find(l => l.projectId === target);
+    const ckey = log?.clientId == null ? "__internal__" : String(log?.clientId);
+    if (log) setExpanded(prev => new Set(prev).add(`${ckey}::${target}`));
+  }, [loading, logs]);
+
+  // Group logs: clientId (null → "internal") → projectId → log[]
+  const grouped = useMemo(() => {
+    const byClient = new Map<string, Map<number, ClaudeSessionLog[]>>();
+    for (const log of logs) {
+      const ckey = log.clientId == null ? "__internal__" : String(log.clientId);
+      if (!byClient.has(ckey)) byClient.set(ckey, new Map());
+      const projMap = byClient.get(ckey)!;
+      if (!projMap.has(log.projectId)) projMap.set(log.projectId, []);
+      projMap.get(log.projectId)!.push(log);
+    }
+    return byClient;
+  }, [logs]);
+
+  // Merge summary + grouped logs into a unified render list. A client appears
+  // if it has summary signal (budget or any work) OR any auto-logs.
+  const cards = useMemo(() => {
+    const seenClients = new Set<string>();
+    const out: Array<{ summary: ClientSummary; projectLogs: Map<number, ClaudeSessionLog[]> }> = [];
+    for (const s of summary) {
+      const ckey = s.clientId == null ? "__internal__" : String(s.clientId);
+      seenClients.add(ckey);
+      out.push({ summary: s, projectLogs: grouped.get(ckey) || new Map() });
+    }
+    // Clients/projects with auto-logs but no summary entry (orphan logs):
+    // synthesise a minimal summary so the cards render.
+    for (const [ckey, projMap] of grouped) {
+      if (seenClients.has(ckey)) continue;
+      const sample = Array.from(projMap.values())[0]?.[0];
+      const totalMin = Array.from(projMap.values()).flat().reduce((s, l) => s + l.minutesSpent, 0);
+      out.push({
+        summary: {
+          clientId: sample?.clientId ?? null,
+          clientName: sample?.clientName || "Internal / no client",
+          totalMinutes: totalMin,
+          cycleMinutes: 0,
+          totalBudgetMinutes: 0,
+          cycleSince: null,
+          byProject: Array.from(projMap.entries()).map(([pid, ls]) => ({
+            projectId: pid,
+            projectName: ls[0]?.projectName || `Project ${pid}`,
+            totalMinutes: ls.reduce((s, l) => s + l.minutesSpent, 0),
+            cycleMinutes: 0, budgetMinutes: 0, cycleStart: null,
+          })),
+        },
+        projectLogs: projMap,
+      });
+    }
+    return out;
+  }, [summary, grouped]);
+
+  const toggle = (key: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
 
   const totals = useMemo(() => {
     const minutes = logs.reduce((s, l) => s + l.minutesSpent, 0);
-    const cents = logs.reduce((s, l) => s + (l.estimatedCostCents || 0), 0);
-    return { minutes, cents, count: logs.length };
+    return { minutes, count: logs.length };
   }, [logs]);
 
   return (
     <AdminLayout>
       <div className="space-y-6 p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Bot className="w-6 h-6 text-teal-500" /> Claude Code Sessions
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Auto-logged development sessions from Claude Code. These contribute toward project hosting/development budgets.
-            </p>
-          </div>
-          <select
-            className="bg-background border border-border rounded-md px-3 py-2 text-sm"
-            value={filterProjectId ?? ""}
-            onChange={(e) => setFilterProjectId(e.target.value ? parseInt(e.target.value) : null)}
-            data-testid="select-project-filter"
-          >
-            <option value="">All projects</option>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Bot className="w-6 h-6 text-teal-500" /> Claude Code Sessions
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Auto-logged development sessions from Claude Code. Grouped by client; budget figures are this billing cycle, work shown is all-time per project.
+          </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-xs uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><FolderKanban className="w-3.5 h-3.5" /> Sessions</CardTitle></CardHeader>
             <CardContent><div className="text-2xl font-bold">{totals.count}</div></CardContent>
@@ -109,43 +182,110 @@ export default function AdminDevLogs() {
             <CardHeader className="pb-2"><CardTitle className="text-xs uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Total Time</CardTitle></CardHeader>
             <CardContent><div className="text-2xl font-bold">{fmtMinutes(totals.minutes)}</div></CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-xs uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><DollarSign className="w-3.5 h-3.5" /> Total Cost</CardTitle></CardHeader>
-            <CardContent><div className="text-2xl font-bold">{fmtCents(totals.cents)}</div></CardContent>
-          </Card>
         </div>
 
-        <Card>
-          <CardHeader><CardTitle className="text-base">Recent sessions</CardTitle></CardHeader>
-          <CardContent>
-            {loading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : logs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No Claude Code sessions logged yet. Drop a <code className="px-1 py-0.5 bg-muted rounded text-xs">.jdcd-project</code> file in a project root to start logging.</p>
-            ) : (
-              <div className="space-y-3">
-                {logs.map(log => (
-                  <div key={log.id} className="border border-border rounded-lg p-4 hover-elevate" data-testid={`log-${log.id}`}>
-                    <div className="flex items-start justify-between gap-4 mb-2">
-                      <div>
-                        <div className="font-medium text-sm">{log.projectName}</div>
-                        <div className="text-xs text-muted-foreground">{fmtDateTime(log.createdAt)}</div>
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : cards.length === 0 ? (
+          <Card><CardContent className="p-8">
+            <p className="text-sm text-muted-foreground">No Claude Code sessions logged yet. Drop a <code className="px-1 py-0.5 bg-muted rounded text-xs">.jdcd-project</code> file in a project root to start logging.</p>
+          </CardContent></Card>
+        ) : (
+          <div className="space-y-4">
+            {cards.map(({ summary: s, projectLogs }) => {
+              const ckey = s.clientId == null ? "__internal__" : String(s.clientId);
+              const overBudget = s.totalBudgetMinutes > 0 && s.cycleMinutes > s.totalBudgetMinutes;
+              return (
+                <Card key={ckey} data-testid={`client-${ckey}`}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-muted-foreground" />
+                        <CardTitle className="text-base">{s.clientName}</CardTitle>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge variant={log.logType === "hosting" ? "secondary" : "outline"} className="text-xs">{log.logType}</Badge>
-                        <span className="text-xs font-mono">{fmtMinutes(log.minutesSpent)}</span>
-                        <span className="text-xs font-mono text-teal-600 dark:text-teal-400">{fmtCents(log.estimatedCostCents)}</span>
+                      <div className="text-right text-xs text-muted-foreground space-y-0.5">
+                        {s.totalBudgetMinutes > 0 ? (
+                          <div className={overBudget ? "text-red-500 font-semibold" : ""}>
+                            <span className="font-mono">{fmtMinutes(s.cycleMinutes)}</span>
+                            <span className="mx-1">/</span>
+                            <span className="font-mono">{fmtMinutes(s.totalBudgetMinutes)}</span>
+                            <span className="ml-1">this cycle</span>
+                          </div>
+                        ) : (
+                          <div><span className="font-mono">{fmtMinutes(s.totalMinutes)}</span> all-time · no budget set</div>
+                        )}
+                        {s.cycleSince && (
+                          <div className="text-[10px]">Cycle from {s.cycleSince}</div>
+                        )}
                       </div>
                     </div>
-                    <pre className="text-xs whitespace-pre-wrap font-mono text-muted-foreground bg-muted/30 rounded p-3 overflow-x-auto max-h-64 overflow-y-auto">
+                    {s.totalBudgetMinutes > 0 && (
+                      <div className="mt-2">{pctBar(s.cycleMinutes, s.totalBudgetMinutes)}</div>
+                    )}
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {s.byProject.length === 0 ? (
+                      <p className="text-xs text-muted-foreground italic">No projects with activity.</p>
+                    ) : s.byProject.map(p => {
+                      const pkey = `${ckey}::${p.projectId}`;
+                      const isOpen = expanded.has(pkey);
+                      const projLogs = projectLogs.get(p.projectId) || [];
+                      const projOver = p.budgetMinutes > 0 && p.cycleMinutes > p.budgetMinutes;
+                      return (
+                        <div key={p.projectId} className="border border-border/50 rounded-lg" data-testid={`project-${p.projectId}`}>
+                          <button
+                            type="button"
+                            onClick={() => toggle(pkey)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors rounded-lg"
+                            data-testid={`toggle-project-${p.projectId}`}
+                          >
+                            {isOpen ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                            <span className="font-medium text-sm flex-1 truncate">{p.projectName}</span>
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              {projLogs.length} session{projLogs.length === 1 ? "" : "s"}
+                            </span>
+                            {p.budgetMinutes > 0 ? (
+                              <span className={`text-xs font-mono shrink-0 ${projOver ? "text-red-500 font-semibold" : "text-muted-foreground"}`}>
+                                {fmtMinutes(p.cycleMinutes)} / {fmtMinutes(p.budgetMinutes)}
+                              </span>
+                            ) : (
+                              <span className="text-xs font-mono text-muted-foreground shrink-0">
+                                {fmtMinutes(p.totalMinutes)}
+                              </span>
+                            )}
+                          </button>
+                          {p.budgetMinutes > 0 && (
+                            <div className="px-3 pb-2">{pctBar(p.cycleMinutes, p.budgetMinutes)}</div>
+                          )}
+                          {isOpen && (
+                            <div className="border-t border-border/40 p-3 space-y-2 bg-muted/20">
+                              {projLogs.length === 0 ? (
+                                <p className="text-xs text-muted-foreground italic">No Claude Code sessions for this project.</p>
+                              ) : projLogs.map(log => (
+                                <div key={log.id} className="border border-border/40 rounded p-3 bg-background" data-testid={`log-${log.id}`}>
+                                  <div className="flex items-start justify-between gap-3 mb-1.5">
+                                    <div className="text-[11px] text-muted-foreground">{fmtDateTime(log.createdAt)}</div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <Badge variant={log.logType === "hosting" ? "secondary" : "outline"} className="text-[10px]">{log.logType}</Badge>
+                                      <span className="text-[11px] font-mono">{fmtMinutes(log.minutesSpent)}</span>
+                                    </div>
+                                  </div>
+                                  <pre className="text-[11px] whitespace-pre-wrap font-mono text-muted-foreground bg-muted/30 rounded p-2 overflow-x-auto max-h-56 overflow-y-auto">
 {log.description}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                                  </pre>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </div>
     </AdminLayout>
   );
