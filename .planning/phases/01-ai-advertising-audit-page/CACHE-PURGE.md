@@ -4,7 +4,25 @@
 **When to run:** AFTER Phase 1 has deployed to Railway and the new route is reachable on `https://www.jdcoredev.com/services/ai-advertising-audit`.
 **Mode:** MANUAL ONLY. Auto-purge is explicitly out of scope per PROJECT.md Constraints — deferred to v2.
 
-## Why
+## Update — 2026-05-06: purge is NOT actually needed
+
+Empirical check after the 2026-05-06 deploy: both `/` and `/sitemap.xml`
+return `cf-cache-status: DYNAMIC`, meaning Cloudflare is configured to
+**bypass cache** for HTML on this zone — every request hits Railway origin.
+The sitemap already shows both new URLs without purging. Whoever set up the
+CF zone configured a sensible "no-cache HTML / cache static assets" rule.
+
+The procedure below is preserved for audit / completeness, but **skip it on
+future W2 deploys unless you've changed the CF cache rule**. To verify:
+```
+curl -sI https://www.jdcoredev.com/ | grep -i cf-cache-status
+curl -sI https://www.jdcoredev.com/sitemap.xml | grep -i cf-cache-status
+```
+If both return `DYNAMIC`, no purge needed.
+
+---
+
+## Why (original assumption — superseded above)
 
 JDCoreDev is hosted on Railway with Cloudflare in front. Cloudflare edge cache may continue serving stale responses for these URLs until invalidated:
 

@@ -75,8 +75,26 @@ Architecture not yet mapped. Follow existing patterns found in the codebase.
 <!-- GSD:skills-start source:skills/ -->
 ## Project Skills
 
-No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, `.github/skills/`, or `.codex/skills/` with a `SKILL.md` index file.
+Project-level Claude Code skills live at `.claude/skills/<name>/SKILL.md`. See `.claude/skills/README.md` for the index. Currently shipped:
+
+- `camoufox-fetch/` — stealth-fetch primitive (Phase 4 v1; calls `POST /api/trader/scrape`)
+- `autohedge-director/`, `autohedge-quant/`, `autohedge-risk/`, `autohedge-execution/` — AutoHedge agent patterns as a 4-step pipeline (Phase 6)
+
+Skills are prompt-only markdown by default. Where server-side state/secrets/auth are needed, the skill is paired with a thin Express endpoint behind `x-jdcd-agent-key` (same pattern as `trader-agent` / `predictor-agent`).
 <!-- GSD:skills-end -->
+
+## W2 + W3 Phase Status (snapshot — see `.planning/STATE.md` for live)
+
+| Phase | Status | Notes |
+|---|---|---|
+| W2.1 — AI Advertising Audit page | Live | `/services/ai-advertising-audit` |
+| W2.2 — SEO Audit page | Live | `/services/seo-audit-and-improvement` |
+| W3.3 — Trading-routine architecture discovery | Shipped | `docs/trading-routine-architecture.md` |
+| W3.4 — Camoufox stealth-fetch | v1 live (plain backend); v2 (playwright/scrapingbee) deferred | `server/scrape-agent.ts` + `.claude/skills/camoufox-fetch/` |
+| W3.5 — Fincept | **Blocked** on Fincept account + `FINCEPT_API_KEY` Railway env | — |
+| W3.6 — AutoHedge skills | Shipped (4 skills + README); routine-prompt wiring is user-action | See `docs/ROUTINE_PROMPT_TRADER_AUTOHEDGE.md` for 3 wiring options |
+
+**Cron schedules disabled** — both `JDCoreDev Trader` (`trig_01RdmE8PHaQyfruhHQeheDDb`) and `JDCoreDev Predictor` (`trig_01Y8JJDwmLXCBmfzaUjBF9jN`) RemoteTrigger entries are `enabled: false`. Routines fire manually only. To re-enable: `claude.ai/code/routines` or `RemoteTrigger.update` with `enabled: true`.
 
 <!-- GSD:workflow-start source:GSD defaults -->
 ## GSD Workflow Enforcement
