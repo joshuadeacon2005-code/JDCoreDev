@@ -41,7 +41,8 @@ import {
   Stethoscope,
   HardHat,
   GraduationCap,
-  ChevronRight
+  ChevronRight,
+  Target,
 } from "lucide-react";
 
 const navItems = [
