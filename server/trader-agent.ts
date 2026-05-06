@@ -93,27 +93,32 @@ traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
       alpacaReq(keys, "/v2/positions").catch(() => []),
     ]);
 
+    // Filter ALL learning surfaces by isPaper — the routine must never learn
+    // from the other mode's history (different psychology, sizing, stops).
     const recentRuns = await pool.query(`
       SELECT id, logged_at, decision_source, mode, risk, thesis, decisions_json,
              positions_json, executed_status, score, pass
       FROM trader_pipelines
+      WHERE is_paper = $1
       ORDER BY logged_at DESC
       LIMIT 30
-    `);
+    `, [isPaper]);
 
     const recentTrades = await pool.query(`
       SELECT id, symbol, side, qty, notional, price, pnl, mode, catalyst_class, strategy_profile, logged_at, executed_at
       FROM trader_trades
+      WHERE is_paper = $1
       ORDER BY logged_at DESC
       LIMIT 60
-    `);
+    `, [isPaper]);
 
     const equityHistory = await pool.query(`
       SELECT logged_at, equity
       FROM trader_snapshots
       WHERE logged_at > NOW() - INTERVAL '7 days'
+        AND is_paper = $1
       ORDER BY logged_at ASC
-    `);
+    `, [isPaper]);
 
     // Reflection memory: last N reflections + trades that closed but haven't
     // been reflected on yet + hit-rate-by-catalyst aggregates.
@@ -121,9 +126,10 @@ traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
       SELECT id, ticker, closed_at, hold_days, pnl_usd, pnl_pct,
              catalyst_class, strategy_profile, reflection, what_worked, what_didnt, next_time
       FROM trader_reflections
+      WHERE is_paper = $1
       ORDER BY created_at DESC
       LIMIT 10
-    `);
+    `, [isPaper]);
 
     const tradesNeedingReflection = await pool.query(`
       SELECT t.id, t.symbol, t.side, t.qty, t.notional, t.price, t.pnl,
@@ -131,11 +137,12 @@ traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
       FROM trader_trades t
       LEFT JOIN trader_reflections r ON r.trade_id = t.id
       WHERE t.pnl IS NOT NULL
+        AND t.is_paper = $1
         AND t.logged_at > NOW() - INTERVAL '30 days'
         AND r.id IS NULL
       ORDER BY t.logged_at DESC
       LIMIT 20
-    `);
+    `, [isPaper]);
 
     const catalystHitRate = await pool.query(`
       SELECT catalyst_class,
@@ -145,9 +152,10 @@ traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
              ROUND(SUM(pnl_usd)::numeric, 2)                 AS total_pnl_usd
       FROM trader_reflections
       WHERE catalyst_class IS NOT NULL
+        AND is_paper = $1
       GROUP BY catalyst_class
       ORDER BY total_pnl_usd DESC NULLS LAST
-    `);
+    `, [isPaper]);
 
     const equityNow = parseFloat(account?.equity || "0");
     const drawdown7dPct = await compute7dDrawdownPct(equityNow);

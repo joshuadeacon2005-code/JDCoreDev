@@ -879,29 +879,68 @@ traderRouter.get('/insider-trades', async (req, res) => {
   }
 });
 
+// Resolve a mode filter from the request query.
+// Accepts ?mode=paper | ?mode=live | ?mode=all (defaults to current Alpaca mode).
+async function resolveModeFilter(req: any): Promise<{ isPaper: boolean | null }> {
+  const raw = (req.query?.mode || '').toString().toLowerCase();
+  if (raw === 'paper') return { isPaper: true };
+  if (raw === 'live')  return { isPaper: false };
+  if (raw === 'all')   return { isPaper: null };
+  // Default: current active mode.
+  const dbPaper = await getSetting('alpaca_paper');
+  const isPaper = dbPaper !== null ? dbPaper !== 'false' : process.env.CRON_ALPACA_PAPER !== 'false';
+  return { isPaper };
+}
+
 traderRouter.get('/history', async (req, res) => {
   try {
     const type = req.query.type as string || 'trades';
     const days = parseInt(req.query.days as string || '30');
+    const { isPaper } = await resolveModeFilter(req);
+    const modeWhere = isPaper === null ? '' : 'WHERE is_paper = $1';
+    const modeParams: any[] = isPaper === null ? [] : [isPaper];
+
     switch (type) {
       case 'trades': {
         const limit = parseInt(req.query.limit as string || '500');
+        const params = [...modeParams, limit];
         const r = await pool.query(
-          `SELECT *, COALESCE(executed_at, logged_at) AS executed_at FROM trader_trades ORDER BY COALESCE(executed_at, logged_at) DESC LIMIT $1`,
-          [limit]
+          `SELECT *, COALESCE(executed_at, logged_at) AS executed_at
+             FROM trader_trades ${modeWhere}
+             ORDER BY COALESCE(executed_at, logged_at) DESC LIMIT $${params.length}`,
+          params
         );
         return res.json(r.rows);
       }
       case 'snapshots': {
-        const r = await pool.query('SELECT * FROM trader_snapshots WHERE logged_at > NOW()-INTERVAL \'1 day\'*$1 ORDER BY logged_at ASC', [days]);
+        const params = isPaper === null ? [days] : [isPaper, days];
+        const dayIdx = params.length;
+        const r = await pool.query(
+          `SELECT * FROM trader_snapshots
+             WHERE logged_at > NOW()-INTERVAL '1 day'*$${dayIdx}
+             ${isPaper === null ? '' : 'AND is_paper = $1'}
+             ORDER BY logged_at ASC`,
+          params
+        );
         return res.json(r.rows);
       }
       case 'pipelines': {
-        const r = await pool.query('SELECT * FROM trader_pipelines ORDER BY logged_at DESC LIMIT 50');
+        const r = await pool.query(
+          `SELECT * FROM trader_pipelines ${modeWhere}
+             ORDER BY logged_at DESC LIMIT 50`,
+          modeParams
+        );
         return res.json(r.rows);
       }
       case 'logs': {
-        const r = await pool.query('SELECT * FROM trader_logs ORDER BY logged_at DESC LIMIT 200');
+        // Logs may not all have is_paper tagged (legacy + cross-mode dispatch logs).
+        // When filtering by mode, include rows where is_paper IS NULL OR matches.
+        const r = isPaper === null
+          ? await pool.query(`SELECT * FROM trader_logs ORDER BY logged_at DESC LIMIT 200`)
+          : await pool.query(
+              `SELECT * FROM trader_logs WHERE is_paper IS NULL OR is_paper = $1 ORDER BY logged_at DESC LIMIT 200`,
+              [isPaper]
+            );
         return res.json(r.rows);
       }
       default: return res.status(400).json({ error: 'unknown type' });
@@ -1017,14 +1056,22 @@ traderRouter.post('/sync-pnl', async (_req, res) => {
   }
 });
 
-traderRouter.get('/performance', async (_req, res) => {
+traderRouter.get('/performance', async (req, res) => {
   try {
+    const { isPaper } = await resolveModeFilter(req);
+    const where = isPaper === null ? '' : 'WHERE is_paper = $1';
+    const params: any[] = isPaper === null ? [] : [isPaper];
     const [trades, snapshots, pipelines] = await Promise.all([
-      pool.query('SELECT * FROM trader_trades ORDER BY logged_at DESC LIMIT 200'),
-      pool.query('SELECT * FROM trader_snapshots ORDER BY logged_at ASC'),
-      pool.query('SELECT * FROM trader_pipelines ORDER BY logged_at DESC LIMIT 100'),
+      pool.query(`SELECT * FROM trader_trades    ${where} ORDER BY logged_at DESC LIMIT 200`, params),
+      pool.query(`SELECT * FROM trader_snapshots ${where} ORDER BY logged_at ASC`,            params),
+      pool.query(`SELECT * FROM trader_pipelines ${where} ORDER BY logged_at DESC LIMIT 100`, params),
     ]);
-    res.json({ trades: trades.rows, snapshots: snapshots.rows, pipelines: pipelines.rows });
+    res.json({
+      mode:      isPaper === null ? 'all' : (isPaper ? 'paper' : 'live'),
+      trades:    trades.rows,
+      snapshots: snapshots.rows,
+      pipelines: pipelines.rows,
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
