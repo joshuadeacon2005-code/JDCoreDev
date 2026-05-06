@@ -4,15 +4,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Menu, MenuItem, HoveredLink } from "@/components/ui/navbar-menu";
-import { Code, Layers, Rocket, Server, Menu as MenuIcon, X } from "lucide-react";
+import { Layers, Target, Menu as MenuIcon, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logoImage from "@assets/JDCOREDEV_LOGO40x86_(86_x_40_cm)_1768475782151-BEa_X509_1776312718936.png";
 
 const services = [
-  { href: "/services", label: "Custom Development", icon: Code },
-  { href: "/services", label: "Technical Consulting", icon: Layers },
-  { href: "/services", label: "MVP Development", icon: Rocket },
-  { href: "/services", label: "Managed Hosting", icon: Server },
+  { href: "/services",                          label: "All services",         icon: Layers },
+  { href: "/services/ai-advertising-audit",     label: "AI Advertising Audit", icon: Target },
 ];
 
 export function PublicNavbar() {
