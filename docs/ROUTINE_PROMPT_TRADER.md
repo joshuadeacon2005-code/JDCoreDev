@@ -87,23 +87,36 @@ For each candidate (max 5 surfaced; **propose at most 2 buys**), run a four-agen
 
 1. **Analyst** — bull case. What's the catalyst, what's the asymmetry, what's the timeline? Cross-reference at minimum 2 sources.
 2. **Contrarian** — actively searches for and surfaces the bear case. What does the short side know? What's the tape saying? Has insider selling offset the buying? Is the catalyst already priced in? **The contrarian must search beyond the analyst's sources.**
-3. **Risk** — sizing, days-to-catalyst, liquidity (avg daily volume × price), correlation with existing positions, earnings-window check. Computes notional given `maxPositionPct` and `currentRisk`.
+3. **Risk** — sizing, days-to-catalyst, liquidity (avg daily volume × price), correlation with existing positions, earnings-window check. Computes notional given `maxPositionPct` and `currentRisk`. **Output discipline:** read `.claude/skills/autohedge-risk/SKILL.md` and produce its JSON output verbatim — entry, stop, target, position_size_shares (integer), and risk_reward_ratio. Every field is a NUMBER, never a phrase like "moderate size". The drawdown circuit-breaker rules in that SKILL.md apply: at `drawdown7dPct < -10` the Risk role halves per-trade %; at `-15` it returns `decision: "PASS"` and the Judge accepts the halt without debate.
 4. **Judge** — weighs the analyst vs contrarian on evidence quality (not headline count). Outputs the final verdict: `buy`, `sell`, `hold`, or `skip`.
 
 ### Step 5. Build decisions and POST
 **Cap: 2 buys per fire.** A run with 1 high-conviction buy is better than 3 shallow buys. Sells/holds are unlimited (apply to existing positions).
 
-Build the request:
+Build the request. For every `buy` decision, format it via `.claude/skills/autohedge-execution/SKILL.md` — the Execution skill packages the council's verdict + Risk's numbers into the canonical order payload and enforces Paper-by-default. For `sell` and `hold` decisions on existing positions, use the simpler shape (no AutoHedge Execution needed):
+
 ```json
 {
   "thesis": "<2–3 sentences: what theme connects today's actions, where you saw the most edge, anything unusual in market signals>",
   "decisions": [
-    { "action": "buy",  "symbol": "XYZ", "notional": 75, "rationale": "Phase 2 readout in 18 days, prior Phase 1 hit primary endpoint, 2 funds in last 13F filing window, $2.1B mcap.", "earnings_aware": false },
-    { "action": "sell", "symbol": "ABC", "qty": 4,                "rationale": "Hit +18% take-profit." },
-    { "action": "hold", "symbol": "AMZN",                          "rationale": "Grandfathered mega-cap. Thesis intact, not at stop/take." }
+    /* New buys: each one is the AutoHedge Execution output object,
+       with fields ticker, side, qty (Risk.position_size_shares),
+       limit_price, stop_loss, take_profit, paper_or_live, etc. */
+    {
+      "ticker": "XYZ", "side": "buy", "qty": 47, "order_type": "limit",
+      "limit_price": 18.30, "stop_loss": 16.95, "take_profit": 22.50,
+      "paper_or_live": "paper", "thesis": "Phase 2 readout in 18 days...",
+      "edge_score": 0.62, "risk_reward_ratio": 3.1,
+      "drawdown_circuit_state": "normal", "decision_source": "agent-routine"
+    },
+    /* Sells/holds on existing positions stay simple — no AutoHedge needed: */
+    { "action": "sell", "symbol": "ABC", "qty": 4, "rationale": "Hit +18% TP." },
+    { "action": "hold", "symbol": "AMZN",          "rationale": "Grandfathered." }
   ]
 }
 ```
+
+The server-side `/api/trader/agent/decisions` endpoint already accepts this shape — see `server/trader-agent.ts:191-201` for the validated decision schema.
 
 POST via Bash + curl (WebFetch is GET-only):
 ```
