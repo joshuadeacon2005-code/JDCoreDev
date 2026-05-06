@@ -893,17 +893,17 @@ ${rows.length === 0
   // ── End External Leads Import API ─────────────────────────────────────────
 
   // Claude Trader API routes
-  app.use("/api/trader", traderRouter);
-  // Agent-routine endpoints (called by an Anthropic-hosted scheduled routine
-  // — replaces the legacy server-side cron + Claude API pipeline).
+  // Agent-routine endpoints first (gated by x-jdcd-agent-key inside the router).
+  // These must be registered BEFORE the parent /api/trader mount so requireAdmin
+  // doesn't block routine fires.
   app.use("/api/trader/agent", traderAgentRouter);
+  // Admin-only trader endpoints (history, settings, alpaca proxies, chat, etc.).
+  app.use("/api/trader", requireAdmin, traderRouter);
   initTrader().catch(e => console.error('[trader] init error:', e));
 
-  // Claude Predictor API routes
-  app.use("/api/predictor", predictorRouter);
-  // Agent-routine endpoints (called by an Anthropic-hosted scheduled routine
-  // — replaces the legacy server-side cron + Claude API pipeline).
+  // Claude Predictor API routes — same pattern as trader.
   app.use("/api/predictor/agent", predictorAgentRouter);
+  app.use("/api/predictor", requireAdmin, predictorRouter);
   initPredictor().catch(e => console.error('[predictor] init error:', e));
 
   // ── Automation Master Control ─────────────────────────────────────────────
