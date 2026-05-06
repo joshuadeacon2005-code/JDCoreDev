@@ -70,6 +70,56 @@ const DEV_BETS_MIGRATION = [
   {id:"poly-will-bitcoin-reach-80k-in-april-2026-1776592974960",market_ticker:"will-bitcoin-reach-80k-in-april-2026",market_title:"Bitcoin reach $80K in April",side:"yes",contracts:10,price:0.325,cost:3.25,confidence:0.7,edge:0.125,council_verdict:"BET_YES",status:"failed",order_id:null,platform:"polymarket",logged_at:"2026-04-19 10:02:54.961+00"},
 ];
 
+// Backfill missing market_title (and close_time) for Kalshi bets by querying
+// the Kalshi public API. Runs at startup (capped) and on every Kalshi sync.
+// Idempotent — only updates rows where market_title is null/empty/= ticker.
+export async function backfillKalshiTitles(limit = 50): Promise<{ updated: number; checked: number }> {
+  const summary = { updated: 0, checked: 0 };
+  try {
+    const r = await pool.query(
+      `SELECT id, market_ticker, market_title, close_time
+         FROM predictor_bets
+        WHERE platform = 'kalshi'
+          AND (market_title IS NULL OR market_title = '' OR market_title = market_ticker)
+        ORDER BY logged_at DESC
+        LIMIT $1`,
+      [limit]
+    );
+    for (const bet of r.rows) {
+      summary.checked++;
+      try {
+        const mkt = (await kalshiPublicReq(`/markets/${bet.market_ticker}`))?.market;
+        const title = (mkt?.title || mkt?.subtitle || mkt?.yes_sub_title || "").toString().trim();
+        const ct = mkt?.close_time || mkt?.expiration_time || null;
+        const updates: string[] = [];
+        const params: any[] = [];
+        if (title && (!bet.market_title || bet.market_title === bet.market_ticker)) {
+          params.push(title.slice(0, 500));
+          updates.push(`market_title = $${params.length}`);
+        }
+        if (ct && !bet.close_time) {
+          params.push(ct);
+          updates.push(`close_time = $${params.length}`);
+        }
+        if (updates.length > 0) {
+          params.push(bet.id);
+          await pool.query(
+            `UPDATE predictor_bets SET ${updates.join(', ')} WHERE id = $${params.length}`,
+            params
+          );
+          summary.updated++;
+        }
+      } catch {}
+    }
+    if (summary.updated > 0) {
+      console.log(`[predictor] backfillKalshiTitles: updated ${summary.updated}/${summary.checked}`);
+    }
+  } catch (e: any) {
+    console.warn(`[predictor] backfillKalshiTitles error: ${e.message}`);
+  }
+  return summary;
+}
+
 async function importDevBetsOnce() {
   try {
     let imported = 0;
@@ -175,6 +225,10 @@ async function initPredictorTables() {
 
   // One-time migration: import dev bets that don't exist here yet
   await importDevBetsOnce();
+
+  // Best-effort startup backfill of missing market_title — runs in background,
+  // doesn't block init. Capped at 50 lookups per boot to keep startup fast.
+  setTimeout(() => { backfillKalshiTitles(50).catch(() => {}); }, 5000);
 
   // Default settings
   const defaults: [string, string][] = [
@@ -1269,6 +1323,18 @@ predictorRouter.get("/runs", async (_req, res) => {
   }
 });
 
+// Manual backfill endpoint — fills missing market_title for up to N bets.
+// Useful when the routine placed bets via a path that didn't capture titles.
+predictorRouter.post("/backfill-titles", async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.body?.limit) || 200, 500);
+    const out = await backfillKalshiTitles(limit);
+    res.json(out);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Sync order statuses from Kalshi — reconciles DB with live Kalshi state
 predictorRouter.post("/sync-orders", async (_req, res) => {
   try {
@@ -1387,17 +1453,36 @@ predictorRouter.post("/sync-orders", async (_req, res) => {
     }
 
     // 6. Backfill close_time for active bets that are missing it
+    // Backfill close_time AND market_title for bets where either is missing
+    // or where market_title equals the ticker (lookup previously failed).
     try {
-      const noClose = await pool.query(
-        `SELECT id, market_ticker FROM predictor_bets
-         WHERE close_time IS NULL AND status NOT IN ('cancelled','canceled','failed','settled')`
+      const needsFill = await pool.query(
+        `SELECT id, market_ticker, market_title, close_time FROM predictor_bets
+         WHERE platform = 'kalshi'
+           AND status NOT IN ('cancelled','canceled','failed','settled')
+           AND (close_time IS NULL OR market_title IS NULL OR market_title = market_ticker OR market_title = '')`
       );
-      for (const bet of noClose.rows) {
+      for (const bet of needsFill.rows) {
         try {
           const mkt = (await kalshiPublicReq(`/markets/${bet.market_ticker}`))?.market;
           const ct = mkt?.close_time || mkt?.expiration_time || null;
-          if (ct) {
-            await pool.query(`UPDATE predictor_bets SET close_time = $1 WHERE id = $2`, [ct, bet.id]);
+          const title = (mkt?.title || mkt?.subtitle || mkt?.yes_sub_title || "").toString().trim();
+          const updates: string[] = [];
+          const params: any[] = [];
+          if (ct && !bet.close_time) {
+            params.push(ct);
+            updates.push(`close_time = $${params.length}`);
+          }
+          if (title && (!bet.market_title || bet.market_title === bet.market_ticker)) {
+            params.push(title.slice(0, 500));
+            updates.push(`market_title = $${params.length}`);
+          }
+          if (updates.length > 0) {
+            params.push(bet.id);
+            await pool.query(
+              `UPDATE predictor_bets SET ${updates.join(', ')} WHERE id = $${params.length}`,
+              params
+            );
           }
         } catch {}
       }
