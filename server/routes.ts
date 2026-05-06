@@ -628,8 +628,6 @@ ${rows.length === 0
   })();
 
   // Lead engine API routes (auth: x-engine-secret header per-route via requireSecret).
-  // requireAdmin was tried here but fails — this mount runs before passport.initialize
-  // so req.isAuthenticated is undefined. The router's own requireSecret is sufficient.
   app.use("/api/lead-engine", leadEngineRouter);
   // Agent-routine endpoints (called by an Anthropic-hosted scheduled routine
   // — replaces the legacy /run server-side Anthropic API pipeline).
@@ -638,6 +636,33 @@ ${rows.length === 0
   // Business expense tracker — Gmail scanner routine + admin CRUD.
   app.use("/api/expenses", expensesRouter);
   app.use("/api/expenses/agent", expensesAgentRouter);
+
+  // Session + Passport must be initialised before any requireAdmin route.
+  // Previously this block lived ~350 lines lower, causing req.isAuthenticated
+  // to be undefined on all routes registered above it.
+  const PgSession = connectPgSimple(session);
+  const sessionStore = new PgSession({
+    pool: pool,
+    tableName: "user_sessions",
+    createTableIfMissing: true,
+    pruneSessionInterval: 60 * 60,
+  });
+  app.use(
+    session({
+      secret: process.env.SESSION_SECRET!,
+      resave: false,
+      saveUninitialized: false,
+      store: sessionStore,
+      cookie: {
+        secure: process.env.NODE_ENV === "production",
+        httpOnly: true,
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      },
+    })
+  );
+  app.use(passport.initialize());
+  app.use(passport.session());
 
   // Social trader signal ingestion — admin-only review queue for posts
   // from tracked Instagram (etc.) traders. Auto-scraping deferred; manual
@@ -981,34 +1006,6 @@ ${rows.length === 0
 
   // Apply general rate limiting to all API routes
   app.use("/api", generalApiLimiter);
-
-  // PostgreSQL session store with 7-day expiration
-  const PgSession = connectPgSimple(session);
-  const sessionStore = new PgSession({
-    pool: pool,
-    tableName: "user_sessions",
-    createTableIfMissing: true,
-    pruneSessionInterval: 60 * 60, // Prune expired sessions every hour
-  });
-
-  app.use(
-    session({
-      secret: process.env.SESSION_SECRET!,
-      resave: false,
-      saveUninitialized: false,
-      store: sessionStore,
-      cookie: {
-        secure: process.env.NODE_ENV === "production",
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      },
-    })
-  );
-
-  // Passport setup
-  app.use(passport.initialize());
-  app.use(passport.session());
 
   passport.use(
     new LocalStrategy(
