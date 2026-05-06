@@ -34,6 +34,7 @@ import { socialSignalsRouter } from "./social-signals";
 import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
+import { scrapeAgentRouter } from "./scrape-agent";
 import { predictorAgentRouter, firePredictorRoutine } from "./predictor-agent";
 import { devLogsIngestRouter } from "./dev-logs-ingest";
 import { z } from "zod";
@@ -897,6 +898,10 @@ ${rows.length === 0
   // These must be registered BEFORE the parent /api/trader mount so requireAdmin
   // doesn't block routine fires.
   app.use("/api/trader/agent", traderAgentRouter);
+  // Stealth-scrape primitive — Phase 4 of W3 cleanup. Same x-jdcd-agent-key gate
+  // as the agent routers. See docs/trading-routine-architecture.md and
+  // .claude/skills/camoufox-fetch/SKILL.md.
+  app.use("/api/trader/scrape", scrapeAgentRouter);
   // Admin-only trader endpoints (history, settings, alpaca proxies, chat, etc.).
   app.use("/api/trader", requireAdmin, traderRouter);
   initTrader().catch(e => console.error('[trader] init error:', e));
