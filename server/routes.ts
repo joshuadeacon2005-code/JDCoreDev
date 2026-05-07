@@ -35,6 +35,7 @@ import { traderRouter, initTrader } from "./trader";
 import { traderAgentRouter } from "./trader-agent";
 import { predictorRouter, initPredictor } from "./predictor";
 import { scrapeAgentRouter } from "./scrape-agent";
+import { financialDataAgentRouter } from "./financial-data-agent";
 import { predictorAgentRouter, firePredictorRoutine } from "./predictor-agent";
 import { devLogsIngestRouter } from "./dev-logs-ingest";
 import { z } from "zod";
@@ -927,6 +928,10 @@ ${rows.length === 0
   // as the agent routers. See docs/trading-routine-architecture.md and
   // .claude/skills/camoufox-fetch/SKILL.md.
   app.use("/api/trader/scrape", scrapeAgentRouter);
+  // External financial data layer (Yahoo + AlphaVantage + FRED) — Phase 5 of W3. Same
+  // x-jdcd-agent-key gate. See docs/trading-routine-architecture.md and
+  // .claude/skills/financial-data/SKILL.md.
+  app.use("/api/trader/data", financialDataAgentRouter);
   // Admin-only trader endpoints (history, settings, alpaca proxies, chat, etc.).
   app.use("/api/trader", requireAdmin, traderRouter);
   initTrader().catch(e => console.error('[trader] init error:', e));

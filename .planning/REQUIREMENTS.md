@@ -52,14 +52,14 @@ Source: implementation brief v3 (narrow W2 scope). All requirements below are v1
 - [ ] **TRADE-CAM-04**: Proxy config via env vars; no hardcoded credentials anywhere
 - [ ] **TRADE-CAM-05**: Install location and invocation method documented (skill name + path, or MCP server entry)
 
-**Fincept financial data layer**
+**External financial data layer (Yahoo + AlphaVantage + FRED)**
 
-- [ ] **TRADE-FIN-01**: Fincept layer installed using the same pattern from TRADE-DISC-02
-- [ ] **TRADE-FIN-02**: Typed accessors exposed for fundamentals (income statement, balance sheet, cash flow), macro indicators (FRED, IMF), news with sentiment, and any technical indicators not already covered
-- [ ] **TRADE-FIN-03**: Responses pre-filtered/structured before entering routine context; each block tagged with source for auditability
-- [ ] **TRADE-FIN-04**: Config toggle (env var, skill config, or routine flag) so Fincept can be switched on/off per run; default ON for Paper, opt-in for Live
-- [ ] **TRADE-FIN-05**: A test routine run on a known ticker shows Fincept-sourced fundamentals or macro context in research output with source attribution intact
-- [ ] **TRADE-FIN-06**: Integration documented in `docs/fincept-integration.md`
+- [x] **TRADE-FIN-01**: External financial data layer installed using the same pattern from TRADE-DISC-02 — project-level skill + thin Express endpoint behind `x-jdcd-agent-key` (covers Yahoo for fundamentals/prices via `yahoo-finance2`, AlphaVantage for news+sentiment, FRED for US macro)
+- [x] **TRADE-FIN-02**: Typed accessors exposed for Yahoo-sourced fundamentals (income statement, balance sheet, cash flow, financial data, default key statistics via `quoteSummary`), AlphaVantage news with sentiment (via `NEWS_SENTIMENT` endpoint), Yahoo end-of-day prices (fallback price source via `historical`), FRED macro time-series (rates, CPI, employment, M2, GDP, etc.), and FRED series search for looking up unknown series IDs
+- [x] **TRADE-FIN-03**: Responses pre-filtered/structured before entering routine context; each block tagged with `provider` (`yahoo`, `alphavantage`, or `fred`) and `dataset` slug so source attribution survives into research output
+- [x] **TRADE-FIN-04**: Config toggle (env var, skill config, or routine flag) so the external data layer can be switched on/off per run via a single `EXTERNAL_DATA_ENABLED` toggle that gates all providers; default ON for Paper, opt-in for Live
+- [ ] **TRADE-FIN-05**: A test routine run on a known ticker shows Yahoo-sourced fundamentals, AlphaVantage-sourced news, or FRED-sourced macro context in research output with provider+dataset attribution intact (code wired; runtime test pending user provisioning ALPHA_VANTAGE_API_KEY + FRED_API_KEY on Railway — yahoo-finance2 needs no key)
+- [x] **TRADE-FIN-06**: Integration documented in `docs/financial-data-integration.md` (covers Yahoo, AlphaVantage, and FRED)
 
 **AutoHedge agent patterns**
 
@@ -73,8 +73,8 @@ Source: implementation brief v3 (narrow W2 scope). All requirements below are v1
 
 **W3 standing constraints**
 
-- [ ] **TRADE-MODE-01**: Every new code path defaults to Paper mode
-- [ ] **TRADE-MODE-02**: No path touches Live without an explicit confirmation gate visible in the routine prompt
+- [x] **TRADE-MODE-01**: Every new code path defaults to Paper mode
+- [x] **TRADE-MODE-02**: No path touches Live without an explicit confirmation gate visible in the routine prompt
 
 ## v2 Requirements (deferred)
 
@@ -82,6 +82,8 @@ Source: implementation brief v3 (narrow W2 scope). All requirements below are v1
 - v2: Shared `<ServicePage>` component if future W2.3+ pages emerge — premature now
 - v2: Cloudflare auto-purge integration — surface manual purge for now
 - v2: Direct AutoHedge runtime adapter (currently OUT — patterns only)
+- v2: Additional data providers (World Bank, IMF, deeper-sentiment news, Polygon) beyond Yahoo + AlphaVantage + FRED
+- v2: Paid-tier swap if free-stack quota becomes a binding constraint (AlphaVantage premium, EODHD reinstatement, etc.) — surface manually if 500/day cap or yahoo-finance2 reliability becomes an issue
 
 ## Out of Scope
 
@@ -133,12 +135,12 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 | TRADE-CAM-03 | Phase 4 | Endpoint always returns plain extracted text via `htmlToText()` — strips script/style/nav/footer/svg/noscript and all tags. Never returns raw HTML. | Complete |
 | TRADE-CAM-04 | Phase 4 | All config via env: `JDCD_AGENT_KEY` (auth), `SCRAPE_BACKEND` (backend selector). No hardcoded credentials. SSRF-guarded against internal/private targets. | Complete |
 | TRADE-CAM-05 | Phase 4 | Skill path: `.claude/skills/camoufox-fetch/SKILL.md`. Endpoint: `server/scrape-agent.ts`. Mount: `server/routes.ts` (search `scrapeAgentRouter`). All documented in SKILL.md. | Complete |
-| TRADE-FIN-01 | Phase 5 | | Pending |
-| TRADE-FIN-02 | Phase 5 | | Pending |
-| TRADE-FIN-03 | Phase 5 | | Pending |
-| TRADE-FIN-04 | Phase 5 | | Pending |
-| TRADE-FIN-05 | Phase 5 | | Pending |
-| TRADE-FIN-06 | Phase 5 | | Pending |
+| TRADE-FIN-01 | Phase 5 | Plan 05-01 (`server/financial-data-agent.ts`) + Plan 05-02 (`.claude/skills/financial-data/SKILL.md`) — install pattern matches Phase 3 discovery decision (project-level skill + thin Express endpoint behind `x-jdcd-agent-key`). Single skill + endpoint covers all three providers (Yahoo via `yahoo-finance2` lib, AlphaVantage REST, FRED REST) — no parallel pattern. Rescoped 2026-05-07: original ship was EODHD + FRED, swapped to free stack. | Complete |
+| TRADE-FIN-02 | Phase 5 | Plan 05-01 — `EXTERNAL_DATASETS` registry exposes 5 accessors: Yahoo `fundamentals` (`quoteSummary` modules), AlphaVantage `news` (with sentiment scores), Yahoo `prices_eod` (`historical` daily bars), FRED `macro_series` (route `/macro/:series_id`), FRED `macro_search` (route `/macro_search?q=...`). Documented in SKILL.md `## Datasets` table. | Complete |
+| TRADE-FIN-03 | Phase 5 | Plan 05-01 `dataEnvelope()` helper wraps every dataset response in `{ provider: 'yahoo'|'alphavantage'|'fred', dataset, ticker_or_series, fetched_at, source_url?, data }`. No code path returns unwrapped upstream JSON. | Complete |
+| TRADE-FIN-04 | Phase 5 | Plan 05-01 toggle layers: `EXTERNAL_DATA_ENABLED` env (global, default true, gates ALL providers), `?enabled=false` query param (per-request opt-out, returns 200 skip envelope), mode-aware default at routine prompt (D-06 — Paper ON by default, Live opt-in via `LIVE_MODE_AUTHORIZED=true` flag). | Complete |
+| TRADE-FIN-05 | Phase 5 | Plan 05-04 wired the skill into `docs/ROUTINE_PROMPT_TRADER.md` Step 3 (candidate generation → research) so the routine invokes it before council debate. Code-side complete. **Runtime smoke test (routine fire on known ticker confirming Yahoo/AlphaVantage/FRED-sourced research output with intact attribution) is user-action — requires ALPHA_VANTAGE_API_KEY + FRED_API_KEY on Railway. Yahoo needs no key.** | Partial (code complete; runtime test pending user provisioning AlphaVantage + FRED keys) |
+| TRADE-FIN-06 | Phase 5 | Plan 05-03 created `docs/financial-data-integration.md` with install pattern, env vars, accessor reference, toggle, source attribution, Yahoo + AlphaVantage + FRED example invocations, routine-prompt wiring, failure modes, and user-action followup sections. | Complete |
 | TRADE-AH-01 | Phase 6 | `.claude/skills/autohedge-director/SKILL.md` — thesis prompt + JSON schema (ticker, side, conviction, key_catalysts, invalidation_signals, expected_move_pct) | Complete |
 | TRADE-AH-02 | Phase 6 | `.claude/skills/autohedge-quant/SKILL.md` — analysis prompt + JSON schema (verdict, edge_score, supporting/contradicting metrics — concrete numbers, not adjectives) | Complete |
 | TRADE-AH-03 | Phase 6 | `.claude/skills/autohedge-risk/SKILL.md` — explicit account-equity-aware sizing math (entry/stop/target/shares as integers), risk-profile bands (low/medium/high → 0.5/1.0/2.0%), drawdown circuit breaker (-10% halve, -15% halt) | Complete |
@@ -146,5 +148,5 @@ Site-wide W2 requirements (MKTG-NAV-01, MKTG-HOME-01, MKTG-MAP-01, MKTG-CACHE-01
 | TRADE-AH-05 | Phase 6 | All 4 SKILL.md files are prompt-only markdown. No Python framework install. No `pip install autohedge`. No runtime dependency. README at `.claude/skills/README.md` documents this constraint. | Complete |
 | TRADE-AH-06 | Phase 6 | Each skill specifies its position in the chain (Director step 1 → Quant step 2 → Risk step 3 → Execution step 4). Each role validates previous step's output before continuing. Wiring into `docs/ROUTINE_PROMPT_TRADER.md` is a user-decision (left to Josh per skills/README.md). | Complete (skill side); user-action remaining (routine-prompt wire-up) |
 | TRADE-AH-07 | Phase 6 | Risk SKILL explicitly forbids prose substitutions for numbers; quality gate "Any number replaced by prose ('a moderate position') → REJECT" | Complete |
-| TRADE-MODE-01 | Phase 4 + Phase 5 + Phase 6 | Standing constraint; every new W3 code path defaults to Paper | Pending |
-| TRADE-MODE-02 | Phase 4 + Phase 5 + Phase 6 | Standing constraint; Live only via explicit confirmation gate | Pending |
+| TRADE-MODE-01 | Phase 4 + Phase 5 + Phase 6 | Standing constraint; Phase 5 endpoint is mode-agnostic (read-only data) but routine-prompt wiring (Plan 05-04) defaults financial-data calls ON for Paper. AutoHedge Execution skill enforces Paper-by-default for trade orders. | Complete (code-side) |
+| TRADE-MODE-02 | Phase 4 + Phase 5 + Phase 6 | Standing constraint; Phase 5 routine-prompt wiring (Plan 05-04) requires `LIVE_MODE_AUTHORIZED=true` flag to invoke financial-data in Live mode. AutoHedge Execution skill gates trade orders. | Complete (code-side) |
