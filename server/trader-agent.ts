@@ -244,8 +244,47 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
     const thesis: string = (body.thesis || "").toString().slice(0, 4000);
     const decisions: any[] = Array.isArray(body.decisions) ? body.decisions : [];
 
-    if (!thesis || decisions.length === 0) {
-      return res.status(400).json({ error: "thesis and non-empty decisions array required" });
+    if (!thesis) {
+      return res.status(400).json({ error: "thesis required" });
+    }
+
+    // No-op fire — routine ran but found nothing actionable. Record the thesis
+    // as a successful empty-decision pipeline row so the run is preserved in
+    // history (and reflectable next fire). Matches ROUTINE_PROMPT_TRADER.md
+    // Step 2 / Step 5 ("Always POST, even if decisions: []").
+    if (decisions.length === 0) {
+      const { isPaper } = await getActiveAlpacaKeys();
+      await pool.query(`
+        INSERT INTO trader_pipelines
+          (risk, mode, positions_count, ter, thesis, pass, score,
+           decision_source, decisions_json, executed_status, positions_json, is_paper)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `, [
+        (await getSetting("cron_risk")) || "medium",
+        "swing",
+        0,
+        null,
+        thesis,
+        true,
+        100,
+        "agent-routine",
+        JSON.stringify([]),
+        "noop",
+        JSON.stringify([]),
+        isPaper,
+      ]);
+      await pool.query(
+        `INSERT INTO trader_logs (message, type, is_paper) VALUES ($1, $2, $3)`,
+        [`[agent-routine] no-op fire: ${thesis.slice(0, 120)}`, "info", isPaper]
+      );
+      return res.status(201).json({
+        status: "noop",
+        executed: 0,
+        rejected: 0,
+        results: [],
+        isPaper,
+        accountBlockers: [],
+      });
     }
 
     const { keys, isPaper } = await getActiveAlpacaKeys();
