@@ -64,12 +64,14 @@ async function getActiveAlpacaKeys() {
   return { keys, isPaper };
 }
 
-async function compute7dDrawdownPct(equityNow: number): Promise<number> {
+async function compute7dDrawdownPct(equityNow: number, isPaper: boolean): Promise<number> {
+  // Filter by is_paper so paper-mode equity peaks don't contaminate live-mode
+  // drawdown (and vice versa) after a mode switch.
   const r = await pool.query(`
     SELECT equity FROM trader_snapshots
-    WHERE logged_at > NOW() - INTERVAL '7 days'
+    WHERE logged_at > NOW() - INTERVAL '7 days' AND is_paper = $1
     ORDER BY logged_at ASC
-  `);
+  `, [isPaper]);
   if (r.rows.length === 0) return 0;
   const eqs = r.rows.map((row: any) => parseFloat(row.equity)).filter((n: number) => Number.isFinite(n));
   if (eqs.length === 0) return 0;
@@ -158,7 +160,7 @@ traderAgentRouter.get("/state", requireAgentKey, async (_req, res) => {
     `, [isPaper]);
 
     const equityNow = parseFloat(account?.equity || "0");
-    const drawdown7dPct = await compute7dDrawdownPct(equityNow);
+    const drawdown7dPct = await compute7dDrawdownPct(equityNow, isPaper);
     const strategyProfile = (await getSetting("strategy_profile")) || "aggressive";
 
     res.json({
@@ -297,7 +299,7 @@ traderAgentRouter.post("/decisions", requireAgentKey, async (req, res) => {
     const equity    = parseFloat(account?.equity || "0");
     const heldSymbols = new Set((positions || []).map((p: any) => p.symbol));
 
-    const drawdown7dPct = await compute7dDrawdownPct(equity);
+    const drawdown7dPct = await compute7dDrawdownPct(equity, isPaper);
 
     // Earnings within N days for any symbol the routine wants to BUY.
     const buySymbols = decisions
