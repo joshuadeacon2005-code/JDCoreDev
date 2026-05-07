@@ -4,10 +4,26 @@
 > invoked-on-demand assistant. Discovery doc per the brief's standing principle:
 > **"Do not start the refactor until that doc exists."**
 
-## Finding: no Slack agent exists in this repo
+## Finding: Slack agent lives in a separate repo
+
+**Located at: [`joshuadeacon2005-code/supervised-agent`](https://github.com/joshuadeacon2005-code/supervised-agent)** (last updated 2026-05-02).
+
+Its `README.md` confirms it's the agent the brief refers to:
+- Watches Slack for client/software issue messages
+- Maps each message to a target GitHub repo via `config/projects.yaml`
+- Runs `claude -p ... --output-format stream-json` as a subprocess (subscription auth by default)
+- Strict policy engine decides auto-fix vs escalate
+- Auto-fix path: branch → edits → tests → PR. **Never pushes to main.**
+- Escalate path: posts a Slack approval card with the proposed prompt
+- 19:00 Asia/Singapore Mon-Fri Slack digest of the day's activity
+- **Dry-run by default**; auto-fix and auto-merge each require their own env flag
+
+The WS3 refactor happens in that repo, not here. JDCoreDev only hosts this
+discovery breadcrumb so the trail isn't lost.
 
 A comprehensive search of `JDCoreDev/` found **zero Slack-specific scanning,
-triage, or fix-agent code**:
+triage, or fix-agent code** — confirming the agent is exclusively in
+`supervised-agent`:
 
 - `server/*.ts` — 30+ agent files (`expenses-agent`, `lead-engine-agent`,
   `predictor-agent`, `trader-agent`, `scrape-agent`). **No Slack references.**
@@ -24,39 +40,24 @@ triage, or fix-agent code**:
   `CLAUDE_ROUTINE_LEAD_ENGINE_*`, `CLAUDE_ROUTINE_EXPENSES_*` exist as
   configured RemoteTriggers.
 
-## Likely possibilities
+## WS3 mapping against `supervised-agent`'s current state
 
-1. **The Slack scanner lives in a different repo.** Josh has multiple — the
-   referenced agent may be in a Slack-bot-specific repo, a personal-tools
-   repo, or hosted entirely on claude.ai/code as a one-off routine without
-   any backing repo file.
-2. **It was removed in a prior cleanup.** Earlier sessions retired several
-   legacy modules (server/arbitrage.ts, server/crypto-arb.ts, the cron
-   pipelines). A Slack scanner may have been deleted similarly without
-   being explicitly mentioned.
-3. **It was a planned-but-never-built routine.** The master brief describes
-   it in past tense ("the existing scanning agent runs as a Claude routine"),
-   but it's possible Josh planned it and never shipped it in this repo.
+| Brief change | Status in `supervised-agent` today | Action needed |
+|---|---|---|
+| C1: Trigger scheduled → invoked | Currently scheduled (Slack scan + 19:00 digest) | Add Slack `@mention` / `/fix` / DM trigger; remove scheduled scan |
+| C2: Context from invoked conversation only | Currently scans Slack inbox broadly, mapped via `config/projects.yaml` | Replace with "read recent N messages + attachments in invocation thread" |
+| C3: Plan-then-approve in chat | Escalate path already posts an approval card | Make it the only path; include blast-radius rating; gate on explicit go |
+| C4: Execute on working branch via Claude Code | Already does this (branch → claude subprocess → tests → PR) | Reuse as-is — do not introduce a parallel pattern |
+| C5: Approval gate before push | Already enforced by PR (never pushes to main) | Add reaction-based approval (`✅`/`❌`) on the diff summary; document timeout |
+| C6: Strip triage/priority logic | Strict policy engine decides auto-fix vs escalate | Delete the policy engine and its config; invocation is the priority signal |
+| C7: Decommission proactive scanner | Cron entries + last-scanned persistence + 19:00 digest | Disable scheduled triggers; clean up scan-history persistence |
 
-## Recommendation
+Everything WS3 needs is already wired (Slack auth, repo mapping, Claude Code
+subprocess pattern, branch/PR flow, approval cards). The refactor is mostly
+*subtractive* — strip the proactive scan + triage paths and route everything
+through the invocation handler.
 
-**Block on user clarification before starting the refactor.** Specifically,
-Josh should confirm one of:
+## Stale artifact in this repo
 
-- The Slack agent lives at: `<repo URL or claude.ai routine ID>` — refactor
-  there, not in JDCoreDev.
-- The agent was removed and the brief's WS3 is a *new build* request, not a
-  refactor — should be re-scoped as such.
-- The agent never existed and the brief was aspirational — drop WS3 entirely.
-
-The brief's WS3 spec (invoked-on-demand, plan-then-approve flow, working
-branches, blast-radius gate, reaction-based approval) is implementable as a
-greenfield build, but the brief framed it as a refactor of existing code.
-The two paths have different scopes and need different effort estimates.
-
-## What was done in this discovery cycle
-
-- Created working branch `ws3/slack-fix-agent-refactor` (no commits;
-  effectively a stale marker — should be deleted).
-- This document.
-- Nothing else — refactor blocked per the master brief's standing principle.
+- Working branch `ws3/slack-fix-agent-refactor` was created here with no commits.
+  It's effectively a stale marker — delete on next branch cleanup.
