@@ -46,7 +46,7 @@ Ship the two new service offerings as production marketing pages without sliding
 
 - [ ] TRADE-00: Discovery doc `docs/trading-routine-architecture.md` mapping existing trading-routine skills, Alpaca integration shape, persistence surface, dashboard reads — REQUIRED before TRADE-01/02/03
 - [ ] TRADE-01: Camoufox stealth scraping primitive available to trading routines (skill OR MCP server — match pattern from TRADE-00)
-- [ ] TRADE-02: Fincept financial data layer accessible to trading routines (same pattern decision as TRADE-01)
+- [ ] TRADE-02: External financial data layer (Yahoo + AlphaVantage + FRED) accessible to trading routines (same pattern decision as TRADE-01)
 - [ ] TRADE-03: AutoHedge agent patterns ported as Claude Code skills — Director, Quant, Risk, Execution roles with schema-validated outputs
 
 ### Out of Scope
@@ -62,7 +62,7 @@ Ship the two new service offerings as production marketing pages without sliding
 
 ## Context
 
-- **Hosting:** Railway (autodeploys from `main`) with Cloudflare in front. Edge cache may need purging after deploys touching `/sitemap.xml` or `/services`.
+- **Hosting:** Railway (autodeploys from `main`) with Cloudflare in front. Edge cache may need purging after deploys touching `/sitemap.xml` or `/services`. Railway nixpacks runtime is bare Node (`nodejs_24, npm-9_x, openssl, caddy`) — no `python3` on PATH.
 - **Stack:** Vite + React + wouter + TailwindCSS + shadcn-style components on the frontend; Express + Drizzle ORM against Postgres on Railway on the backend; build via `npm run build`.
 - **Voice/tone:** Approachable, jargon-free. AI is "built into the systems," not "AI-enhanced web development." Existing pages thread this consistently — match it.
 - **Trading workspace specifics are unknown until TRADE-00 produces the discovery doc.** Where Alpaca is wired, where positions persist, whether tools are skills or MCP servers — all to be mapped, not assumed.
@@ -75,7 +75,7 @@ Ship the two new service offerings as production marketing pages without sliding
 - **Routing:** wouter `<Route path="...">`. CTAs use `<Link href="/contact">`. No hashtag links.
 - **SEO:** Per-page meta via `useEffect` head-injection; no `react-helmet` or other library.
 - **Sitemap:** Dynamic — edit `staticUrls` array around `server/routes.ts:435`. Not a static file.
-- **Trading-routine pattern:** Camoufox and Fincept must MATCH the pattern documented in TRADE-00 (skill vs. MCP) — never introduce a parallel pattern.
+- **Trading-routine pattern:** Camoufox and the external financial data layer (Yahoo + AlphaVantage + FRED) must MATCH the pattern documented in TRADE-00 (skill vs. MCP) — never introduce a parallel pattern.
 - **Mode safety:** Trading defaults to Paper for any new code path. Live requires an explicit confirmation gate baked into the routine.
 - **Workflow:** One PR per phase, no mega-PRs.
 - **Cloudflare cache:** Surface manual purge as a follow-up after each W2 deploy — do not auto-purge.
@@ -90,6 +90,7 @@ Ship the two new service offerings as production marketing pages without sliding
 | TRADE-00 (discovery doc) blocks TRADE-01/02/03 | Prevents introducing parallel patterns into the trading-routine surface | — Pending |
 | GSD config: coarse granularity, parallel, balanced models, research:false (skipped per user), plan_check:true, verifier:true | Brief is comprehensive — domain research adds no value; plan_check + verifier give safety on multi-file changes | — Pending |
 | Skip GSD codebase mapping | Stack already known; targeted file paths in brief; mapping would add ceremony without yield | — Pending |
+| Phase 5 vendors: Yahoo + AlphaVantage + FRED (free stack) | Three providers cover the TRADE-FIN-02 surface: yahoo-finance2 npm lib (no key) for fundamentals + EOD prices; AlphaVantage free tier (500/day, free key) for news with sentiment via NEWS_SENTIMENT; FRED free for US macro. All reachable from Node — Railway bare-Node runtime supports REST natively, no Python subprocess. Rescoped 2026-05-07 from EODHD All-in-One ($19.99/mo) per user cost decision. | Shipped (post-rescope) |
 
 ## Evolution
 

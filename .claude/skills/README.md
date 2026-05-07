@@ -16,6 +16,26 @@ behind `x-jdcd-agent-key`** — not user-level skills, not MCP servers.
   `POST /api/trader/scrape`. v1 uses plain fetch with realistic headers.
   v2 will add playwright + stealth or scrapingbee.
 
+### External financial data layer (Phase 5)
+- [`financial-data/`](financial-data/SKILL.md) — fetch source-attributed
+  financial data for a ticker or macro indicator: Yahoo fundamentals
+  (income/balance/cashflow + financialData + key statistics via the
+  `yahoo-finance2` `quoteSummary` modules — no API key required),
+  AlphaVantage news with sentiment scores via `NEWS_SENTIMENT` (free 500/day
+  key), Yahoo EOD prices (fallback price source via `yahoo-finance2.historical`),
+  FRED macro time-series, and FRED series search.
+  Calls `GET /api/trader/data/:dataset/:ticker`,
+  `GET /api/trader/data/macro/:series_id`, and
+  `GET /api/trader/data/macro_search`. Every response carries `provider`
+  (`yahoo`, `alphavantage`, or `fred`) + `dataset` + `ticker_or_series` +
+  `fetched_at` so source attribution survives into routine research output.
+  Toggle via `EXTERNAL_DATA_ENABLED` env, `?enabled=false` query, or
+  routine-prompt mode gating (default ON for Paper, opt-in for Live).
+  Yahoo branches need no key; `news` needs `ALPHA_VANTAGE_API_KEY` and
+  `macro_*` needs `FRED_API_KEY` on Railway. Originally shipped against EODHD
+  ($19.99/mo) on 2026-05-07 and rescoped same day to the free stack.
+
+
 ### AutoHedge agent patterns (Phase 6)
 - [`autohedge-director/`](autohedge-director/SKILL.md) — generate a trading
   thesis (ticker, side, catalysts, invalidation signals).

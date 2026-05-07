@@ -12,7 +12,7 @@
 - [ ] **Phase 2: SEO Audit page** — Ship `/services/seo-audit-and-improvement` end-to-end (route, page, nav, homepage card, sitemap)
 - [ ] **Phase 3: Trading-routine architecture discovery** — Produce `docs/trading-routine-architecture.md` with the install-pattern decision
 - [ ] **Phase 4: Camoufox stealth scraping primitive** — Install Camoufox per Phase 3 pattern; routines can fetch a previously-blocked source
-- [ ] **Phase 5: Fincept financial data layer** — Install Fincept per Phase 3 pattern; routines see source-attributed fundamentals/macro
+- [x] **Phase 5: External financial data layer (Yahoo + AlphaVantage + FRED)** — Free-stack external data per Phase 3 pattern; routines see source-attributed fundamentals/news/macro (rescoped from EODHD on 2026-05-07)
 - [ ] **Phase 6: AutoHedge agent patterns as Claude Code skills** — Director / Quant / Risk / Execution roles with schema-validated outputs
 
 ## Phase Details
@@ -71,17 +71,21 @@
   5. The skill name + path (or the MCP server entry) is documented so a future Claude session can locate and invoke the primitive without re-discovery.
 **Plans**: TBD
 
-### Phase 5: Fincept financial data layer
-**Goal**: A trading routine run on a known ticker shows Fincept-sourced fundamentals or macro context in its research output with source attribution intact.
+### Phase 5: External financial data layer (Yahoo + AlphaVantage + FRED)
+**Goal**: A trading routine run on a known ticker shows Yahoo-sourced fundamentals, AlphaVantage-sourced news with sentiment, or FRED-sourced macro context in its research output with provider+dataset attribution intact.
 **Depends on**: Phase 3 (TRADE-DISC-02 install-pattern decision)
 **Requirements**: TRADE-FIN-01, TRADE-FIN-02, TRADE-FIN-03, TRADE-FIN-04, TRADE-FIN-05, TRADE-FIN-06; TRADE-MODE-01 (default Paper); TRADE-MODE-02 (no Live without gate)
 **Success Criteria** (what must be TRUE when this phase completes):
-  1. Fincept is installed using the same pattern documented in `docs/trading-routine-architecture.md` as Camoufox — single pattern across W3.
-  2. Typed accessors exist for fundamentals (income statement, balance sheet, cash flow), macro indicators (FRED, IMF), news with sentiment, and any technical indicators not already covered by existing tooling.
-  3. A test run on a known ticker produces research output where each Fincept-sourced block is tagged with its source (provider + dataset) so a reader can audit where each number came from.
-  4. A config toggle (env var, skill config, or routine flag) switches Fincept on/off per run; the default is ON for Paper and opt-in for Live.
-  5. `docs/fincept-integration.md` exists and documents the install pattern, accessors, toggle, and at least one example invocation.
-**Plans**: TBD
+  1. The external financial data layer is installed using the same pattern documented in `docs/trading-routine-architecture.md` as Camoufox — single pattern across W3. All three providers (Yahoo, AlphaVantage, FRED) ride the same project-level skill + thin Express endpoint shape.
+  2. Typed accessors exist for: Yahoo-sourced fundamentals (income statement, balance sheet, cash flow, financial data, key statistics), AlphaVantage-sourced news with sentiment, Yahoo-sourced end-of-day prices (fallback price source), FRED macro time-series, and FRED series search for unknown indicator codes.
+  3. A test run on a known ticker produces research output where each externally-sourced block is tagged with `provider` (`yahoo`, `alphavantage`, or `fred`) and `dataset` so a reader can audit where each number came from.
+  4. A config toggle (env var, skill config, or routine flag) switches the external data layer on/off per run via `EXTERNAL_DATA_ENABLED` (single toggle gates all providers); the default is ON for Paper and opt-in for Live.
+  5. `docs/financial-data-integration.md` exists and documents the install pattern, the Yahoo + AlphaVantage + FRED accessor surface, the toggle, and at least one example invocation per provider.
+**Plans**: 4 plans
+- [x] 05-01-PLAN.md — Backend: `server/financial-data-agent.ts` Express router at `/api/trader/data/:dataset/:ticker_or_series` (and `/api/trader/data/macro/:series_id` for FRED) behind `x-jdcd-agent-key`, Yahoo + AlphaVantage + FRED dataset registry, source-attribution envelope, toggle layers
+- [x] 05-02-PLAN.md — Skill: `.claude/skills/financial-data/SKILL.md` + `.claude/skills/README.md` index update
+- [x] 05-03-PLAN.md — Docs: `docs/financial-data-integration.md` with install pattern, accessor reference, toggle, Yahoo + AlphaVantage + FRED example invocations, user-action followup
+- [x] 05-04-PLAN.md — Routine-prompt wire-up (`docs/ROUTINE_PROMPT_TRADER.md`) + Phase 5 status flip in STATE.md / ROADMAP.md / REQUIREMENTS.md
 
 ### Phase 6: AutoHedge agent patterns as Claude Code skills
 **Goal**: A trade-routine run produces a Director → Quant → Risk → Execution sequence where the Risk step shows concrete position-sizing numbers (not qualitative prose), and every step's output validates against its schema before being passed forward.
@@ -103,7 +107,7 @@ Phase 1 (AAA page) ────────┐
 Phase 2 (SEO page) ────────┘
 
 Phase 3 (Discovery) ──┬──> Phase 4 (Camoufox)
-                      ├──> Phase 5 (Fincept)
+                      ├──> Phase 5 (Yahoo + AlphaVantage + FRED)
                       └──> Phase 6 (AutoHedge skills)
 ```
 
@@ -119,7 +123,7 @@ Phase 3 (Discovery) ──┬──> Phase 4 (Camoufox)
 | 2. SEO Audit page | 1/1 | Complete (single shipping commit `701a33e`) | 2026-05-06 |
 | 3. Trading-routine architecture discovery | 1/1 | Complete (`docs/trading-routine-architecture.md`) | 2026-05-06 |
 | 4. Camoufox stealth scraping primitive | 1/1 | v1 shipped (commit `2e9c1a1`) — plain backend live; v2 stealth backend deferred | 2026-05-06 |
-| 5. Fincept financial data layer | 0/0 | Not started (blocked by Phase 3) | — |
+| 5. External financial data layer (Yahoo + AlphaVantage + FRED) | 4/4 | Code-side complete; rescoped 2026-05-07 from EODHD to free stack (yahoo-finance2 lib + AlphaVantage free tier + FRED). Runtime activation pending ALPHA_VANTAGE_API_KEY + FRED_API_KEY on Railway (yahoo needs no key). | 2026-05-07 |
 | 6. AutoHedge agent patterns | 1/1 | 4 SKILL.md files shipped (Director / Quant / Risk / Execution) — wiring into routine prompts is user-action | 2026-05-06 |
 
 ## Notes
@@ -128,6 +132,7 @@ Phase 3 (Discovery) ──┬──> Phase 4 (Camoufox)
 - Cloudflare cache purge for `/sitemap.xml` and `/services` is a manual follow-up after each W2 deploy (Phases 1 and 2). Auto-purge is a v2 item.
 - Phase 3 produces a doc only — no code, no install. Its output is the contract Phases 4/5/6 must obey.
 - All W3 phases (4, 5, 6) inherit the standing TRADE-MODE-01/02 constraints: Paper by default, Live only via explicit confirmation gate.
+- **Phase 5 rescope (2026-05-07):** swapped EODHD All-in-One ($19.99/mo) for a free stack — `yahoo-finance2` (no key, fundamentals + EOD prices) + AlphaVantage free tier (news with sentiment, 500/day) + FRED (unchanged). Runtime, envelope, toggle layers, route shapes preserved; only upstream call code + provider envelope values changed.
 
 ---
 *Generated by gsd-roadmapper. Edit at phase transitions via `/gsd-transition`.*

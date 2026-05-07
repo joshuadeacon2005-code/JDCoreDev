@@ -89,6 +89,8 @@ Then **search aggressively** with WebSearch for catalyst-driven small/mid-cap ca
 
 For symbols already in `positions`, GET `/api/trader/stock-bars/{SYMBOL}?limit=60` to check whether stop/take is hit relative to entry.
 
+**External financial data lookup** — once you have narrowed to a tradable name, when you need source-attributed fundamentals (Yahoo via the `yahoo-finance2` lib, no key required), news with per-article sentiment (AlphaVantage `NEWS_SENTIMENT`, free 500/day key), EOD price cross-checks (Yahoo), or US macro context (FRED, free key), read `.claude/skills/financial-data/SKILL.md` and call the appropriate `/api/trader/data/*` route: `/:dataset/:ticker` for `fundamentals` (yahoo) / `news` (alphavantage) / `prices_eod` (yahoo), `/macro/:series_id` for FRED `macro_series`, or `/macro_search?q=...` to look up an unknown FRED series ID. Every response carries `provider` (`yahoo`, `alphavantage`, or `fred`) + `dataset` + `ticker_or_series` + `fetched_at` — **cite these in your council debate** so research output is auditable. In Paper mode this is on by default; in Live mode, only invoke the skill when `LIVE_MODE_AUTHORIZED=true` is in your routine variables for that fire (per the trading-routine architecture’s mode gate). The kill-switch is the Railway env var `EXTERNAL_DATA_ENABLED=false`. Yahoo branches work without any API key; `news` needs `ALPHA_VANTAGE_API_KEY` and `macro_*` needs `FRED_API_KEY` provisioned on Railway (mind AlphaVantage’s 500/day, 5/min free-tier limits).
+
 ### Step 4. Council debate per candidate
 For each candidate (max 5 surfaced; cap depends on profile — see end of step), run a four-agent council in your context:
 
