@@ -58,12 +58,16 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import yahooFinanceImport from "yahoo-finance2";
 
-// yahoo-finance2 ships as CJS with __esModule: true and a default export
-// that is the singleton itself. esbuild's __toESM helper preserves the
-// module shape when the source already declares __esModule, so the bundled
-// CJS output ends up with the singleton at .default.default rather than
-// .default. Unwrap once at the import site so call sites stay clean.
-const yahooFinance = ((yahooFinanceImport as any)?.default ?? yahooFinanceImport) as typeof yahooFinanceImport;
+// yahoo-finance2 v3 default export is a CLASS that must be instantiated;
+// the un-instantiated class has throw-stub methods that fire on any call.
+// Two interop wrinkles:
+//   1. ESM:  `import YF from "yahoo-finance2"` → YF is the class directly.
+//   2. CJS bundled via esbuild __toESM: the helper wraps the require result
+//      so `yahooFinanceImport` ends up as the wrapper module
+//      `{__esModule: true, default: <class>, ...}` rather than the class.
+// Unwrap one level if needed, then `new` it. Works the same in both modes.
+const YahooFinanceClass: any = (yahooFinanceImport as any)?.default ?? yahooFinanceImport;
+const yahooFinance = new YahooFinanceClass();
 
 export const financialDataAgentRouter = Router();
 
