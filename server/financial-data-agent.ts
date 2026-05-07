@@ -56,11 +56,11 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
-import YahooFinance from "yahoo-finance2";
+import yahooFinance from "yahoo-finance2";
 
-// yahoo-finance2 v3 requires instantiation — the un-instantiated class
-// replaces every method with a throw-stub. Construct once at module load.
-const yahooFinance = new YahooFinance();
+// yahoo-finance2 v3 default export is a pre-instantiated singleton — call
+// methods directly. (The class at "yahoo-finance2/createYahooFinance" exists
+// for advanced multi-instance use; not what we need.)
 
 export const financialDataAgentRouter = Router();
 
