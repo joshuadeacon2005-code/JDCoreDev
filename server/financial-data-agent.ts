@@ -56,11 +56,14 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
-import yahooFinance from "yahoo-finance2";
+import yahooFinanceImport from "yahoo-finance2";
 
-// yahoo-finance2 v3 default export is a pre-instantiated singleton — call
-// methods directly. (The class at "yahoo-finance2/createYahooFinance" exists
-// for advanced multi-instance use; not what we need.)
+// yahoo-finance2 ships as CJS with __esModule: true and a default export
+// that is the singleton itself. esbuild's __toESM helper preserves the
+// module shape when the source already declares __esModule, so the bundled
+// CJS output ends up with the singleton at .default.default rather than
+// .default. Unwrap once at the import site so call sites stay clean.
+const yahooFinance = ((yahooFinanceImport as any)?.default ?? yahooFinanceImport) as typeof yahooFinanceImport;
 
 export const financialDataAgentRouter = Router();
 
@@ -405,7 +408,11 @@ function shapeAlphaVantageNews(raw: unknown): { articles: unknown[] } {
 // ── Routes ────────────────────────────────────────────────────────────────
 
 // Yahoo + AlphaVantage ticker-bound trio.
-financialDataAgentRouter.get("/:dataset/:ticker", requireAgentKey, async (req, res) => {
+// Path constraint: dataset must be one of the ticker-bound slugs.
+// Without this, /macro/:series_id is shadowed because Express matches
+// /:dataset/:ticker first (both are 2-segment paths). The constraint
+// makes /macro/DGS10 fall through to the FRED route below.
+financialDataAgentRouter.get("/:dataset(fundamentals|news|prices_eod)/:ticker", requireAgentKey, async (req, res) => {
   const dataset = (req.params.dataset || "").toString();
   const ticker  = (req.params.ticker  || "").toString().toUpperCase();
   const t0 = Date.now();
