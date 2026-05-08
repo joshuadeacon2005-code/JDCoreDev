@@ -18,22 +18,27 @@ behind `x-jdcd-agent-key`** — not user-level skills, not MCP servers.
 
 ### External financial data layer (Phase 5)
 - [`financial-data/`](financial-data/SKILL.md) — fetch source-attributed
-  financial data for a ticker or macro indicator: Yahoo fundamentals
-  (income/balance/cashflow + financialData + key statistics via the
-  `yahoo-finance2` `quoteSummary` modules — no API key required),
-  AlphaVantage news with sentiment scores via `NEWS_SENTIMENT` (free 500/day
-  key), Yahoo EOD prices (fallback price source via `yahoo-finance2.historical`),
-  FRED macro time-series, and FRED series search.
+  financial data for a ticker or macro indicator: FMP (Financial Modeling
+  Prep) fundamentals (income statement + balance sheet + cash flow — three
+  FMP statement endpoints called in parallel and combined into one envelope;
+  free 250/day key), AlphaVantage news with sentiment scores via
+  `NEWS_SENTIMENT` (free 500/day key), FMP EOD prices via
+  `historical-price-full` (fallback price source), FRED macro time-series,
+  and FRED series search.
   Calls `GET /api/trader/data/:dataset/:ticker`,
   `GET /api/trader/data/macro/:series_id`, and
   `GET /api/trader/data/macro_search`. Every response carries `provider`
-  (`yahoo`, `alphavantage`, or `fred`) + `dataset` + `ticker_or_series` +
+  (`fmp`, `alphavantage`, or `fred`) + `dataset` + `ticker_or_series` +
   `fetched_at` so source attribution survives into routine research output.
   Toggle via `EXTERNAL_DATA_ENABLED` env, `?enabled=false` query, or
   routine-prompt mode gating (default ON for Paper, opt-in for Live).
-  Yahoo branches need no key; `news` needs `ALPHA_VANTAGE_API_KEY` and
-  `macro_*` needs `FRED_API_KEY` on Railway. Originally shipped against EODHD
-  ($19.99/mo) on 2026-05-07 and rescoped same day to the free stack.
+  `fundamentals` + `prices_eod` need `FMP_API_KEY`, `news` needs
+  `ALPHA_VANTAGE_API_KEY`, and `macro_*` needs `FRED_API_KEY` on Railway.
+  Mind the FMP daily cap: 250 calls/day total, with each `fundamentals`
+  request burning 3 (≈ 83 fundamentals/day budget). Originally shipped
+  against EODHD ($19.99/mo) on 2026-05-07, rescoped same day to a free
+  stack, then hot-swapped on 2026-05-08 to FMP after the prior fundamentals
+  provider blocked Railway's data-center IPs at the network level.
 
 
 ### AutoHedge agent patterns (Phase 6)

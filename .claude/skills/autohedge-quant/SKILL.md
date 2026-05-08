@@ -30,7 +30,7 @@ against the data and either CONFIRM or REJECT.
 Inputs:
 - The Director's full output (ticker, side, thesis, conviction, etc.)
 - Quantitative data available to the routine: fundamentals and EOD prices
-  from Yahoo (via `yahoo-finance2`) plus news with sentiment from
+  from FMP (Financial Modeling Prep) plus news with sentiment from
   AlphaVantage, all behind `.claude/skills/financial-data/SKILL.md` (when
   Phase 5 is active); macro overlay from FRED via the same skill; price/volume bars
   from `/api/trader/stock-bars`, market signals from
