@@ -7,14 +7,18 @@
  * .planning/phases/05-external-financial-data-layer/05-CONTEXT.md for the
  * locked decisions referenced inline.
  *
- * Three providers, one router (originally shipped 2026-05-07 against EODHD +
- * FRED, rescoped same day to a free stack):
- *   - yahoo         ticker-bound: fundamentals, prices_eod
- *       via yahoo-finance2 npm lib (no API key required):
- *         quoteSummary(ticker, { modules: ['incomeStatementHistory',
- *           'balanceSheetHistory', 'cashflowStatementHistory',
- *           'financialData', 'defaultKeyStatistics'] })
- *         historical(ticker, { period1, period2, interval: '1d' })
+ * Three providers, one router. Originally shipped 2026-05-07 against EODHD +
+ * FRED, then rescoped to a free stack (yahoo-finance2 + AlphaVantage + FRED).
+ * Yahoo turned out to block Railway data-center IPs at the network level
+ * ("fetch failed"), so on 2026-05-08 fundamentals + prices_eod were swapped
+ * to FMP (Financial Modeling Prep) — also free tier, no IP blocks.
+ *
+ *   - fmp           ticker-bound: fundamentals, prices_eod
+ *       https://financialmodelingprep.com/api/v3/income-statement/{TICKER}?apikey=...
+ *       https://financialmodelingprep.com/api/v3/balance-sheet-statement/{TICKER}?apikey=...
+ *       https://financialmodelingprep.com/api/v3/cash-flow-statement/{TICKER}?apikey=...
+ *       https://financialmodelingprep.com/api/v3/historical-price-full/{TICKER}?apikey=...&from=&to=
+ *       Free tier: 250 calls/day. Fundamentals = 3 calls (combined return).
  *   - alphavantage  ticker-bound: news (with sentiment)
  *       https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=...&apikey=...
  *       Free tier: 500 calls/day, 5/min.
@@ -22,13 +26,12 @@
  *       https://api.stlouisfed.org/fred/series/observations?series_id=...&api_key=...&file_type=json
  *       https://api.stlouisfed.org/fred/series/search?search_text=...&api_key=...&file_type=json
  *
- * REST/Node-native — no Python subprocess (D-09; Railway nixpacks runtime is
- * bare Node: nodejs_24, npm-9_x, openssl, caddy. No `python3` on PATH.)
- * yahoo-finance2 is pure JS; AlphaVantage and FRED are reachable via Node's
- * built-in fetch.
+ * REST/Node-native — no Python subprocess, no npm SDKs that bypass our
+ * fetchWithLimits guard (D-09). All three providers reachable via Node's
+ * built-in fetch from Railway's nixpacks runtime (nodejs_24).
  *
  * Routes:
- *   GET /:dataset/:ticker     yahoo (fundamentals, prices_eod) + alphavantage (news)
+ *   GET /:dataset/:ticker     fmp (fundamentals, prices_eod) + alphavantage (news)
  *   GET /macro/:series_id     FRED  series/observations
  *   GET /macro_search?q=...   FRED  series/search
  *   GET /ping                 health + per-provider key/availability probe
@@ -41,13 +44,13 @@
  *   D-03  Endpoint base path /api/trader/data. Mounts before requireAdmin
  *         /api/trader so requireAdmin doesn't shadow agent-key auth.
  *   D-04  Source attribution envelope is mandatory in every response:
- *         { provider: "yahoo"|"alphavantage"|"fred", dataset, ticker_or_series,
+ *         { provider: "fmp"|"alphavantage"|"fred", dataset, ticker_or_series,
  *           fetched_at, source_url?, data }.
  *         The `provider` field is load-bearing — three providers share one surface.
  *   D-05  Toggle is layered: EXTERNAL_DATA_ENABLED env (default true) globally
  *         gates all providers; ?enabled=false per request short-circuits to
  *         200 { skipped: true }; per-provider key gate (ALPHA_VANTAGE_API_KEY,
- *         FRED_API_KEY) — yahoo branches skip the key gate (no key needed).
+ *         FRED_API_KEY, FMP_API_KEY) — every dataset has a required key.
  *         Mode-aware default lives at routine-prompt layer, not here.
  *   D-06  Mode safety bakes the existing pattern; the endpoint is mode-agnostic
  *         (read-only data calls), live-mode confirmation lives in the routine
@@ -56,18 +59,11 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
-import yahooFinanceImport from "yahoo-finance2";
 
-// yahoo-finance2 v3 default export is a CLASS that must be instantiated;
-// the un-instantiated class has throw-stub methods that fire on any call.
-// Two interop wrinkles:
-//   1. ESM:  `import YF from "yahoo-finance2"` → YF is the class directly.
-//   2. CJS bundled via esbuild __toESM: the helper wraps the require result
-//      so `yahooFinanceImport` ends up as the wrapper module
-//      `{__esModule: true, default: <class>, ...}` rather than the class.
-// Unwrap one level if needed, then `new` it. Works the same in both modes.
-const YahooFinanceClass: any = (yahooFinanceImport as any)?.default ?? yahooFinanceImport;
-const yahooFinance = new YahooFinanceClass();
+// Three providers, all REST. yahoo-finance2 was dropped after deploy revealed
+// Yahoo blocks Railway's data-center IPs (network-level "fetch failed" with
+// no upstream response). FMP is the drop-in replacement for fundamentals +
+// prices and works fine from cloud hosts.
 
 export const financialDataAgentRouter = Router();
 
@@ -80,12 +76,12 @@ const MAX_OUTPUT_CHARS   = 60_000;            // applied to news article bodies
 // If you add a dataset here, also update the SKILL.md accessor list in Plan
 // 05-02 and docs/financial-data-integration.md in Plan 05-03. (D-10 cross-ref.)
 export const EXTERNAL_DATASETS = [
-  // Yahoo — ticker-bound, route shape: /:dataset/:ticker
-  "fundamentals",   // yahoo-finance2.quoteSummary(ticker, { modules: [...] })
+  // FMP — ticker-bound, route shape: /:dataset/:ticker
+  "fundamentals",   // GET https://financialmodelingprep.com/api/v3/{income|balance|cashflow}-statement/{TICKER}?apikey={KEY}
   // AlphaVantage — ticker-bound, route shape: /:dataset/:ticker
   "news",           // GET https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={TICKER}&apikey={KEY}
-  // Yahoo — ticker-bound, route shape: /:dataset/:ticker
-  "prices_eod",     // yahoo-finance2.historical(ticker, { period1, period2, interval: '1d' })
+  // FMP — ticker-bound, route shape: /:dataset/:ticker
+  "prices_eod",     // GET https://financialmodelingprep.com/api/v3/historical-price-full/{TICKER}?apikey={KEY}&from=&to=
   // FRED — distinct routes: /macro/:series_id, /macro_search?q=...
   "macro_series",
   "macro_search",
@@ -94,14 +90,14 @@ export const EXTERNAL_DATASETS = [
 const TICKER_BOUND_DATASETS = new Set(["fundamentals", "news", "prices_eod"]);
 
 // Per-dataset metadata — which provider serves it and what env key it needs.
-// `null` requiredKey means the dataset has no key gate (yahoo branches).
+// `null` requiredKey means the dataset has no key gate (none in current set).
 const DATASET_PROVIDER: Record<
   string,
-  { provider: Provider; requiredKey: "ALPHA_VANTAGE_API_KEY" | "FRED_API_KEY" | null }
+  { provider: Provider; requiredKey: "ALPHA_VANTAGE_API_KEY" | "FRED_API_KEY" | "FMP_API_KEY" | null }
 > = {
-  fundamentals: { provider: "yahoo",        requiredKey: null },
+  fundamentals: { provider: "fmp",          requiredKey: "FMP_API_KEY" },
   news:         { provider: "alphavantage", requiredKey: "ALPHA_VANTAGE_API_KEY" },
-  prices_eod:   { provider: "yahoo",        requiredKey: null },
+  prices_eod:   { provider: "fmp",          requiredKey: "FMP_API_KEY" },
   macro_series: { provider: "fred",         requiredKey: "FRED_API_KEY" },
   macro_search: { provider: "fred",         requiredKey: "FRED_API_KEY" },
 };
@@ -110,7 +106,7 @@ const DATASET_PROVIDER: Record<
 // `?apikey=...` or `?api_key=...` that would be appended after our auth
 // param and override it on some HTTP stacks). Keep tight.
 const ALPHAVANTAGE_NEWS_PASSTHROUGH = ["time_from", "time_to", "limit", "sort", "topics"] as const;
-const YAHOO_PRICES_PASSTHROUGH      = ["from", "to"] as const; // ISO yyyy-mm-dd
+const FMP_PRICES_PASSTHROUGH        = ["from", "to"] as const; // ISO yyyy-mm-dd; passed to FMP historical-price-full
 const FRED_OBSERVATIONS_PASSTHROUGH = [
   "observation_start",
   "observation_end",
@@ -122,7 +118,7 @@ const FRED_OBSERVATIONS_PASSTHROUGH = [
   "sort_order",
 ] as const;
 
-type Provider = "yahoo" | "alphavantage" | "fred";
+type Provider = "fmp" | "alphavantage" | "fred";
 
 type DataEnvelope<T> = {
   provider: Provider;
@@ -164,9 +160,9 @@ function requireAgentKey(req: Request, res: Response, next: NextFunction) {
 }
 
 // ── SSRF guard (defense-in-depth; copy of scrape-agent.ts:38-49) ──────────
-// AlphaVantage and FRED hosts are known external; yahoo-finance2 calls
-// don't go through fetchWithLimits at all (lib handles the HTTP itself).
-// Keep the guard for any future dataset that takes a URL parameter.
+// All three providers (FMP, AlphaVantage, FRED) hit known hardcoded hosts.
+// User input only flows into path/query params, never the host. Guard is
+// belt-and-braces for any future dataset that takes a URL parameter.
 function isInternalIp(host: string): boolean {
   const h = host.toLowerCase();
   if (h === "localhost" || h === "metadata" || h === "metadata.google.internal") return true;
@@ -193,12 +189,12 @@ function isInternalIp(host: string): boolean {
 // routine can probe the endpoint shape without keys provisioned (verification
 // surface for the deferred user-action TRADE-FIN-05 test).
 //
-// Yahoo branches pass `null` for requiredKey because yahoo-finance2 needs no
-// key — they still flow through layers 1+2 but skip layer 3.
+// All three providers require keys after the rescope; passing null is still
+// supported for any future keyless dataset.
 function applyToggleGate(
   req: Request,
   res: Response,
-  requiredKey?: "ALPHA_VANTAGE_API_KEY" | "FRED_API_KEY" | null,
+  requiredKey?: "ALPHA_VANTAGE_API_KEY" | "FRED_API_KEY" | "FMP_API_KEY" | null,
 ): boolean {
   if (process.env.EXTERNAL_DATA_ENABLED === "false") {
     res.status(503).json({
@@ -436,71 +432,90 @@ financialDataAgentRouter.get("/:dataset(fundamentals|news|prices_eod)/:ticker", 
   const { provider, requiredKey } = DATASET_PROVIDER[dataset];
   if (applyToggleGate(req, res, requiredKey)) return;
 
-  // ── fundamentals (yahoo via yahoo-finance2 quoteSummary) ────────────────
+  // ── fundamentals (FMP — three statements fetched in parallel) ──────────
+  // FMP free tier: 250 calls/day. One fundamentals request = 3 upstream
+  // calls (income, balance, cashflow) → ~83 fundamentals/day budget.
   if (dataset === "fundamentals") {
-    const sourceUrl = `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`;
-    try {
-      const data = await yahooFinance.quoteSummary(ticker, {
-        modules: [
-          "incomeStatementHistory",
-          "balanceSheetHistory",
-          "cashflowStatementHistory",
-          "financialData",
-          "defaultKeyStatistics",
-        ],
-      });
-      logCall("yahoo", "fundamentals", ticker, 200, Date.now() - t0);
-      return res.json(dataEnvelope("yahoo", "fundamentals", ticker, data, sourceUrl));
-    } catch (e: any) {
-      logCall("yahoo", "fundamentals", ticker, 502, Date.now() - t0);
-      return res.status(502).json({
+    const apiKey = process.env.FMP_API_KEY!;
+    const base = "https://financialmodelingprep.com/api/v3";
+    const buildUrl = (statement: string) => {
+      const u = new URL(`${base}/${statement}/${encodeURIComponent(ticker)}`);
+      u.searchParams.set("limit", "5"); // last 5 annual periods
+      u.searchParams.set("apikey", apiKey);
+      return u;
+    };
+    const [income, balance, cashflow] = await Promise.all([
+      fetchWithLimits(buildUrl("income-statement")),
+      fetchWithLimits(buildUrl("balance-sheet-statement")),
+      fetchWithLimits(buildUrl("cash-flow-statement")),
+    ]);
+
+    // Combined sourceUrl points at the first endpoint (key-stripped); the three
+    // calls share host so leak risk is identical for any of them.
+    const firstSource = income.kind === "ok" || income.kind === "non-2xx" || income.kind === "timeout" || income.kind === "too-large" || income.kind === "network-err" ? income.sourceUrl : "";
+
+    // If any of the three failed, bubble the worst kind.
+    const worstKind = [income, balance, cashflow]
+      .map(r => r.kind)
+      .find(k => k !== "ok") ?? "ok";
+
+    if (worstKind !== "ok") {
+      const failed = [income, balance, cashflow].find(r => r.kind !== "ok")!;
+      const status = failed.kind === "non-2xx" ? (failed.status === 429 ? 429 : 502)
+                   : failed.kind === "timeout" ? 502
+                   : failed.kind === "too-large" ? 413
+                   : 500;
+      logCall("fmp", "fundamentals", ticker, status, Date.now() - t0);
+      const detail = failed.kind === "non-2xx" ? `FMP ${failed.status}: ${typeof failed.body === "string" ? failed.body.slice(0, 200) : JSON.stringify(failed.body).slice(0, 200)}`
+                   : failed.kind === "timeout" ? "FMP timeout"
+                   : failed.kind === "too-large" ? `FMP response too large (${failed.bytes} bytes)`
+                   : (failed as { message?: string }).message ?? "FMP fetch failed";
+      return res.status(status).json({
         error: "upstream error",
-        provider: "yahoo",
+        provider: "fmp",
         dataset: "fundamentals",
-        detail: e?.message || "yahoo-finance2 quoteSummary failed",
-        source_url: sourceUrl,
+        detail,
+        source_url: failed.sourceUrl,
       });
     }
+
+    const data = {
+      income_statement: Array.isArray((income as any).body) ? (income as any).body : [],
+      balance_sheet:    Array.isArray((balance as any).body) ? (balance as any).body : [],
+      cash_flow:        Array.isArray((cashflow as any).body) ? (cashflow as any).body : [],
+    };
+    logCall("fmp", "fundamentals", ticker, 200, Date.now() - t0);
+    return res.json(dataEnvelope("fmp", "fundamentals", ticker, data, firstSource));
   }
 
-  // ── prices_eod (yahoo via yahoo-finance2 historical) ────────────────────
+  // ── prices_eod (FMP historical-price-full) ──────────────────────────────
   if (dataset === "prices_eod") {
-    const sourceUrl = `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}/history`;
-    // Default: last ~365 days. Allow ?from=YYYY-MM-DD&to=YYYY-MM-DD passthroughs.
-    const fromQ = typeof req.query.from === "string" ? req.query.from : null;
-    const toQ   = typeof req.query.to   === "string" ? req.query.to   : null;
-    const period2 = toQ && /^\d{4}-\d{2}-\d{2}$/.test(toQ) ? new Date(toQ) : new Date();
-    const period1 = fromQ && /^\d{4}-\d{2}-\d{2}$/.test(fromQ)
-      ? new Date(fromQ)
-      : new Date(period2.getTime() - 365 * 24 * 60 * 60 * 1000);
-    try {
-      const rows = (await yahooFinance.historical(ticker, {
-        period1,
-        period2,
-        interval: "1d",
-        events: "history",
-      })) as any[];
-      const ohlcv = (rows || []).map((r: any) => ({
-        date: r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date,
-        open: r.open,
-        high: r.high,
-        low: r.low,
-        close: r.close,
-        adjClose: r.adjClose,
-        volume: r.volume,
-      }));
-      logCall("yahoo", "prices_eod", ticker, 200, Date.now() - t0);
-      return res.json(dataEnvelope("yahoo", "prices_eod", ticker, { ohlcv }, sourceUrl));
-    } catch (e: any) {
-      logCall("yahoo", "prices_eod", ticker, 502, Date.now() - t0);
-      return res.status(502).json({
-        error: "upstream error",
-        provider: "yahoo",
-        dataset: "prices_eod",
-        detail: e?.message || "yahoo-finance2 historical failed",
-        source_url: sourceUrl,
-      });
-    }
+    const apiKey = process.env.FMP_API_KEY!;
+    const url = new URL(`https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(ticker)}`);
+    appendPassthrough(url, req, FMP_PRICES_PASSTHROUGH);
+    url.searchParams.set("apikey", apiKey);
+
+    const result = await fetchWithLimits(url);
+    const status = result.kind === "ok" ? 200
+                : result.kind === "non-2xx" ? (result.status === 429 ? 429 : 502)
+                : result.kind === "timeout" ? 502
+                : result.kind === "too-large" ? 413
+                : 500;
+    logCall("fmp", "prices_eod", ticker, status, Date.now() - t0);
+    return respondFromFetch(res, "fmp", "prices_eod", ticker, result, (raw: any) => {
+      const rows: any[] = Array.isArray(raw?.historical) ? raw.historical : [];
+      return {
+        ohlcv: rows.map((r: any) => ({
+          date:     r.date,
+          open:     r.open,
+          high:     r.high,
+          low:      r.low,
+          close:    r.close,
+          adjClose: r.adjClose,
+          volume:   r.volume,
+        })),
+      };
+    });
   }
 
   // ── news (alphavantage via NEWS_SENTIMENT) ───────────────────────────────
@@ -634,16 +649,16 @@ financialDataAgentRouter.get("/macro_search", requireAgentKey, async (req, res) 
 // Health / registry probe — NO toggle gate (must be introspectable when
 // EXTERNAL_DATA_ENABLED=false so operators can confirm endpoint shape).
 //
-// /ping shape (post-rescope, flattened per user-spec — top-level provider keys):
-//   { ok, enabled, yahoo: { available }, alphavantage: { key_configured },
+// /ping shape (top-level provider keys — flat, easy for routines to inspect):
+//   { ok, enabled, fmp: { key_configured }, alphavantage: { key_configured },
 //     fred: { key_configured }, datasets }
-// yahoo.available is always true because yahoo-finance2 is a library import,
-// not a remote service requiring a key.
+// All three providers need API keys after the FMP swap (yahoo-finance2 was
+// dropped — Yahoo blocks Railway IPs at the network level).
 financialDataAgentRouter.get("/ping", requireAgentKey, (_req, res) => {
   res.json({
     ok: true,
     enabled: process.env.EXTERNAL_DATA_ENABLED !== "false",
-    yahoo:        { available: true },
+    fmp:          { key_configured: !!process.env.FMP_API_KEY },
     alphavantage: { key_configured: !!process.env.ALPHA_VANTAGE_API_KEY },
     fred:         { key_configured: !!process.env.FRED_API_KEY },
     datasets: EXTERNAL_DATASETS,
