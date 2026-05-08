@@ -14,10 +14,13 @@
  * to FMP (Financial Modeling Prep) — also free tier, no IP blocks.
  *
  *   - fmp           ticker-bound: fundamentals, prices_eod
- *       https://financialmodelingprep.com/api/v3/income-statement/{TICKER}?apikey=...
- *       https://financialmodelingprep.com/api/v3/balance-sheet-statement/{TICKER}?apikey=...
- *       https://financialmodelingprep.com/api/v3/cash-flow-statement/{TICKER}?apikey=...
- *       https://financialmodelingprep.com/api/v3/historical-price-full/{TICKER}?apikey=...&from=&to=
+ *       https://financialmodelingprep.com/stable/income-statement?symbol={TICKER}&limit=5&apikey=...
+ *       https://financialmodelingprep.com/stable/balance-sheet-statement?symbol={TICKER}&limit=5&apikey=...
+ *       https://financialmodelingprep.com/stable/cash-flow-statement?symbol={TICKER}&limit=5&apikey=...
+ *       https://financialmodelingprep.com/stable/historical-price-eod/full?symbol={TICKER}&apikey=...&from=&to=
+ *       (FMP retired the /api/v3/ surface for accounts created after Aug 2025;
+ *        the /stable/ surface uses ?symbol= query params and returns a flat
+ *        array for historical prices instead of `{ historical: [...] }`.)
  *       Free tier: 250 calls/day. Fundamentals = 3 calls (combined return).
  *   - alphavantage  ticker-bound: news (with sentiment)
  *       https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=...&apikey=...
@@ -437,9 +440,10 @@ financialDataAgentRouter.get("/:dataset(fundamentals|news|prices_eod)/:ticker", 
   // calls (income, balance, cashflow) → ~83 fundamentals/day budget.
   if (dataset === "fundamentals") {
     const apiKey = process.env.FMP_API_KEY!;
-    const base = "https://financialmodelingprep.com/api/v3";
+    const base = "https://financialmodelingprep.com/stable";
     const buildUrl = (statement: string) => {
-      const u = new URL(`${base}/${statement}/${encodeURIComponent(ticker)}`);
+      const u = new URL(`${base}/${statement}`);
+      u.searchParams.set("symbol", ticker);
       u.searchParams.set("limit", "5"); // last 5 annual periods
       u.searchParams.set("apikey", apiKey);
       return u;
@@ -488,10 +492,11 @@ financialDataAgentRouter.get("/:dataset(fundamentals|news|prices_eod)/:ticker", 
     return res.json(dataEnvelope("fmp", "fundamentals", ticker, data, firstSource));
   }
 
-  // ── prices_eod (FMP historical-price-full) ──────────────────────────────
+  // ── prices_eod (FMP /stable/historical-price-eod/full) ─────────────────
   if (dataset === "prices_eod") {
     const apiKey = process.env.FMP_API_KEY!;
-    const url = new URL(`https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(ticker)}`);
+    const url = new URL("https://financialmodelingprep.com/stable/historical-price-eod/full");
+    url.searchParams.set("symbol", ticker);
     appendPassthrough(url, req, FMP_PRICES_PASSTHROUGH);
     url.searchParams.set("apikey", apiKey);
 
@@ -503,7 +508,11 @@ financialDataAgentRouter.get("/:dataset(fundamentals|news|prices_eod)/:ticker", 
                 : 500;
     logCall("fmp", "prices_eod", ticker, status, Date.now() - t0);
     return respondFromFetch(res, "fmp", "prices_eod", ticker, result, (raw: any) => {
-      const rows: any[] = Array.isArray(raw?.historical) ? raw.historical : [];
+      // /stable/ returns a flat array of bars; /api/v3/ used to wrap in { historical: [] }.
+      // Accept both shapes for safety.
+      const rows: any[] = Array.isArray(raw)             ? raw
+                        : Array.isArray(raw?.historical) ? raw.historical
+                        : [];
       return {
         ohlcv: rows.map((r: any) => ({
           date:     r.date,
@@ -511,7 +520,8 @@ financialDataAgentRouter.get("/:dataset(fundamentals|news|prices_eod)/:ticker", 
           high:     r.high,
           low:      r.low,
           close:    r.close,
-          adjClose: r.adjClose,
+          // /stable/ doesn't include adjClose; fall back to close.
+          adjClose: r.adjClose ?? r.close,
           volume:   r.volume,
         })),
       };
